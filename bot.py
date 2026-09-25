@@ -1994,7 +1994,8 @@ async def blacklist_status_command(
     )
 
 
-@tree.errorasync def on_app_command_error(
+@tree.error
+async def on_app_command_error(
     interaction: discord.Interaction,
     error: app_commands.AppCommandError,
 ):
