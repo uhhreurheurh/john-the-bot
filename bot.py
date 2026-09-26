@@ -1328,8 +1328,39 @@ async def on_message(message: discord.Message):
             return
         return
 
-    # Remember commands such as ,uwu / ,uwuify / ,hood / ,hoodify so the
-    # subsequent configured proxy-bot response can be transformed for that user.
+    # Enforce active transformations BEFORE parsing any prefix command.
+    # This prevents an active target from bypassing UWU/HOODIFY by sending
+    # command-looking text such as ",uwuify @user text".
+    hood_target_ids = hood_targets.get(message.channel.id, set())
+    uwu_target_ids = uwu_targets.get(message.channel.id, set())
+
+    if message.author.id in hood_target_ids and content:
+        bot_member = message.guild.me if message.guild is not None else None
+        if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
+            return
+        try:
+            await send_hood_message(message.channel, message.author, content)
+            await delete_original_message(message)
+        except HoodMessageBlocked:
+            pass
+        except Exception:
+            pass
+        return
+
+    if message.author.id in uwu_target_ids and content:
+        bot_member = message.guild.me if message.guild is not None else None
+        if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
+            return
+        try:
+            await send_uwu_message(message.channel, message.author, content)
+            await delete_original_message(message)
+        except UwuMessageBlocked:
+            pass
+        except Exception:
+            pass
+        return
+
+    # Only non-target users continue into the command parser.
     remember_proxy_request(message, content)
 
     # Prefix ping.
@@ -1618,91 +1649,6 @@ async def on_message(message: discord.Message):
                 mention_author=False,
             )
         return
-
-    hood_target_ids = hood_targets.get(message.channel.id, set())
-    if message.author.id in hood_target_ids and content:
-        bot_member = message.guild.me if message.guild is not None else None
-        channel_permissions = (
-            message.channel.permissions_for(bot_member)
-            if bot_member is not None
-            else None
-        )
-
-        if bot_member is None or not getattr(channel_permissions, "manage_messages", False):
-            return
-
-        try:
-            hood_text = hoodify_text(content)
-            if not hood_text:
-                return
-
-            # Send the transformed message first. Only remove the original if
-            # the webhook relay succeeded.
-            await send_hood_message(
-                message.channel,
-                message.author,
-                content,
-            )
-            await delete_original_message(message)
-        except HoodMessageBlocked:
-            # Leave the original message untouched when it is blocked.
-            pass
-        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-            try:
-                await message.channel.send(
-                    "❌ HOODIFY could not relay that message. Check that the bot "
-                    "has **Manage Messages** and **Manage Webhooks** permissions.",
-                    allowed_mentions=discord.AllowedMentions.none(),
-                )
-            except Exception:
-                pass
-        except Exception:
-            try:
-                await message.channel.send(
-                    "❌ HOODIFY hit an error while relaying that message. "
-                    "The original message was left in place.",
-                    allowed_mentions=discord.AllowedMentions.none(),
-                )
-            except Exception:
-                pass
-        return
-
-    # Automatic mode: replace messages from any selected target in this channel.
-    target_ids = uwu_targets.get(message.channel.id, set())
-    if message.author.id in target_ids and content:
-        pass
-        bot_member = message.guild.me if message.guild is not None else None
-        channel_permissions = (
-            message.channel.permissions_for(bot_member)
-            if bot_member is not None
-            else None
-        )
-        pass
-        if bot_member is None or not getattr(channel_permissions, 'manage_messages', False):
-            pass
-            return
-
-        try:
-            pass
-            await send_uwu_message(
-                message.channel,
-                message.author,
-                content,
-            )
-            pass
-
-            deleted = await delete_original_message(message)
-            pass
-        except UwuMessageBlocked as blocked_error:
-            # Leave the original message untouched. The blocked content must never
-            # be relayed through the UWU webhook.
-            pass
-        except (discord.Forbidden, discord.NotFound, discord.HTTPException) as e:
-            pass
-        except Exception as e:
-            pass
-        return
-
 
 # =========================
 # WEBHOOK
