@@ -1206,7 +1206,7 @@ def remember_proxy_request(message: discord.Message, content: str) -> None:
         return
 
     mode_match = re.match(
-        r"^\\s*[,!](uwu(?:ify)?|hood(?:ify)?)\\b",
+        r"^\s*[,!](uwu(?:ify)?|hood(?:ify)?)\b",
         content,
         flags=re.IGNORECASE,
     )
