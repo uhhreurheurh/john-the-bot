@@ -161,11 +161,8 @@ UWU_ALLOWED_ROLE_IDS = {
 }
 
 # External proxy bots whose output should be checked for active UWU/HOODIFY targets.
-# Bleed's current application ID is included; the name match also covers older
-# Discord username/discriminator formats.
-PROXY_BOT_IDS = {
-    1006548568234008627,
-}
+# Use the bot name here so we do not rely on an unverified application ID.
+PROXY_BOT_IDS = set()
 PROXY_BOT_NAMES = {
     "bleed",
 }
@@ -968,7 +965,7 @@ async def send_uwu_message(
         return f"__UWU_PROTECTED_{len(protected_mentions) - 1}__"
 
     uwu_input = re.sub(
-        r"<@!?>?\\d+>|<@&\\d+>|<#\\d+>",
+        r"<@!?\d+>|<@&\d+>|<#\d+>",
         protect_mention,
         content,
     )
