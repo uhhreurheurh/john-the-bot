@@ -160,6 +160,17 @@ UWU_ALLOWED_ROLE_IDS = {
     1378810715611336914,
 }
 
+# External proxy bots whose output should be checked for active UWU/HOODIFY targets.
+# Bleed's current application ID is included; the name match also covers older
+# Discord username/discriminator formats.
+PROXY_BOT_IDS = {
+    1006548568234008627,
+}
+PROXY_BOT_NAMES = {
+    "bleed",
+}
+PROXY_REQUEST_TTL_SECONDS = 15
+
 # Safety cleanup interval for leftover UWU webhooks.
 UWU_WEBHOOK_CLEANUP_INTERVAL_SECONDS = 60
 
@@ -948,10 +959,31 @@ async def send_uwu_message(
 
     webhook = await get_uwu_webhook(channel)
 
+    # Protect Discord mentions before uwuify transforms the text.
+    # This keeps @users, @roles, and #channels intact and clickable.
+    protected_mentions = []
+
+    def protect_mention(match):
+        protected_mentions.append(match.group(0))
+        return f"__UWU_PROTECTED_{len(protected_mentions) - 1}__"
+
+    uwu_input = re.sub(
+        r"<@!?>?\\d+>|<@&\\d+>|<#\\d+>",
+        protect_mention,
+        content,
+    )
+
     # PyPI uwuify exposes uwu(text, flags=...).
-    uwu_text = uwuify.uwu(content, flags=UWU_FLAGS)
+    uwu_text = uwuify.uwu(uwu_input, flags=UWU_FLAGS)
     if not uwu_text:
         uwu_text = "uwu"
+
+    # Restore exact Discord mention tokens before sending.
+    for index, original in enumerate(protected_mentions):
+        uwu_text = uwu_text.replace(
+            f"__UWU_PROTECTED_{index}__",
+            original,
+        )
 
     # Also check the final transformed text so the webhook never sends a blocked
     # word even if the transformation itself somehow creates one.
@@ -1145,6 +1177,129 @@ async def delete_original_message(message: discord.Message) -> bool:
 
 
 # =========================
+# PROXY MESSAGE HELPERS
+# =========================
+
+proxy_requests: dict[int, dict] = {}
+
+
+def is_proxy_bot_message(message: discord.Message) -> bool:
+    """Return True when a message came from a configured proxy bot."""
+    author = message.author
+    if author.id in PROXY_BOT_IDS:
+        return True
+
+    author_name = (
+        getattr(author, "name", "")
+        or getattr(author, "display_name", "")
+        or ""
+    ).strip().lower()
+
+    return bool(author.bot and author_name in PROXY_BOT_NAMES)
+
+
+def remember_proxy_request(message: discord.Message, content: str) -> None:
+    """Remember a target using a common proxy-bot command.
+
+    We only remember requests from people already selected for UWUIFY/HOODIFY.
+    The next matching proxy-bot response in this channel is then relayed
+    through the appropriate transformer.
+    """
+    if message.author.bot or not content:
+        return
+
+    mode_match = re.match(
+        r"^\\s*[,!](uwu(?:ify)?|hood(?:ify)?)\\b",
+        content,
+        flags=re.IGNORECASE,
+    )
+    if mode_match is None:
+        return
+
+    mode = mode_match.group(1).lower()
+    if mode.startswith("uwu"):
+        if message.author.id not in uwu_targets.get(message.channel.id, set()):
+            return
+        mode = "uwu"
+    else:
+        if message.author.id not in hood_targets.get(message.channel.id, set()):
+            return
+        mode = "hood"
+
+    proxy_requests[message.channel.id] = {
+        "target_id": message.author.id,
+        "mode": mode,
+        "expires": asyncio.get_running_loop().time() + PROXY_REQUEST_TTL_SECONDS,
+    }
+
+
+async def handle_proxy_message(message: discord.Message) -> bool:
+    """Relay the next configured proxy-bot response for an active target."""
+    if not is_proxy_bot_message(message):
+        return False
+
+    request = proxy_requests.get(message.channel.id)
+    if request is None:
+        return False
+
+    if request["expires"] < asyncio.get_running_loop().time():
+        proxy_requests.pop(message.channel.id, None)
+        return False
+
+    target_id = request["target_id"]
+    mode = request["mode"]
+
+    target = message.guild.get_member(target_id) if message.guild else None
+    if target is None:
+        proxy_requests.pop(message.channel.id, None)
+        return False
+
+    try:
+        if mode == "uwu":
+            if target.id not in uwu_targets.get(message.channel.id, set()):
+                proxy_requests.pop(message.channel.id, None)
+                return False
+
+            await send_uwu_message(
+                message.channel,
+                target,
+                message.content,
+            )
+
+        elif mode == "hood":
+            if target.id not in hood_targets.get(message.channel.id, set()):
+                proxy_requests.pop(message.channel.id, None)
+                return False
+
+            await send_hood_message(
+                message.channel,
+                target,
+                message.content,
+            )
+
+        else:
+            proxy_requests.pop(message.channel.id, None)
+            return False
+
+        proxy_requests.pop(message.channel.id, None)
+
+        # Replace the proxy bot's original output only after the transformed
+        # webhook message was successfully sent.
+        await delete_original_message(message)
+        return True
+
+    except (UwuMessageBlocked, HoodMessageBlocked):
+        # Leave the proxy output alone when the configured content blacklist
+        # blocks the transformed message.
+        proxy_requests.pop(message.channel.id, None)
+        return False
+    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+        return False
+    except Exception:
+        return False
+
+
+# =========================
 # PREFIX COMMANDS
 # =========================
 
@@ -1155,13 +1310,30 @@ async def on_message(message: discord.Message):
     Prefix command messages are intentionally kept instead of being deleted.
     Only normal messages from active UWU targets are replaced/deleted.
     """
-    if message.author.bot or message.webhook_id is not None:
+    proxy_message = is_proxy_bot_message(message)
+
+    # Ignore normal bot/webhook messages, but allow configured proxy-bot output
+    # through the UWUIFY/HOODIFY enforcement path.
+    if message.author.bot and not proxy_message:
+        return
+
+    if message.webhook_id is not None and not proxy_message:
         return
 
     if not isinstance(message.channel, discord.TextChannel):
         return
 
     content = message.content.strip()
+
+    if proxy_message:
+        handled = await handle_proxy_message(message)
+        if handled:
+            return
+        return
+
+    # Remember commands such as ,uwu / ,uwuify / ,hood / ,hoodify so the
+    # subsequent configured proxy-bot response can be transformed for that user.
+    remember_proxy_request(message, content)
 
     # Prefix ping.
     if content.lower() == ",ping":
