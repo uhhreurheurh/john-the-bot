@@ -1399,6 +1399,24 @@ async def handle_proxy_message(message: discord.Message) -> bool:
 # PREFIX COMMANDS
 # =========================
 
+# =========================
+# PREFIX BLACKLIST HELPERS
+# =========================
+
+def prefix_blacklist_allowed(message: discord.Message) -> bool:
+    """Return True when a prefix blacklist command may be used."""
+    if message.guild is None or message.guild.id != MAIN_SERVER:
+        return False
+
+    if BLACKLIST_ALLOWED_ROLE_ID == 0:
+        return False
+
+    return (
+        isinstance(message.author, discord.Member)
+        and BLACKLIST_ALLOWED_ROLE_ID in {role.id for role in message.author.roles}
+    )
+
+
 @bot.event
 async def on_message(message: discord.Message):
     """Handle comma-prefix commands and automatic UWU replacement.
@@ -1420,6 +1438,80 @@ async def on_message(message: discord.Message):
         return
 
     content = message.content.strip()
+
+    # -------------------------
+    # UWUIFY / HOODIFY USER BLACKLIST PREFIX COMMANDS
+    # -------------------------
+    # Supported commands:
+    # ,uwublacklist @user
+    # ,uwuunblacklist @user
+    # ,hoodblacklist @user
+    # ,hoodunblacklist @user
+    blacklist_command = content.lower().split(maxsplit=1)[0]
+
+    if blacklist_command in {
+        ",uwublacklist",
+        ",uwu_blacklist",
+        ",uwuunblacklist",
+        ",uwu_unblacklist",
+        ",hoodblacklist",
+        ",hood_blacklist",
+        ",hoodunblacklist",
+        ",hood_unblacklist",
+    }:
+        if not prefix_blacklist_allowed(message):
+            await message.reply(
+                "❌ You do not have permission to use this blacklist command.",
+                mention_author=False,
+            )
+            return
+
+        if not message.mentions:
+            await message.reply(
+                "Usage: ,uwublacklist @user | ,uwuunblacklist @user | "
+                ",hoodblacklist @user | ,hoodunblacklist @user",
+                mention_author=False,
+            )
+            return
+
+        target = message.mentions[0]
+
+        if blacklist_command in {",uwublacklist", ",uwu_blacklist"}:
+            uwu_user_blacklist.add(target.id)
+            save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
+            removed = await disable_uwu_for_user(target.id)
+
+            response = f"✅ {target.mention} is now blacklisted from UWUIFY."
+            if removed:
+                response += f" Removed them from **{removed}** active channel(s)."
+
+        elif blacklist_command in {",uwuunblacklist", ",uwu_unblacklist"}:
+            if target.id not in uwu_user_blacklist:
+                response = f"ℹ️ {target.mention} is not currently blacklisted from UWUIFY."
+            else:
+                uwu_user_blacklist.remove(target.id)
+                save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
+                response = f"✅ {target.mention} can use UWUIFY again."
+
+        elif blacklist_command in {",hoodblacklist", ",hood_blacklist"}:
+            hood_user_blacklist.add(target.id)
+            save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
+            removed = await disable_hood_for_user(target.id)
+
+            response = f"✅ {target.mention} is now blacklisted from HOODIFY."
+            if removed:
+                response += f" Removed them from **{removed}** active channel(s)."
+
+        else:
+            if target.id not in hood_user_blacklist:
+                response = f"ℹ️ {target.mention} is not currently blacklisted from HOODIFY."
+            else:
+                hood_user_blacklist.remove(target.id)
+                save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
+                response = f"✅ {target.mention} can use HOODIFY again."
+
+        await message.reply(response, mention_author=False)
+        return
 
     if proxy_message:
         handled = await handle_proxy_message(message)
