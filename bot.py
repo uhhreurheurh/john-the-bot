@@ -445,7 +445,9 @@ def hoodify_text(content: str) -> str:
 
     def protect(match):
         protected.append(match.group(0))
-        return f"__HOOD_PROTECTED_{len(protected) - 1}__"
+        # ASCII placeholders can themselves be modified by slang replacements.
+        # Private-use Unicode characters are left untouched.
+        return f"\ue002{len(protected) - 1}\ue003"
 
     result = re.sub(
         r"https?://\S+|<@!?\d+>|<@&\d+>|<#\d+>|<a?:\w+:\d+>",
@@ -500,7 +502,7 @@ def hoodify_text(content: str) -> str:
     result = re.sub(r"[ \t]{2,}", " ", result).strip()
 
     for index, original in enumerate(protected):
-        result = result.replace(f"__HOOD_PROTECTED_{index}__", original)
+        result = result.replace(f"\ue002{index}\ue003", original)
 
     # For a message where nothing matched and random seasoning didn't fire,
     # use one of several fallbacks instead of always adding "fr".
@@ -962,7 +964,9 @@ async def send_uwu_message(
 
     def protect_mention(match):
         protected_mentions.append(match.group(0))
-        return f"__UWU_PROTECTED_{len(protected_mentions) - 1}__"
+        # Use Unicode private-use characters only. ASCII placeholder words such
+        # as "__UWU_PROTECTED_0__" get transformed by uwuify itself.
+        return f"\ue000{len(protected_mentions) - 1}\ue001"
 
     uwu_input = re.sub(
         r"<@!?\d+>|<@&\d+>|<#\d+>",
@@ -978,7 +982,7 @@ async def send_uwu_message(
     # Restore exact Discord mention tokens before sending.
     for index, original in enumerate(protected_mentions):
         uwu_text = uwu_text.replace(
-            f"__UWU_PROTECTED_{index}__",
+            f"\ue000{index}\ue001",
             original,
         )
 
