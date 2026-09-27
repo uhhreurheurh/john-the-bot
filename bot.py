@@ -35,6 +35,11 @@ BLACKLIST_ALLOWED_ROLE_ID = 1306082718060384399  # <-- put the whitelisted role 
 # This survives bot restarts.
 BLACKLIST_FILE = Path(__file__).with_name("second_role_blacklist.json")
 
+# Separate persistent blacklists for UWUIFY and HOODIFY targets.
+# A blacklisted member cannot be selected for that mode.
+UWU_USER_BLACKLIST_FILE = Path(__file__).with_name("uwu_user_blacklist.json")
+HOOD_USER_BLACKLIST_FILE = Path(__file__).with_name("hood_user_blacklist.json")
+
 # Tag server ids
 # Keep this list in the same order as tag_server_role_ids below.
 tag_servers = [
@@ -143,6 +148,44 @@ def save_blacklist(blacklist: set[int]) -> None:
 
 
 second_role_blacklist = load_blacklist()
+
+
+def load_user_blacklist(path: Path) -> set[int]:
+    """Load a persistent user-ID blacklist from disk."""
+    if not path.exists():
+        return set()
+
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            data = json.load(file)
+
+        if not isinstance(data, list):
+            return set()
+
+        return {int(user_id) for user_id in data}
+    except (json.JSONDecodeError, ValueError, TypeError, OSError):
+        return set()
+
+
+def save_user_blacklist(path: Path, blacklist: set[int]) -> None:
+    """Save a user-ID blacklist to disk."""
+    try:
+        with path.open("w", encoding="utf-8") as file:
+            json.dump(sorted(blacklist), file, indent=2)
+    except OSError:
+        pass
+
+
+uwu_user_blacklist = load_user_blacklist(UWU_USER_BLACKLIST_FILE)
+hood_user_blacklist = load_user_blacklist(HOOD_USER_BLACKLIST_FILE)
+
+
+class UwuUserBlacklisted(Exception):
+    """Raised when a member is blocked from using UWUIFY."""
+
+
+class HoodUserBlacklisted(Exception):
+    """Raised when a member is blocked from using HOODIFY."""
 
 
 HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS = 60
@@ -621,6 +664,9 @@ async def set_hood_target(
     channel: discord.TextChannel,
     target: discord.Member,
 ) -> discord.Webhook:
+    if target.id in hood_user_blacklist:
+        raise HoodUserBlacklisted
+
     async with hood_target_lock:
         channel_targets = hood_targets.setdefault(channel.id, set())
 
@@ -880,6 +926,9 @@ async def set_uwu_target(
     target: discord.Member,
 ) -> discord.Webhook:
     """Add a target to UWU mode while enforcing a global 5-person cap."""
+    if target.id in uwu_user_blacklist:
+        raise UwuUserBlacklisted
+
     async with uwu_target_lock:
         channel_targets = uwu_targets.setdefault(channel.id, set())
 
@@ -1078,6 +1127,52 @@ async def uwu_webhook_cleanup_loop():
 @uwu_webhook_cleanup_loop.before_loop
 async def before_uwu_webhook_cleanup():
     await bot.wait_until_ready()
+
+
+async def disable_uwu_for_user(user_id: int) -> int:
+    """Remove one user from every active UWUIFY channel."""
+    affected_channels = [
+        channel_id
+        for channel_id, target_ids in uwu_targets.items()
+        if user_id in target_ids
+    ]
+
+    removed = 0
+    for channel_id in affected_channels:
+        target_ids = uwu_targets.get(channel_id)
+        if target_ids is None or user_id not in target_ids:
+            continue
+
+        target_ids.discard(user_id)
+        removed += 1
+
+        if not target_ids:
+            await disable_uwu_target(channel_id)
+
+    return removed
+
+
+async def disable_hood_for_user(user_id: int) -> int:
+    """Remove one user from every active HOODIFY channel."""
+    affected_channels = [
+        channel_id
+        for channel_id, target_ids in hood_targets.items()
+        if user_id in target_ids
+    ]
+
+    removed = 0
+    for channel_id in affected_channels:
+        target_ids = hood_targets.get(channel_id)
+        if target_ids is None or user_id not in target_ids:
+            continue
+
+        target_ids.discard(user_id)
+        removed += 1
+
+        if not target_ids:
+            await disable_hood_target(channel_id)
+
+    return removed
 
 
 # =========================
@@ -1472,7 +1567,6 @@ async def on_message(message: discord.Message):
 
         try:
             await set_uwu_target(message.channel, target)
-            pass
 
             if len(parts) >= 3:
                 try:
@@ -1486,6 +1580,11 @@ async def on_message(message: discord.Message):
             await message.reply(
                 f"✅ Uwu mode is active for {target.mention} in this channel. "
                 f"Active people: **{get_active_uwu_target_count()}/{MAX_ACTIVE_UWU_TARGETS}**.",
+                mention_author=False,
+            )
+        except UwuUserBlacklisted:
+            await message.reply(
+                f"❌ {target.mention} is blacklisted from using UWUIFY.",
                 mention_author=False,
             )
         except UwuTargetLimitReached:
@@ -1627,6 +1726,11 @@ async def on_message(message: discord.Message):
                 f"✅ HOODIFY is active for {target.mention} in this channel. "
                 f"Active people: **{get_active_hood_target_count()}/"
                 f"{MAX_ACTIVE_HOOD_TARGETS}**.",
+                mention_author=False,
+            )
+        except HoodUserBlacklisted:
+            await message.reply(
+                f"❌ {target.mention} is blacklisted from using HOODIFY.",
                 mention_author=False,
             )
         except HoodTargetLimitReached:
@@ -1886,6 +1990,11 @@ async def hoodify_command(
             "The temporary webhook will be deleted after 5 minutes without use.",
             ephemeral=True,
         )
+    except HoodUserBlacklisted:
+        await interaction.response.send_message(
+            f"❌ {member.mention} is blacklisted from using HOODIFY.",
+            ephemeral=True,
+        )
     except HoodTargetLimitReached:
         await interaction.response.send_message(
             f"❌ The global limit of {MAX_ACTIVE_HOOD_TARGETS} HOODIFIED people has been reached. "
@@ -1967,6 +2076,11 @@ async def uwu_command(
             "The temporary webhook will be deleted after 5 minutes without use.",
             ephemeral=True,
         )
+    except UwuUserBlacklisted:
+        await interaction.response.send_message(
+            f"❌ {member.mention} is blacklisted from using UWUIFY.",
+            ephemeral=True,
+        )
     except UwuTargetLimitReached:
         await interaction.response.send_message(
             f"❌ The global limit of {MAX_ACTIVE_UWU_TARGETS} UWUified people has been reached. "
@@ -1988,6 +2102,100 @@ async def uwu_command(
             "❌ The uwu mode could not be enabled.",
             ephemeral=True,
         )
+
+
+@tree.command(
+    name="uwu_blacklist",
+    description="Block a member from being UWUified.",
+)
+@app_commands.describe(member="The member to block from UWUIFY")
+@app_commands.check(blacklist_command_check)
+async def uwu_blacklist_command(
+    interaction: discord.Interaction,
+    member: discord.Member,
+):
+    uwu_user_blacklist.add(member.id)
+    save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
+    removed = await disable_uwu_for_user(member.id)
+
+    await interaction.response.send_message(
+        f"✅ {member.mention} is now blacklisted from UWUIFY."
+        + (f" Removed them from **{removed}** active channel(s)." if removed else ""),
+        ephemeral=True,
+    )
+
+
+@tree.command(
+    name="uwu_unblacklist",
+    description="Allow a member to be UWUified again.",
+)
+@app_commands.describe(member="The member to remove from the UWUIFY blacklist")
+@app_commands.check(blacklist_command_check)
+async def uwu_unblacklist_command(
+    interaction: discord.Interaction,
+    member: discord.Member,
+):
+    if member.id not in uwu_user_blacklist:
+        await interaction.response.send_message(
+            f"ℹ️ {member.mention} is not currently blacklisted from UWUIFY.",
+            ephemeral=True,
+        )
+        return
+
+    uwu_user_blacklist.remove(member.id)
+    save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
+
+    await interaction.response.send_message(
+        f"✅ {member.mention} can use UWUIFY again.",
+        ephemeral=True,
+    )
+
+
+@tree.command(
+    name="hood_blacklist",
+    description="Block a member from being HOODIFIED.",
+)
+@app_commands.describe(member="The member to block from HOODIFY")
+@app_commands.check(blacklist_command_check)
+async def hood_blacklist_command(
+    interaction: discord.Interaction,
+    member: discord.Member,
+):
+    hood_user_blacklist.add(member.id)
+    save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
+    removed = await disable_hood_for_user(member.id)
+
+    await interaction.response.send_message(
+        f"✅ {member.mention} is now blacklisted from HOODIFY."
+        + (f" Removed them from **{removed}** active channel(s)." if removed else ""),
+        ephemeral=True,
+    )
+
+
+@tree.command(
+    name="hood_unblacklist",
+    description="Allow a member to be HOODIFIED again.",
+)
+@app_commands.describe(member="The member to remove from the HOODIFY blacklist")
+@app_commands.check(blacklist_command_check)
+async def hood_unblacklist_command(
+    interaction: discord.Interaction,
+    member: discord.Member,
+):
+    if member.id not in hood_user_blacklist:
+        await interaction.response.send_message(
+            f"ℹ️ {member.mention} is not currently blacklisted from HOODIFY.",
+            ephemeral=True,
+        )
+        return
+
+    hood_user_blacklist.remove(member.id)
+    save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
+
+    await interaction.response.send_message(
+        f"✅ {member.mention} can use HOODIFY again.",
+        ephemeral=True,
+    )
 
 
 @tree.command(
