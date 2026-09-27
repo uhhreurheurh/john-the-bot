@@ -720,6 +720,9 @@ async def send_hood_message(
     target: discord.Member,
     content: str,
 ) -> list[discord.WebhookMessage]:
+    if target.id in hood_user_blacklist:
+        raise HoodUserBlacklisted
+
     ensure_hood_message_is_allowed(content)
 
     webhook = await get_hood_webhook(channel)
@@ -996,6 +999,9 @@ async def send_uwu_message(
     target: discord.Member,
     content: str,
 ) -> list[discord.WebhookMessage]:
+    if target.id in uwu_user_blacklist:
+        raise UwuUserBlacklisted
+
     """Uwuify text and send it through the temporary webhook.
 
     The message is checked before and after uwuification so a blocked word/phrase
@@ -1314,10 +1320,14 @@ def remember_proxy_request(message: discord.Message, content: str) -> None:
 
     mode = mode_match.group(1).lower()
     if mode.startswith("uwu"):
+        if message.author.id in uwu_user_blacklist:
+            return
         if message.author.id not in uwu_targets.get(message.channel.id, set()):
             return
         mode = "uwu"
     else:
+        if message.author.id in hood_user_blacklist:
+            return
         if message.author.id not in hood_targets.get(message.channel.id, set()):
             return
         mode = "hood"
@@ -1352,6 +1362,9 @@ async def handle_proxy_message(message: discord.Message) -> bool:
 
     try:
         if mode == "uwu":
+            if target.id in uwu_user_blacklist:
+                proxy_requests.pop(message.channel.id, None)
+                return False
             if target.id not in uwu_targets.get(message.channel.id, set()):
                 proxy_requests.pop(message.channel.id, None)
                 return False
@@ -1363,6 +1376,9 @@ async def handle_proxy_message(message: discord.Message) -> bool:
             )
 
         elif mode == "hood":
+            if target.id in hood_user_blacklist:
+                proxy_requests.pop(message.channel.id, None)
+                return False
             if target.id not in hood_targets.get(message.channel.id, set()):
                 proxy_requests.pop(message.channel.id, None)
                 return False
@@ -1526,6 +1542,9 @@ async def on_message(message: discord.Message):
     uwu_target_ids = uwu_targets.get(message.channel.id, set())
 
     if message.author.id in hood_target_ids and content:
+        if message.author.id in hood_user_blacklist:
+            await disable_hood_for_user(message.author.id)
+            return
         bot_member = message.guild.me if message.guild is not None else None
         if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
             return
@@ -1539,6 +1558,9 @@ async def on_message(message: discord.Message):
         return
 
     if message.author.id in uwu_target_ids and content:
+        if message.author.id in uwu_user_blacklist:
+            await disable_uwu_for_user(message.author.id)
+            return
         bot_member = message.guild.me if message.guild is not None else None
         if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
             return
