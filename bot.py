@@ -1,10 +1,14 @@
 import os
 import asyncio
+import base64
 import json
 import re
 import random
 import logging
 from pathlib import Path
+import urllib.error
+import urllib.parse
+import urllib.request
 
 import discord
 from discord import app_commands
@@ -39,6 +43,14 @@ BLACKLIST_FILE = Path(__file__).with_name("second_role_blacklist.json")
 # A blacklisted member cannot be selected for that mode.
 UWU_USER_BLACKLIST_FILE = Path(__file__).with_name("uwu_user_blacklist.json")
 HOOD_USER_BLACKLIST_FILE = Path(__file__).with_name("hood_user_blacklist.json")
+
+# GitHub persistence for the UWUIFY / HOODIFY user-ID blacklists.
+# GITHUB_TOKEN is stored securely in Railway. The repository and branch can
+# also be overridden with Railway variables, but default to this bot repo.
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GITHUB_REPO = os.getenv("GITHUB_REPO", "uhhreurhheurh/john-the-bot")
+GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
+GITHUB_API_BASE = "https://api.github.com"
 
 # Tag server ids
 # Keep this list in the same order as tag_server_role_ids below.
@@ -151,7 +163,7 @@ second_role_blacklist = load_blacklist()
 
 
 def load_user_blacklist(path: Path) -> set[int]:
-    """Load a persistent user-ID blacklist from disk."""
+    """Load a persistent user-ID blacklist from local disk."""
     if not path.exists():
         return set()
 
@@ -167,13 +179,215 @@ def load_user_blacklist(path: Path) -> set[int]:
         return set()
 
 
-def save_user_blacklist(path: Path, blacklist: set[int]) -> None:
-    """Save a user-ID blacklist to disk."""
+def _save_user_blacklist_local(path: Path, blacklist: set[int]) -> None:
+    """Write a user-ID blacklist to the local filesystem as a fallback cache."""
     try:
         with path.open("w", encoding="utf-8") as file:
             json.dump(sorted(blacklist), file, indent=2)
     except OSError:
         pass
+
+
+def _github_headers() -> dict[str, str]:
+    """Build headers for GitHub's REST API."""
+    if not GITHUB_TOKEN:
+        raise RuntimeError("GITHUB_TOKEN is not configured.")
+
+    return {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "john-the-bot",
+    }
+
+
+def _github_blacklist_path(path: Path) -> str:
+    """Return the repository path used for a local blacklist file."""
+    return path.name
+
+
+def _github_get_user_blacklist(
+    path: Path,
+) -> tuple[bool, set[int], str | None]:
+    """Fetch a user-ID blacklist and its current Git blob SHA from GitHub.
+
+    Returns:
+        (True, blacklist, sha) when the file exists.
+        (False, empty_set, None) when it does not exist yet.
+    """
+    encoded_path = urllib.parse.quote(
+        _github_blacklist_path(path),
+        safe="",
+    )
+    encoded_branch = urllib.parse.quote(GITHUB_BRANCH, safe="")
+    url = (
+        f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/contents/"
+        f"{encoded_path}?ref={encoded_branch}"
+    )
+
+    request = urllib.request.Request(
+        url,
+        headers=_github_headers(),
+        method="GET",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return False, set(), None
+        raise
+
+    encoded_content = payload.get("content", "")
+    if not encoded_content:
+        return True, set(), payload.get("sha")
+
+    decoded_content = base64.b64decode(
+        "".join(encoded_content.split())
+    ).decode("utf-8")
+
+    data = json.loads(decoded_content)
+    if not isinstance(data, list):
+        raise ValueError(
+            f"GitHub blacklist file {_github_blacklist_path(path)!r} "
+            "must contain a JSON list."
+        )
+
+    return (
+        True,
+        {int(user_id) for user_id in data},
+        payload.get("sha"),
+    )
+
+
+def _github_save_user_blacklist(
+    path: Path,
+    blacklist: set[int],
+) -> None:
+    """Create or update one user-ID blacklist in the GitHub repository."""
+    encoded_path = urllib.parse.quote(
+        _github_blacklist_path(path),
+        safe="",
+    )
+    url = f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/contents/{encoded_path}"
+
+    # Get the current SHA so an existing file is updated safely. If the file
+    # is missing, the same endpoint creates it.
+    exists, _, content_sha = _github_get_user_blacklist(path)
+
+    serialized = json.dumps(
+        sorted(blacklist),
+        indent=2,
+    ) + "\n"
+
+    payload = {
+        "message": f"Update {_github_blacklist_path(path)}",
+        "content": base64.b64encode(
+            serialized.encode("utf-8")
+        ).decode("ascii"),
+        "branch": GITHUB_BRANCH,
+    }
+
+    if exists and content_sha:
+        payload["sha"] = content_sha
+
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            **_github_headers(),
+            "Content-Type": "application/json",
+        },
+        method="PUT",
+    )
+
+    with urllib.request.urlopen(request, timeout=20) as response:
+        response.read()
+
+
+GITHUB_USER_BLACKLIST_SYNC_LOCK = asyncio.Lock()
+
+
+async def save_user_blacklist(
+    path: Path,
+    blacklist: set[int],
+) -> bool:
+    """Save locally and sync the user-ID blacklist to GitHub.
+
+    The local JSON file is kept as a fallback cache, while GitHub is the
+    persistent source across Railway restarts/redeploys.
+    """
+    _save_user_blacklist_local(path, blacklist)
+
+    if not GITHUB_TOKEN:
+        return False
+
+    async with GITHUB_USER_BLACKLIST_SYNC_LOCK:
+        try:
+            await asyncio.to_thread(
+                _github_save_user_blacklist,
+                path,
+                set(blacklist),
+            )
+            return True
+        except Exception:
+            return False
+
+
+async def sync_user_blacklists_from_github() -> bool:
+    """Load both UWUIFY and HOODIFY user-ID blacklists from GitHub.
+
+    When a GitHub file exists, it is the persistent source of truth and is
+    copied into the local cache. When the file does not exist, any existing
+    local cache is uploaded so the first deployment does not erase old entries.
+    """
+    if not GITHUB_TOKEN:
+        return False
+
+    async with GITHUB_USER_BLACKLIST_SYNC_LOCK:
+        try:
+            global uwu_user_blacklist, hood_user_blacklist
+
+            for path, blacklist_name in (
+                (UWU_USER_BLACKLIST_FILE, "uwu"),
+                (HOOD_USER_BLACKLIST_FILE, "hood"),
+            ):
+                exists, github_blacklist, _ = await asyncio.to_thread(
+                    _github_get_user_blacklist,
+                    path,
+                )
+
+                if exists:
+                    if blacklist_name == "uwu":
+                        uwu_user_blacklist.clear()
+                        uwu_user_blacklist.update(github_blacklist)
+                        _save_user_blacklist_local(
+                            UWU_USER_BLACKLIST_FILE,
+                            uwu_user_blacklist,
+                        )
+                    else:
+                        hood_user_blacklist.clear()
+                        hood_user_blacklist.update(github_blacklist)
+                        _save_user_blacklist_local(
+                            HOOD_USER_BLACKLIST_FILE,
+                            hood_user_blacklist,
+                        )
+                else:
+                    local_blacklist = (
+                        uwu_user_blacklist
+                        if blacklist_name == "uwu"
+                        else hood_user_blacklist
+                    )
+                    await asyncio.to_thread(
+                        _github_save_user_blacklist,
+                        path,
+                        set(local_blacklist),
+                    )
+
+            return True
+        except Exception:
+            return False
 
 
 uwu_user_blacklist = load_user_blacklist(UWU_USER_BLACKLIST_FILE)
@@ -1193,6 +1407,7 @@ intents.message_content = True
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 commands_synced = False
+user_blacklists_synced = False
 
 
 # =========================
@@ -1494,7 +1709,7 @@ async def on_message(message: discord.Message):
 
         if blacklist_command in {",uwublacklist", ",uwu_blacklist"}:
             uwu_user_blacklist.add(target.id)
-            save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
+            await save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
             removed = await disable_uwu_for_user(target.id)
 
             response = f"✅ {target.mention} is now blacklisted from UWUIFY."
@@ -1506,12 +1721,12 @@ async def on_message(message: discord.Message):
                 response = f"ℹ️ {target.mention} is not currently blacklisted from UWUIFY."
             else:
                 uwu_user_blacklist.remove(target.id)
-                save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
+                await save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
                 response = f"✅ {target.mention} can use UWUIFY again."
 
         elif blacklist_command in {",hoodblacklist", ",hood_blacklist"}:
             hood_user_blacklist.add(target.id)
-            save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
+            await save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
             removed = await disable_hood_for_user(target.id)
 
             response = f"✅ {target.mention} is now blacklisted from HOODIFY."
@@ -1523,7 +1738,7 @@ async def on_message(message: discord.Message):
                 response = f"ℹ️ {target.mention} is not currently blacklisted from HOODIFY."
             else:
                 hood_user_blacklist.remove(target.id)
-                save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
+                await save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
                 response = f"✅ {target.mention} can use HOODIFY again."
 
         await message.reply(response, mention_author=False)
@@ -2229,7 +2444,7 @@ async def uwu_blacklist_command(
     member: discord.Member,
 ):
     uwu_user_blacklist.add(member.id)
-    save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
+    await save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
     removed = await disable_uwu_for_user(member.id)
 
     await interaction.response.send_message(
@@ -2257,7 +2472,7 @@ async def uwu_unblacklist_command(
         return
 
     uwu_user_blacklist.remove(member.id)
-    save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
+    await save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
 
     await interaction.response.send_message(
         f"✅ {member.mention} can use UWUIFY again.",
@@ -2276,7 +2491,7 @@ async def hood_blacklist_command(
     member: discord.Member,
 ):
     hood_user_blacklist.add(member.id)
-    save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
+    await save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
     removed = await disable_hood_for_user(member.id)
 
     await interaction.response.send_message(
@@ -2304,7 +2519,7 @@ async def hood_unblacklist_command(
         return
 
     hood_user_blacklist.remove(member.id)
-    save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
+    await save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
 
     await interaction.response.send_message(
         f"✅ {member.mention} can use HOODIFY again.",
@@ -2581,6 +2796,11 @@ async def on_ready():
             pass
         except Exception as e:
             pass
+
+    global user_blacklists_synced
+    if not user_blacklists_synced:
+        if await sync_user_blacklists_from_github():
+            user_blacklists_synced = True
 
     if not kick_loop.is_running():
         kick_loop.start()
