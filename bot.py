@@ -1734,8 +1734,13 @@ async def on_message(message: discord.Message):
 
     content = message.content.strip()
 
+    # Parse the readable spaced prefix syntax once so all handlers can use it.
+    spaced_parts = content.split(maxsplit=2)
+
     prefix_command = content.lower().split(maxsplit=1)[0]
-    if prefix_command in {",uwuify", ",unuwuify", ",hoodify", ",unhoodify"} and uwu_hoodify_user_is_banned(message.author):
+    if prefix_command in {
+        ",uwuify", ",unuwuify", ",hoodify", ",unhoodify", ",uwu", ",hood"
+    } and uwu_hoodify_user_is_banned(message.author):
         await message.reply(
             "❌ You are banned from using UWUIFY and HOODIFY.",
             mention_author=False,
@@ -1928,14 +1933,7 @@ async def on_message(message: discord.Message):
     # Only non-target users continue into the command parser.
     remember_proxy_request(message, content)
 
-    # Prefix ping.
-    if content.lower() == ",ping":
-        latency_ms = round(bot.latency * 1000)
-        await message.reply(f"🏓 Pong! `{latency_ms}ms`", mention_author=False)
-        return
-
-    # Readable spaced prefix aliases: ,uwu on/off/count and ,hood on/off/count.
-    spaced_parts = content.split(maxsplit=2)
+    # Translate readable mode/count prefixes to the existing command parser.
     if len(spaced_parts) >= 2:
         spaced_root = spaced_parts[0].lower()
         spaced_action = spaced_parts[1].lower()
@@ -1949,6 +1947,14 @@ async def on_message(message: discord.Message):
         elif spaced_root == ",hood" and spaced_action in {"on", "off"}:
             rest = spaced_parts[2] if len(spaced_parts) >= 3 else ""
             content = ",hoodify " + spaced_action + (f" {rest}" if rest else "")
+
+    # Prefix ping.
+    if content.lower() == ",ping":
+        latency_ms = round(bot.latency * 1000)
+        await message.reply(f"🏓 Pong! `{latency_ms}ms`", mention_author=False)
+        return
+
+    # Readable spaced prefix aliases are parsed above.
 
     # Prefix command to show how many people are currently being UWUified.
     if content.lower() == ",uwucount":
