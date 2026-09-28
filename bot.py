@@ -1742,6 +1742,63 @@ async def on_message(message: discord.Message):
         )
         return
 
+    # Spaced moderation commands.
+    if len(spaced_parts) >= 2 and spaced_parts[0].lower() == ",blacklist" and spaced_parts[1].lower() in {"add", "remove", "status"}:
+        if not prefix_blacklist_allowed(message):
+            await message.reply("❌ You do not have permission to use this blacklist command.", mention_author=False)
+            return
+        if not message.mentions:
+            await message.reply("Usage: ,blacklist add @user | ,blacklist remove @user | ,blacklist status @user", mention_author=False)
+            return
+        target = message.mentions[0]
+        action = spaced_parts[1].lower()
+        if action == "add":
+            second_role_blacklist.add(target.id)
+            save_blacklist(second_role_blacklist)
+            await message.reply(f"✅ {target.mention} has been added to the second-role blacklist.", mention_author=False)
+        elif action == "remove":
+            if target.id not in second_role_blacklist:
+                response = f"ℹ️ {target.mention} is not currently on the second-role blacklist."
+            else:
+                second_role_blacklist.remove(target.id)
+                save_blacklist(second_role_blacklist)
+                response = f"✅ {target.mention} has been removed from the second-role blacklist."
+            await message.reply(response, mention_author=False)
+        else:
+            blacklisted = target.id in second_role_blacklist
+            await message.reply(f"{target.mention} is **{'blacklisted' if blacklisted else 'not blacklisted'}** for the second main-server role.", mention_author=False)
+        return
+
+    if len(spaced_parts) >= 3 and spaced_parts[0].lower() == ",uwuify" and spaced_parts[1].lower() == "hoodify" and spaced_parts[2].lower() in {"ban", "unban"}:
+        if not prefix_blacklist_allowed(message):
+            await message.reply("❌ You do not have permission to use this command.", mention_author=False)
+            return
+        if not message.mentions:
+            await message.reply("Usage: ,uwuify hoodify ban @user | ,uwuify hoodify unban @user", mention_author=False)
+            return
+        target = message.mentions[0]
+        action = spaced_parts[2].lower()
+        if action == "ban":
+            if target.id in uwu_hoodify_ban:
+                await message.reply(f"ℹ️ {target.mention} is already banned from UWUIFY and HOODIFY.", mention_author=False)
+                return
+            uwu_hoodify_ban.add(target.id)
+            await save_user_blacklist(UWU_HOODIFY_BAN_FILE, uwu_hoodify_ban)
+            removed_uwu = await disable_uwu_for_user(target.id)
+            removed_hood = await disable_hood_for_user(target.id)
+            removed = removed_uwu + removed_hood
+            response = f"✅ {target.mention} is now banned from running UWUIFY and HOODIFY."
+            if removed:
+                response += f" Removed {removed} active mode(s)."
+            await message.reply(response, mention_author=False)
+        else:
+            if target.id not in uwu_hoodify_ban:
+                await message.reply(f"ℹ️ {target.mention} is not currently banned from UWUIFY and HOODIFY.", mention_author=False)
+                return
+            uwu_hoodify_ban.remove(target.id)
+            await save_user_blacklist(UWU_HOODIFY_BAN_FILE, uwu_hoodify_ban)
+            await message.reply(f"✅ {target.mention} can run UWUIFY and HOODIFY again.", mention_author=False)
+        return
     # -------------------------
     # UWUIFY / HOODIFY USER BLACKLIST PREFIX COMMANDS
     # -------------------------
@@ -1751,6 +1808,14 @@ async def on_message(message: discord.Message):
     # ,hoodblacklist @user
     # ,hoodunblacklist @user
     blacklist_command = content.lower().split(maxsplit=1)[0]
+    spaced_blacklist_command = " ".join(content.lower().split()[:2])
+    blacklist_aliases = {
+        ",uwu blacklist": ",uwu_blacklist",
+        ",uwu unblacklist": ",uwu_unblacklist",
+        ",hood blacklist": ",hood_blacklist",
+        ",hood unblacklist": ",hood_unblacklist",
+    }
+    blacklist_command = blacklist_aliases.get(spaced_blacklist_command, blacklist_command)
 
     if blacklist_command in {
         ",uwublacklist",
@@ -1868,6 +1933,22 @@ async def on_message(message: discord.Message):
         latency_ms = round(bot.latency * 1000)
         await message.reply(f"🏓 Pong! `{latency_ms}ms`", mention_author=False)
         return
+
+    # Readable spaced prefix aliases: ,uwu on/off/count and ,hood on/off/count.
+    spaced_parts = content.split(maxsplit=2)
+    if len(spaced_parts) >= 2:
+        spaced_root = spaced_parts[0].lower()
+        spaced_action = spaced_parts[1].lower()
+        if spaced_root == ",uwu" and spaced_action == "count":
+            content = ",uwucount"
+        elif spaced_root == ",uwu" and spaced_action in {"on", "off"}:
+            rest = spaced_parts[2] if len(spaced_parts) >= 3 else ""
+            content = ",uwuify " + spaced_action + (f" {rest}" if rest else "")
+        elif spaced_root == ",hood" and spaced_action == "count":
+            content = ",hoodcount"
+        elif spaced_root == ",hood" and spaced_action in {"on", "off"}:
+            rest = spaced_parts[2] if len(spaced_parts) >= 3 else ""
+            content = ",hoodify " + spaced_action + (f" {rest}" if rest else "")
 
     # Prefix command to show how many people are currently being UWUified.
     if content.lower() == ",uwucount":
@@ -1997,7 +2078,7 @@ async def on_message(message: discord.Message):
         except UwuTargetLimitReached:
             await message.reply(
                 f"❌ The global limit of {MAX_ACTIVE_UWU_TARGETS} UWUified people has been reached. "+
-                "Use `,unuwuify` or `/unuwuify` to disable all UWU modes, or wait for a slot to expire.",
+                "Use `,unuwuify` or `/uwuify off` to disable all UWU modes, or wait for a slot to expire.",
                 mention_author=False,
             )
         except discord.Forbidden:
@@ -2149,7 +2230,7 @@ async def on_message(message: discord.Message):
         except HoodTargetLimitReached:
             await message.reply(
                 f"❌ The global limit of {MAX_ACTIVE_HOOD_TARGETS} HOODIFIED "
-                "people has been reached. Use `,unhoodify` or `/unhoodify` "
+                "people has been reached. Use `,unhoodify` or `/hoodify off` "
                 "to disable all HOODIFY modes.",
                 mention_author=False,
             )
@@ -2259,8 +2340,16 @@ def uwu_hoodify_user_is_banned(member: discord.Member | discord.User) -> bool:
 # SLASH COMMANDS
 # =========================
 
-@tree.command(
-    name="uwuify_hoodify_ban",
+# Slash-command groups. Discord does not allow literal spaces in command names,
+# so grouped commands provide the visible spaced layout.
+uwuify_group = app_commands.Group(name="uwuify", description="Control UWU mode")
+uwuify_hoodify_group = app_commands.Group(name="hoodify", description="Manage UWUIFY and HOODIFY access")
+uwu_group = app_commands.Group(name="uwu", description="UWUIFY commands")
+hood_group = app_commands.Group(name="hood", description="HOODIFY commands")
+blacklist_group = app_commands.Group(name="blacklist", description="Manage the second-role blacklist")
+
+@uwuify_hoodify_group.command(
+    name="ban",
     description="Ban a member from running UWUIFY and HOODIFY.",
 )
 @app_commands.describe(member="The member to ban from UWUIFY and HOODIFY")
@@ -2287,8 +2376,8 @@ async def uwuify_hoodify_ban_command(interaction: discord.Interaction, member: d
     )
 
 
-@tree.command(
-    name="uwuify_hoodify_unban",
+@uwuify_hoodify_group.command(
+    name="unban",
     description="Allow a member to run UWUIFY and HOODIFY again.",
 )
 @app_commands.describe(member="The member to unban from UWUIFY and HOODIFY")
@@ -2321,8 +2410,8 @@ async def ping_command(interaction: discord.Interaction):
         f"🏓 Pong! **{latency_ms} ms**"
     )
 
-@tree.command(
-    name="unuwuify",
+@uwuify_group.command(
+    name="off",
     description="Disable UWU mode for everyone and delete active UWU webhooks.",
 )
 async def unuwuify_command(interaction: discord.Interaction):
@@ -2349,8 +2438,8 @@ async def unuwuify_command(interaction: discord.Interaction):
     )
 
 
-@tree.command(
-    name="uwucount",
+@uwu_group.command(
+    name="count",
     description="Show how many people are currently being UWUified.",
 )
 async def uwucount_command(interaction: discord.Interaction):
@@ -2369,8 +2458,8 @@ async def uwucount_command(interaction: discord.Interaction):
     )
 
 
-@tree.command(
-    name="unhoodify",
+@hoodify_group.command(
+    name="off",
     description="Disable HOODIFY mode for everyone and delete active HOODIFY webhooks.",
 )
 async def unhoodify_command(interaction: discord.Interaction):
@@ -2395,8 +2484,8 @@ async def unhoodify_command(interaction: discord.Interaction):
     )
 
 
-@tree.command(
-    name="hoodcount",
+@hood_group.command(
+    name="count",
     description="Show how many people are currently being HOODIFIED.",
 )
 async def hoodcount_command(interaction: discord.Interaction):
@@ -2413,8 +2502,8 @@ async def hoodcount_command(interaction: discord.Interaction):
     )
 
 
-@tree.command(
-    name="hoodify",
+@hoodify_group.command(
+    name="on",
     description="Add a member to this channel's automatic HOODIFY mode.",
 )
 @app_commands.describe(
@@ -2473,7 +2562,7 @@ async def hoodify_command(
         await interaction.response.send_message(
             f"✅ HOODIFY is active for {member.mention} in this channel. "
             f"Active people: **{active_count}/{MAX_ACTIVE_HOOD_TARGETS}**.\n"
-            "You can add more people with another `/hoodify` command. "
+            "You can add more people with another `/hoodify on` command. "
             "The temporary webhook will be deleted after 5 minutes without use.",
             ephemeral=False,
         )
@@ -2491,7 +2580,7 @@ async def hoodify_command(
     except HoodTargetLimitReached:
         await interaction.response.send_message(
             f"❌ The global limit of {MAX_ACTIVE_HOOD_TARGETS} HOODIFIED people has been reached. "
-            "Use `,unhoodify` or `/unhoodify` to disable all HOODIFY modes.",
+            "Use `,unhoodify` or `/hoodify off` to disable all HOODIFY modes.",
             ephemeral=False,
         )
     except discord.Forbidden:
@@ -2511,8 +2600,8 @@ async def hoodify_command(
         )
 
 
-@tree.command(
-    name="uwuify",
+@uwuify_group.command(
+    name="on",
     description="Add a member to this channel's automatic UWU mode.",
 )
 @app_commands.describe(
@@ -2571,7 +2660,7 @@ async def uwu_command(
         await interaction.response.send_message(
             f"✅ Uwu mode is active for {member.mention} in this channel. "
             f"Active people: **{active_count}/{MAX_ACTIVE_UWU_TARGETS}**.\n"
-            "You can add more people with another `/uwuify` command. "
+            "You can add more people with another `/uwuify on` command. "
             "The temporary webhook will be deleted after 5 minutes without use.",
             ephemeral=False,
         )
@@ -2589,7 +2678,7 @@ async def uwu_command(
     except UwuTargetLimitReached:
         await interaction.response.send_message(
             f"❌ The global limit of {MAX_ACTIVE_UWU_TARGETS} UWUified people has been reached. "
-            "Use `,unuwuify` or `/unuwuify` to disable all UWU modes, or wait for a slot to expire.",
+            "Use `,unuwuify` or `/uwuify off` to disable all UWU modes, or wait for a slot to expire.",
             ephemeral=False,
         )
     except discord.Forbidden:
@@ -2609,8 +2698,8 @@ async def uwu_command(
         )
 
 
-@tree.command(
-    name="uwu_blacklist",
+@uwu_group.command(
+    name="blacklist",
     description="Block a member from being UWUified.",
 )
 @app_commands.describe(member="The member to block from UWUIFY")
@@ -2644,8 +2733,8 @@ async def uwu_blacklist_command(
     )
 
 
-@tree.command(
-    name="uwu_unblacklist",
+@uwu_group.command(
+    name="unblacklist",
     description="Allow a member to be UWUified again.",
 )
 @app_commands.describe(member="The member to remove from the UWUIFY blacklist")
@@ -2682,8 +2771,8 @@ async def uwu_unblacklist_command(
     )
 
 
-@tree.command(
-    name="hood_blacklist",
+@hood_group.command(
+    name="blacklist",
     description="Block a member from being HOODIFIED.",
 )
 @app_commands.describe(member="The member to block from HOODIFY")
@@ -2717,8 +2806,8 @@ async def hood_blacklist_command(
     )
 
 
-@tree.command(
-    name="hood_unblacklist",
+@hood_group.command(
+    name="unblacklist",
     description="Allow a member to be HOODIFIED again.",
 )
 @app_commands.describe(member="The member to remove from the HOODIFY blacklist")
@@ -2755,8 +2844,8 @@ async def hood_unblacklist_command(
     )
 
 
-@tree.command(
-    name="blacklist",
+@blacklist_group.command(
+    name="add",
     description="Blacklist a member from receiving the second main-server role.",
 )
 @app_commands.describe(member="The member to blacklist from the second role")
@@ -2819,8 +2908,8 @@ async def blacklist_command(
     )
 
 
-@tree.command(
-    name="unblacklist",
+@blacklist_group.command(
+    name="remove",
     description="Remove a member from the second main-server role blacklist.",
 )
 @app_commands.describe(member="The member to remove from the blacklist")
@@ -2858,8 +2947,8 @@ async def unblacklist_command(
     )
 
 
-@tree.command(
-    name="blacklist_status",
+@blacklist_group.command(
+    name="status",
     description="Check whether a member is blacklisted from the second role.",
 )
 @app_commands.describe(member="The member to check")
@@ -2877,6 +2966,14 @@ async def blacklist_status_command(
         ephemeral=False,
     )
 
+
+# Register grouped slash-command roots.
+uwuify_group.add_command(uwuify_hoodify_group)
+tree.add_command(uwuify_group)
+tree.add_command(uwu_group)
+tree.add_command(hoodify_group)
+tree.add_command(hood_group)
+tree.add_command(blacklist_group)
 
 @tree.error
 async def on_app_command_error(
