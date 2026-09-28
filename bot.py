@@ -2266,11 +2266,11 @@ def uwu_hoodify_user_is_banned(member: discord.Member | discord.User) -> bool:
 @app_commands.describe(member="The member to ban from UWUIFY and HOODIFY")
 @app_commands.check(blacklist_command_check)
 async def uwuify_hoodify_ban_command(interaction: discord.Interaction, member: discord.Member):
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=False)
     if member.id in uwu_hoodify_ban:
         await interaction.followup.send(
             f"ℹ️ {member.mention} is already banned from UWUIFY and HOODIFY.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
@@ -2283,7 +2283,7 @@ async def uwuify_hoodify_ban_command(interaction: discord.Interaction, member: d
     await interaction.followup.send(
         f"✅ {member.mention} is now banned from running UWUIFY and HOODIFY."
         + (f" Removed {removed} active mode(s)." if removed else ""),
-        ephemeral=True,
+        ephemeral=False,
     )
 
 
@@ -2294,11 +2294,11 @@ async def uwuify_hoodify_ban_command(interaction: discord.Interaction, member: d
 @app_commands.describe(member="The member to unban from UWUIFY and HOODIFY")
 @app_commands.check(blacklist_command_check)
 async def uwuify_hoodify_unban_command(interaction: discord.Interaction, member: discord.Member):
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=False)
     if member.id not in uwu_hoodify_ban:
         await interaction.followup.send(
             f"ℹ️ {member.mention} is not currently banned from UWUIFY and HOODIFY.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
@@ -2306,7 +2306,7 @@ async def uwuify_hoodify_unban_command(interaction: discord.Interaction, member:
     await save_user_blacklist(UWU_HOODIFY_BAN_FILE, uwu_hoodify_ban)
     await interaction.followup.send(
         f"✅ {member.mention} can run UWUIFY and HOODIFY again.",
-        ephemeral=True,
+        ephemeral=False,
     )
 
 
@@ -2330,13 +2330,13 @@ async def unuwuify_command(interaction: discord.Interaction):
     if uwu_hoodify_user_is_banned(interaction.user):
         await interaction.response.send_message(
             "❌ You are banned from using UWUIFY and HOODIFY.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
     if not isinstance(interaction.user, discord.Member) or not uwu_user_is_whitelisted(interaction.user):
         await interaction.response.send_message(
             "❌ You need one of the allowed UWU roles to use this command.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
@@ -2345,7 +2345,7 @@ async def unuwuify_command(interaction: discord.Interaction):
     await interaction.response.send_message(
         f"✅ UWU mode disabled everywhere. "
         f"Removed **{disabled_count}** active channel(s).",
-        ephemeral=True,
+        ephemeral=False,
     )
 
 
@@ -2365,7 +2365,7 @@ async def uwucount_command(interaction: discord.Interaction):
         f"🩷 **UWU count**\n"
         f"Global: **{global_count}/{MAX_ACTIVE_UWU_TARGETS}** people\n"
         f"This channel: **{channel_count}** people",
-        ephemeral=True,
+        ephemeral=False,
     )
 
 
@@ -2377,13 +2377,13 @@ async def unhoodify_command(interaction: discord.Interaction):
     if uwu_hoodify_user_is_banned(interaction.user):
         await interaction.response.send_message(
             "❌ You are banned from using UWUIFY and HOODIFY.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
     if not isinstance(interaction.user, discord.Member) or not hood_user_is_whitelisted(interaction.user):
         await interaction.response.send_message(
             "❌ You need one of the allowed HOODIFY roles to use this command.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
@@ -2391,7 +2391,7 @@ async def unhoodify_command(interaction: discord.Interaction):
     await interaction.response.send_message(
         f"✅ HOODIFY disabled everywhere. "
         f"Removed **{disabled_count}** active channel(s).",
-        ephemeral=True,
+        ephemeral=False,
     )
 
 
@@ -2409,7 +2409,7 @@ async def hoodcount_command(interaction: discord.Interaction):
         f"🖤 **HOODIFY count**\n"
         f"Global: **{global_count}/{MAX_ACTIVE_HOOD_TARGETS}** people\n"
         f"This channel: **{channel_count}** people",
-        ephemeral=True,
+        ephemeral=False,
     )
 
 
@@ -2429,21 +2429,21 @@ async def hoodify_command(
     if uwu_hoodify_user_is_banned(interaction.user):
         await interaction.response.send_message(
             "❌ You are banned from using UWUIFY and HOODIFY.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
     if not isinstance(interaction.user, discord.Member) or not hood_user_is_whitelisted(interaction.user):
         await interaction.response.send_message(
             "❌ You need one of the allowed HOODIFY roles to use this command.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
     if not isinstance(interaction.channel, discord.TextChannel):
         await interaction.response.send_message(
             "❌ This command can only be used in a normal text channel.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
@@ -2451,7 +2451,7 @@ async def hoodify_command(
     if bot_member is None or not interaction.channel.permissions_for(bot_member).manage_messages:
         await interaction.response.send_message(
             "❌ I need **Manage Messages** permission in this channel to replace messages.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
@@ -2465,7 +2465,7 @@ async def hoodify_command(
                 await interaction.response.send_message(
                     f"❌ HOODIFY was enabled, but the one-time message was not sent "
                     f"because it contains a blacklisted word/phrase: `{blocked_error}`",
-                    ephemeral=True,
+                    ephemeral=False,
                 )
                 return
 
@@ -2475,39 +2475,39 @@ async def hoodify_command(
             f"Active people: **{active_count}/{MAX_ACTIVE_HOOD_TARGETS}**.\n"
             "You can add more people with another `/hoodify` command. "
             "The temporary webhook will be deleted after 5 minutes without use.",
-            ephemeral=True,
+            ephemeral=False,
         )
     except HoodUserBlacklisted:
         await interaction.response.send_message(
             f"❌ {member.mention} is blacklisted from using HOODIFY.",
-            ephemeral=True,
+            ephemeral=False,
         )
     except UserBlacklistStorageUnavailable as error:
         await interaction.response.send_message(
             "❌ I could not verify the HOODIFY blacklist from GitHub, "
             f"so I will not activate this target. Error: `{error}`",
-            ephemeral=True,
+            ephemeral=False,
         )
     except HoodTargetLimitReached:
         await interaction.response.send_message(
             f"❌ The global limit of {MAX_ACTIVE_HOOD_TARGETS} HOODIFIED people has been reached. "
             "Use `,unhoodify` or `/unhoodify` to disable all HOODIFY modes.",
-            ephemeral=True,
+            ephemeral=False,
         )
     except discord.Forbidden:
         await interaction.response.send_message(
             "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel/server.",
-            ephemeral=True,
+            ephemeral=False,
         )
     except discord.HTTPException as e:
         await interaction.response.send_message(
             f"❌ Discord rejected the HOODIFY webhook request: `{e}`",
-            ephemeral=True,
+            ephemeral=False,
         )
     except Exception:
         await interaction.response.send_message(
             "❌ The HOODIFY mode could not be enabled.",
-            ephemeral=True,
+            ephemeral=False,
         )
 
 
@@ -2528,20 +2528,20 @@ async def uwu_command(
     if uwu_hoodify_user_is_banned(interaction.user):
         await interaction.response.send_message(
             "❌ You are banned from using UWUIFY and HOODIFY.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
     if not isinstance(interaction.user, discord.Member) or not uwu_user_is_whitelisted(interaction.user):
         await interaction.response.send_message(
             "❌ You need one of the allowed UWU roles to use this command.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
     if not isinstance(interaction.channel, discord.TextChannel):
         await interaction.response.send_message(
             "❌ This command can only be used in a normal text channel.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
@@ -2549,7 +2549,7 @@ async def uwu_command(
     if bot_member is None or not interaction.channel.permissions_for(bot_member).manage_messages:
         await interaction.response.send_message(
             "❌ I need **Manage Messages** permission in this channel to replace messages.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
@@ -2563,7 +2563,7 @@ async def uwu_command(
             except UwuMessageBlocked as blocked_error:
                 await interaction.response.send_message(
                     f"❌ The UWU mode was enabled, but the one-time message was not sent because it contains a blacklisted word/phrase: `{blocked_error}`",
-                    ephemeral=True,
+                    ephemeral=False,
                 )
                 return
 
@@ -2573,39 +2573,39 @@ async def uwu_command(
             f"Active people: **{active_count}/{MAX_ACTIVE_UWU_TARGETS}**.\n"
             "You can add more people with another `/uwuify` command. "
             "The temporary webhook will be deleted after 5 minutes without use.",
-            ephemeral=True,
+            ephemeral=False,
         )
     except UwuUserBlacklisted:
         await interaction.response.send_message(
             f"❌ {member.mention} is blacklisted from using UWUIFY.",
-            ephemeral=True,
+            ephemeral=False,
         )
     except UserBlacklistStorageUnavailable as error:
         await interaction.response.send_message(
             "❌ I could not verify the UWUIFY blacklist from GitHub, "
             f"so I will not activate this target. Error: `{error}`",
-            ephemeral=True,
+            ephemeral=False,
         )
     except UwuTargetLimitReached:
         await interaction.response.send_message(
             f"❌ The global limit of {MAX_ACTIVE_UWU_TARGETS} UWUified people has been reached. "
             "Use `,unuwuify` or `/unuwuify` to disable all UWU modes, or wait for a slot to expire.",
-            ephemeral=True,
+            ephemeral=False,
         )
     except discord.Forbidden:
         await interaction.response.send_message(
             "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel/server.",
-            ephemeral=True,
+            ephemeral=False,
         )
     except discord.HTTPException as e:
         await interaction.response.send_message(
             f"❌ Discord rejected the uwu webhook request: `{e}`",
-            ephemeral=True,
+            ephemeral=False,
         )
     except Exception:
         await interaction.response.send_message(
             "❌ The uwu mode could not be enabled.",
-            ephemeral=True,
+            ephemeral=False,
         )
 
 
@@ -2619,7 +2619,7 @@ async def uwu_blacklist_command(
     interaction: discord.Interaction,
     member: discord.Member,
 ):
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=False)
 
     uwu_user_blacklist.add(member.id)
     github_synced = await save_user_blacklist(
@@ -2640,7 +2640,7 @@ async def uwu_blacklist_command(
 
     await interaction.followup.send(
         response,
-        ephemeral=True,
+        ephemeral=False,
     )
 
 
@@ -2657,11 +2657,11 @@ async def uwu_unblacklist_command(
     if member.id not in uwu_user_blacklist:
         await interaction.response.send_message(
             f"ℹ️ {member.mention} is not currently blacklisted from UWUIFY.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=False)
 
     uwu_user_blacklist.remove(member.id)
     github_synced = await save_user_blacklist(
@@ -2678,7 +2678,7 @@ async def uwu_unblacklist_command(
 
     await interaction.followup.send(
         response,
-        ephemeral=True,
+        ephemeral=False,
     )
 
 
@@ -2692,7 +2692,7 @@ async def hood_blacklist_command(
     interaction: discord.Interaction,
     member: discord.Member,
 ):
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=False)
 
     hood_user_blacklist.add(member.id)
     github_synced = await save_user_blacklist(
@@ -2713,7 +2713,7 @@ async def hood_blacklist_command(
 
     await interaction.followup.send(
         response,
-        ephemeral=True,
+        ephemeral=False,
     )
 
 
@@ -2730,11 +2730,11 @@ async def hood_unblacklist_command(
     if member.id not in hood_user_blacklist:
         await interaction.response.send_message(
             f"ℹ️ {member.mention} is not currently blacklisted from HOODIFY.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=False)
 
     hood_user_blacklist.remove(member.id)
     github_synced = await save_user_blacklist(
@@ -2751,7 +2751,7 @@ async def hood_unblacklist_command(
 
     await interaction.followup.send(
         response,
-        ephemeral=True,
+        ephemeral=False,
     )
 
 
@@ -2802,7 +2802,7 @@ async def blacklist_command(
 
     await interaction.response.send_message(
         f"✅ {member.mention} has been added to the second-role blacklist.{role_text}",
-        ephemeral=True,
+        ephemeral=False,
     )
 
     await send_webhook(
@@ -2833,7 +2833,7 @@ async def unblacklist_command(
     if member.id not in second_role_blacklist:
         await interaction.response.send_message(
             f"ℹ️ {member.mention} is not currently on the second-role blacklist.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
@@ -2842,7 +2842,7 @@ async def unblacklist_command(
 
     await interaction.response.send_message(
         f"✅ {member.mention} has been removed from the second-role blacklist.",
-        ephemeral=True,
+        ephemeral=False,
     )
 
     await send_webhook(
@@ -2874,7 +2874,7 @@ async def blacklist_status_command(
     await interaction.response.send_message(
         f"{member.mention} is **{'blacklisted' if blacklisted else 'not blacklisted'}** "
         "for the second main-server role.",
-        ephemeral=True,
+        ephemeral=False,
     )
 
 
@@ -2887,9 +2887,9 @@ async def on_app_command_error(
         message = str(error) or "You are not allowed to use this command."
 
         if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=True)
+            await interaction.followup.send(message, ephemeral=False)
         else:
-            await interaction.response.send_message(message, ephemeral=True)
+            await interaction.response.send_message(message, ephemeral=False)
         return
 
     pass
@@ -2897,12 +2897,12 @@ async def on_app_command_error(
     if interaction.response.is_done():
         await interaction.followup.send(
             "An unexpected error occurred while running the command.",
-            ephemeral=True,
+            ephemeral=False,
         )
     else:
         await interaction.response.send_message(
             "An unexpected error occurred while running the command.",
-            ephemeral=True,
+            ephemeral=False,
         )
 
 
