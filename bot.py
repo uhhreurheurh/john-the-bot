@@ -43,6 +43,7 @@ BLACKLIST_FILE = Path(__file__).with_name("second_role_blacklist.json")
 # A blacklisted member cannot be selected for that mode.
 UWU_USER_BLACKLIST_FILE = Path(__file__).with_name("uwu_user_blacklist.json")
 HOOD_USER_BLACKLIST_FILE = Path(__file__).with_name("hood_user_blacklist.json")
+UWU_HOODIFY_BAN_FILE = Path(__file__).with_name("uwu_hoodify_ban.json")
 
 # GitHub persistence for the UWUIFY / HOODIFY user-ID blacklists.
 # GITHUB_TOKEN is stored securely in Railway. The repository and branch can
@@ -191,6 +192,7 @@ def _save_user_blacklist_local(path: Path, blacklist: set[int]) -> None:
 # Initialize these before commands or background tasks can reference them.
 uwu_user_blacklist = load_user_blacklist(UWU_USER_BLACKLIST_FILE)
 hood_user_blacklist = load_user_blacklist(HOOD_USER_BLACKLIST_FILE)
+uwu_hoodify_ban = load_user_blacklist(UWU_HOODIFY_BAN_FILE)
 
 
 def _github_headers() -> dict[str, str]:
@@ -368,8 +370,8 @@ async def save_user_blacklist(
 
 
 async def sync_user_blacklists_from_github() -> bool:
-    """Load both blacklists from GitHub, creating missing files."""
-    global uwu_user_blacklist, hood_user_blacklist, github_blacklist_sync_error
+    """Load UWUIFY, HOODIFY, and command-ban lists from GitHub."""
+    global uwu_user_blacklist, hood_user_blacklist, uwu_hoodify_ban, github_blacklist_sync_error
 
     if not GITHUB_TOKEN:
         github_blacklist_sync_error = (
@@ -382,6 +384,7 @@ async def sync_user_blacklists_from_github() -> bool:
             for path, name in (
                 (UWU_USER_BLACKLIST_FILE, "uwu"),
                 (HOOD_USER_BLACKLIST_FILE, "hood"),
+                (UWU_HOODIFY_BAN_FILE, "ban"),
             ):
                 exists, github_ids, _ = await asyncio.to_thread(
                     _github_get_user_blacklist,
@@ -393,6 +396,8 @@ async def sync_user_blacklists_from_github() -> bool:
                         uwu_user_blacklist
                         if name == "uwu"
                         else hood_user_blacklist
+                        if name == "hood"
+                        else uwu_hoodify_ban
                     )
                     target.clear()
                     target.update(github_ids)
@@ -403,6 +408,8 @@ async def sync_user_blacklists_from_github() -> bool:
                         uwu_user_blacklist
                         if name == "uwu"
                         else hood_user_blacklist
+                        if name == "hood"
+                        else uwu_hoodify_ban
                     )
                     await asyncio.to_thread(
                         _github_save_user_blacklist,
@@ -1725,6 +1732,14 @@ async def on_message(message: discord.Message):
 
     content = message.content.strip()
 
+    prefix_command = content.lower().split(maxsplit=1)[0]
+    if prefix_command in {",uwuify", ",unuwuify", ",hoodify", ",unhoodify"} and uwu_hoodify_user_is_banned(message.author):
+        await message.reply(
+            "❌ You are banned from using UWUIFY and HOODIFY.",
+            mention_author=False,
+        )
+        return
+
     # -------------------------
     # UWUIFY / HOODIFY USER BLACKLIST PREFIX COMMANDS
     # -------------------------
@@ -2234,48 +2249,63 @@ async def blacklist_command_check(interaction: discord.Interaction) -> bool:
     return True
 
 
+def uwu_hoodify_user_is_banned(member: discord.Member | discord.User) -> bool:
+    return member.id in uwu_hoodify_ban
+
+
 # =========================
 # SLASH COMMANDS
 # =========================
 
 @tree.command(
-    name="github_blacklist_status",
-    description="Check GitHub persistence for the UWUIFY and HOODIFY blacklists.",
+    name="uwuify_hoodify_ban",
+    description="Ban a member from running UWUIFY and HOODIFY.",
 )
+@app_commands.describe(member="The member to ban from UWUIFY and HOODIFY")
 @app_commands.check(blacklist_command_check)
-async def github_blacklist_status_command(
-    interaction: discord.Interaction,
-):
-    """Test the GitHub-backed blacklist storage."""
-    global user_blacklists_synced
-
-    if not GITHUB_TOKEN:
-        await interaction.response.send_message(
-            "❌ GITHUB_TOKEN is missing from Railway variables.",
+async def uwuify_hoodify_ban_command(interaction: discord.Interaction, member: discord.Member):
+    await interaction.response.defer(ephemeral=True)
+    if member.id in uwu_hoodify_ban:
+        await interaction.followup.send(
+            f"ℹ️ {member.mention} is already banned from UWUIFY and HOODIFY.",
             ephemeral=True,
         )
         return
 
-    synced = await sync_user_blacklists_from_github()
-    user_blacklists_synced = synced
+    uwu_hoodify_ban.add(member.id)
+    await save_user_blacklist(UWU_HOODIFY_BAN_FILE, uwu_hoodify_ban)
+    removed_uwu = await disable_uwu_for_user(member.id)
+    removed_hood = await disable_hood_for_user(member.id)
 
-    if synced:
-        await interaction.response.send_message(
-            "✅ GitHub blacklist sync is working.\n"
-            f"UWUIFY blacklist: **{len(uwu_user_blacklist)}** user(s)\n"
-            f"HOODIFY blacklist: **{len(hood_user_blacklist)}** user(s)\n"
-            f"Repo: `{GITHUB_REPO}`\n"
-            f"Branch: `{GITHUB_BRANCH}`",
+    removed = removed_uwu + removed_hood
+    await interaction.followup.send(
+        f"✅ {member.mention} is now banned from running UWUIFY and HOODIFY."
+        + (f" Removed {removed} active mode(s)." if removed else ""),
+        ephemeral=True,
+    )
+
+
+@tree.command(
+    name="uwuify_hoodify_unban",
+    description="Allow a member to run UWUIFY and HOODIFY again.",
+)
+@app_commands.describe(member="The member to unban from UWUIFY and HOODIFY")
+@app_commands.check(blacklist_command_check)
+async def uwuify_hoodify_unban_command(interaction: discord.Interaction, member: discord.Member):
+    await interaction.response.defer(ephemeral=True)
+    if member.id not in uwu_hoodify_ban:
+        await interaction.followup.send(
+            f"ℹ️ {member.mention} is not currently banned from UWUIFY and HOODIFY.",
             ephemeral=True,
         )
-    else:
-        await interaction.response.send_message(
-            "❌ GitHub blacklist sync FAILED.\n"
-            f"Repo: `{GITHUB_REPO}`\n"
-            f"Branch: `{GITHUB_BRANCH}`\n"
-            f"Error: `{github_blacklist_sync_error or 'Unknown error.'}`",
-            ephemeral=True,
-        )
+        return
+
+    uwu_hoodify_ban.remove(member.id)
+    await save_user_blacklist(UWU_HOODIFY_BAN_FILE, uwu_hoodify_ban)
+    await interaction.followup.send(
+        f"✅ {member.mention} can run UWUIFY and HOODIFY again.",
+        ephemeral=True,
+    )
 
 
 @tree.command(
@@ -2295,6 +2325,12 @@ async def ping_command(interaction: discord.Interaction):
 )
 async def unuwuify_command(interaction: discord.Interaction):
     """Disable all active UWU modes across the bot."""
+    if uwu_hoodify_user_is_banned(interaction.user):
+        await interaction.response.send_message(
+            "❌ You are banned from using UWUIFY and HOODIFY.",
+            ephemeral=True,
+        )
+        return
     if not isinstance(interaction.user, discord.Member) or not uwu_user_is_whitelisted(interaction.user):
         await interaction.response.send_message(
             "❌ You need one of the allowed UWU roles to use this command.",
@@ -2336,6 +2372,12 @@ async def uwucount_command(interaction: discord.Interaction):
     description="Disable HOODIFY mode for everyone and delete active HOODIFY webhooks.",
 )
 async def unhoodify_command(interaction: discord.Interaction):
+    if uwu_hoodify_user_is_banned(interaction.user):
+        await interaction.response.send_message(
+            "❌ You are banned from using UWUIFY and HOODIFY.",
+            ephemeral=True,
+        )
+        return
     if not isinstance(interaction.user, discord.Member) or not hood_user_is_whitelisted(interaction.user):
         await interaction.response.send_message(
             "❌ You need one of the allowed HOODIFY roles to use this command.",
@@ -2382,6 +2424,13 @@ async def hoodify_command(
     member: discord.Member,
     message: str | None = None,
 ):
+    if uwu_hoodify_user_is_banned(interaction.user):
+        await interaction.response.send_message(
+            "❌ You are banned from using UWUIFY and HOODIFY.",
+            ephemeral=True,
+        )
+        return
+
     if not isinstance(interaction.user, discord.Member) or not hood_user_is_whitelisted(interaction.user):
         await interaction.response.send_message(
             "❌ You need one of the allowed HOODIFY roles to use this command.",
@@ -2474,6 +2523,12 @@ async def uwu_command(
     message: str | None = None,
 ):
     """Enable automatic uwu replacement for a selected member in this channel."""
+    if uwu_hoodify_user_is_banned(interaction.user):
+        await interaction.response.send_message(
+            "❌ You are banned from using UWUIFY and HOODIFY.",
+            ephemeral=True,
+        )
+        return
     if not isinstance(interaction.user, discord.Member) or not uwu_user_is_whitelisted(interaction.user):
         await interaction.response.send_message(
             "❌ You need one of the allowed UWU roles to use this command.",
