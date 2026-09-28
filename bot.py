@@ -188,6 +188,11 @@ def _save_user_blacklist_local(path: Path, blacklist: set[int]) -> None:
         pass
 
 
+# Initialize these before commands or background tasks can reference them.
+uwu_user_blacklist = load_user_blacklist(UWU_USER_BLACKLIST_FILE)
+hood_user_blacklist = load_user_blacklist(HOOD_USER_BLACKLIST_FILE)
+
+
 def _github_headers() -> dict[str, str]:
     """Build headers for GitHub's REST API."""
     if not GITHUB_TOKEN:
@@ -2576,7 +2581,7 @@ async def uwu_blacklist_command(
             f"\n`{github_blacklist_sync_error}`"
         )
 
-    await interaction.response.send_message(
+    await interaction.followup.send(
         response,
         ephemeral=True,
     )
@@ -2649,7 +2654,7 @@ async def hood_blacklist_command(
             f"\n`{github_blacklist_sync_error}`"
         )
 
-    await interaction.response.send_message(
+    await interaction.followup.send(
         response,
         ephemeral=True,
     )
