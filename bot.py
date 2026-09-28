@@ -48,7 +48,7 @@ HOOD_USER_BLACKLIST_FILE = Path(__file__).with_name("hood_user_blacklist.json")
 # GITHUB_TOKEN is stored securely in Railway. The repository and branch can
 # also be overridden with Railway variables, but default to this bot repo.
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-GITHUB_REPO = os.getenv("GITHUB_REPO", "uhhreurhheurh/john-the-bot")
+GITHUB_REPO = os.getenv("GITHUB_REPO", "uhhreurheurh/john-the-bot")
 GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
 GITHUB_API_BASE = "https://api.github.com"
 
@@ -2557,6 +2557,8 @@ async def uwu_blacklist_command(
     interaction: discord.Interaction,
     member: discord.Member,
 ):
+    await interaction.response.defer(ephemeral=True)
+
     uwu_user_blacklist.add(member.id)
     github_synced = await save_user_blacklist(
         UWU_USER_BLACKLIST_FILE,
@@ -2597,11 +2599,23 @@ async def uwu_unblacklist_command(
         )
         return
 
-    uwu_user_blacklist.remove(member.id)
-    await save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
+    await interaction.response.defer(ephemeral=True)
 
-    await interaction.response.send_message(
-        f"✅ {member.mention} can use UWUIFY again.",
+    uwu_user_blacklist.remove(member.id)
+    github_synced = await save_user_blacklist(
+        UWU_USER_BLACKLIST_FILE,
+        uwu_user_blacklist,
+    )
+
+    response = f"✅ {member.mention} can use UWUIFY again."
+    if not github_synced:
+        response += (
+            "\n⚠️ GitHub sync FAILED."
+            f"\n`{github_blacklist_sync_error}`"
+        )
+
+    await interaction.followup.send(
+        response,
         ephemeral=True,
     )
 
@@ -2616,6 +2630,8 @@ async def hood_blacklist_command(
     interaction: discord.Interaction,
     member: discord.Member,
 ):
+    await interaction.response.defer(ephemeral=True)
+
     hood_user_blacklist.add(member.id)
     github_synced = await save_user_blacklist(
         HOOD_USER_BLACKLIST_FILE,
@@ -2656,11 +2672,23 @@ async def hood_unblacklist_command(
         )
         return
 
-    hood_user_blacklist.remove(member.id)
-    await save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
+    await interaction.response.defer(ephemeral=True)
 
-    await interaction.response.send_message(
-        f"✅ {member.mention} can use HOODIFY again.",
+    hood_user_blacklist.remove(member.id)
+    github_synced = await save_user_blacklist(
+        HOOD_USER_BLACKLIST_FILE,
+        hood_user_blacklist,
+    )
+
+    response = f"✅ {member.mention} can use HOODIFY again."
+    if not github_synced:
+        response += (
+            "\n⚠️ GitHub sync FAILED."
+            f"\n`{github_blacklist_sync_error}`"
+        )
+
+    await interaction.followup.send(
+        response,
         ephemeral=True,
     )
 
