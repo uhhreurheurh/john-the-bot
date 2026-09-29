@@ -3645,6 +3645,54 @@ async def tag_role_loop():
     # SECOND MAIN ROLE
     # -------------------------
 
+    # Enforce the blacklist independently of the source-server check.
+    # A source-server/API problem must never allow a blacklisted member to
+    # keep the second main-server role.
+    if second_role_ready and tag_role_2:
+        for member in main_guild.members:
+            if member.bot or member.id not in second_role_blacklist:
+                continue
+
+            if tag_role_2 not in member.roles:
+                continue
+
+            if (
+                main_guild.owner_id == member.id
+                or member.top_role >= bot_member.top_role
+            ):
+                continue
+
+            try:
+                await member.remove_roles(
+                    tag_role_2,
+                    reason="User is on the second-role blacklist",
+                )
+
+                await send_webhook(
+                    ROLE_WEBHOOK_URL,
+                    title="🚫 Second Role Removed (Blacklisted)",
+                    description=(
+                        f"{member.mention} was prevented from keeping "
+                        "the second main tag role because they are blacklisted."
+                    ),
+                    color=discord.Color.red(),
+                    fields=[
+                        ("User", f"{member} (\`{member.id}\`)", True),
+                        ("Role", f"{tag_role_2.mention}\\n\`{tag_role_2.id}\`", True),
+                        ("Reason", "Member is on the second-role blacklist.", False),
+                    ],
+                )
+            except discord.Forbidden:
+                pass
+            except discord.HTTPException:
+                pass
+            except Exception:
+                pass
+
+            await asyncio.sleep(0.5)
+
+    # Only do normal add/remove synchronization after the source-server
+    # checks have succeeded. Blacklisted members are handled above.
     if second_role_ready and tag_role_2 and second_role_servers_configured > 0 and not second_role_check_failed:
         for member in main_guild.members:
             if member.bot:
