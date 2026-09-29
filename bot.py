@@ -1902,87 +1902,7 @@ async def on_message(message: discord.Message):
             await save_user_blacklist(UWU_HOODIFY_BAN_FILE, uwu_hoodify_ban)
             await message.reply(f"✅ {target.mention} can run UWUIFY and HOODIFY again.", mention_author=False)
         return
-    # -------------------------
-    # UWUIFY / HOODIFY USER BLACKLIST PREFIX COMMANDS
-    # -------------------------
-    # Supported commands:
-    # ,uwublacklist @user
-    # ,uwuunblacklist @user
-    # ,hoodblacklist @user
-    # ,hoodunblacklist @user
-    blacklist_command = content.lower().split(maxsplit=1)[0]
-    spaced_blacklist_command = " ".join(content.lower().split()[:2])
-    blacklist_aliases = {
-        ",uwu blacklist": ",uwu_blacklist",
-        ",uwu unblacklist": ",uwu_unblacklist",
-        ",hood blacklist": ",hood_blacklist",
-        ",hood unblacklist": ",hood_unblacklist",
-    }
-    blacklist_command = blacklist_aliases.get(spaced_blacklist_command, blacklist_command)
-
-    if blacklist_command in {
-        ",uwublacklist",
-        ",uwu_blacklist",
-        ",uwuunblacklist",
-        ",uwu_unblacklist",
-        ",hoodblacklist",
-        ",hood_blacklist",
-        ",hoodunblacklist",
-        ",hood_unblacklist",
-    }:
-        if not prefix_blacklist_allowed(message):
-            await message.reply(
-                "❌ You do not have permission to use this blacklist command.",
-                mention_author=False,
-            )
-            return
-
-        if not message.mentions:
-            await message.reply(
-                "Usage: ,uwublacklist @user | ,uwuunblacklist @user | "
-                ",hoodblacklist @user | ,hoodunblacklist @user",
-                mention_author=False,
-            )
-            return
-
-        target = message.mentions[0]
-
-        if blacklist_command in {",uwublacklist", ",uwu_blacklist"}:
-            uwu_user_blacklist.add(target.id)
-            await save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
-            removed = await disable_uwu_for_user(target.id)
-
-            response = f"✅ {target.mention} is now blacklisted from UWUIFY."
-            if removed:
-                response += f" Removed them from **{removed}** active channel(s)."
-
-        elif blacklist_command in {",uwuunblacklist", ",uwu_unblacklist"}:
-            if target.id not in uwu_user_blacklist:
-                response = f"ℹ️ {target.mention} is not currently blacklisted from UWUIFY."
-            else:
-                uwu_user_blacklist.remove(target.id)
-                await save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
-                response = f"✅ {target.mention} can use UWUIFY again."
-
-        elif blacklist_command in {",hoodblacklist", ",hood_blacklist"}:
-            hood_user_blacklist.add(target.id)
-            await save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
-            removed = await disable_hood_for_user(target.id)
-
-            response = f"✅ {target.mention} is now blacklisted from HOODIFY."
-            if removed:
-                response += f" Removed them from **{removed}** active channel(s)."
-
-        else:
-            if target.id not in hood_user_blacklist:
-                response = f"ℹ️ {target.mention} is not currently blacklisted from HOODIFY."
-            else:
-                hood_user_blacklist.remove(target.id)
-                await save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
-                response = f"✅ {target.mention} can use HOODIFY again."
-
-        await message.reply(response, mention_author=False)
-        return
+    # Textify is the combined UWUIFY + HOODIFY blacklist interface.
 
     if proxy_message:
         handled = await handle_proxy_message(message)
@@ -2084,24 +2004,27 @@ async def on_message(message: discord.Message):
         )
         return
 
-    # Prefix command to disable UWU mode everywhere.
-    if content.lower() == ",unuwuify":
+    # ,unuwuify @user disables UWUIFY for that member across all active channels.
+    if content.lower().startswith(",unuwuify"):
         if not uwu_user_is_whitelisted(message.author):
-            pass
-            try:
-                await message.reply(
-                    "❌ You need one of the allowed UWU roles to use this command.",
-                    mention_author=False,
-                )
-            except (discord.Forbidden, discord.HTTPException):
-                pass
+            await message.reply(
+                "❌ You need one of the allowed UWU roles to use this command.",
+                mention_author=False,
+            )
             return
 
-        disabled_count = await disable_all_uwu_targets()
+        if not message.mentions:
+            await message.reply(
+                "Usage: ,unuwuify @user",
+                mention_author=False,
+            )
+            return
 
+        target = message.mentions[0]
+        disabled_count = await disable_uwu_for_user(target.id)
         await message.reply(
-            f"✅ UWU mode disabled everywhere. "
-            f"Removed **{disabled_count}** active channel(s).",
+            f"✅ UWU mode disabled for {target.mention}. "
+            f"Removed them from **{disabled_count}** active channel(s).",
             mention_author=False,
         )
         return
@@ -2200,7 +2123,7 @@ async def on_message(message: discord.Message):
         except UwuTargetLimitReached:
             await message.reply(
                 f"❌ The global limit of {MAX_ACTIVE_UWU_TARGETS} UWUified people has been reached. "+
-                "Use `,unuwuify` or `/unuwuify` to disable all UWU modes, or wait for a slot to expire.",
+                "Use `,unuwuify @user` or `/unuwuify @user` to disable UWU for one member, or wait for a slot to expire.",
                 mention_author=False,
             )
         except discord.Forbidden:
@@ -2252,21 +2175,27 @@ async def on_message(message: discord.Message):
         )
         return
 
-    if content.lower() == ",unhoodify":
+    # ,unhoodify @user disables HOODIFY for that member across all active channels.
+    if content.lower().startswith(",unhoodify"):
         if not hood_user_is_whitelisted(message.author):
-            try:
-                await message.reply(
-                    "❌ You need one of the allowed HOODIFY roles to use this command.",
-                    mention_author=False,
-                )
-            except (discord.Forbidden, discord.HTTPException):
-                pass
+            await message.reply(
+                "❌ You need one of the allowed HOODIFY roles to use this command.",
+                mention_author=False,
+            )
             return
 
-        disabled_count = await disable_all_hood_targets()
+        if not message.mentions:
+            await message.reply(
+                "Usage: ,unhoodify @user",
+                mention_author=False,
+            )
+            return
+
+        target = message.mentions[0]
+        disabled_count = await disable_hood_for_user(target.id)
         await message.reply(
-            f"✅ HOODIFY disabled everywhere. "
-            f"Removed **{disabled_count}** active channel(s).",
+            f"✅ HOODIFY disabled for {target.mention}. "
+            f"Removed them from **{disabled_count}** active channel(s).",
             mention_author=False,
         )
         return
@@ -2724,7 +2653,7 @@ async def hoodify_command(
     except HoodTargetLimitReached:
         await interaction.response.send_message(
             f"❌ The global limit of {MAX_ACTIVE_HOOD_TARGETS} HOODIFIED people has been reached. "
-            "Use `,unhoodify` or `/unhoodify` to disable all HOODIFY modes.",
+            "Use `,unhoodify @user` or `/unhoodify @user` to disable HOODIFY for one member.",
             ephemeral=False,
         )
     except discord.Forbidden:
@@ -2822,7 +2751,7 @@ async def uwu_command(
     except UwuTargetLimitReached:
         await interaction.response.send_message(
             f"❌ The global limit of {MAX_ACTIVE_UWU_TARGETS} UWUified people has been reached. "
-            "Use `,unuwuify` or `/unuwuify` to disable all UWU modes, or wait for a slot to expire.",
+            "Use `,unuwuify @user` or `/unuwuify @user` to disable UWU for one member, or wait for a slot to expire.",
             ephemeral=False,
         )
     except discord.Forbidden:
