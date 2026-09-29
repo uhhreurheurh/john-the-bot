@@ -3211,13 +3211,17 @@ async def remove_auto_role_if_needed(member: discord.Member, reason: str) -> boo
     if bot_member.top_role <= role_to_remove:
         return False
 
-    if member.top_role >= bot_member.top_role:
-        return False
-
+    # Discord role management is based on the role being managed, not the
+    # member's highest role. The target role only needs to be below the bot's
+    # highest role, which was checked above.
     try:
         await member.remove_roles(role_to_remove, reason=reason)
         return True
 
+    except discord.Forbidden:
+        return False
+    except discord.HTTPException:
+        return False
     except Exception:
         return False
 
