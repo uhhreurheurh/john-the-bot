@@ -29,7 +29,7 @@ MAIN_SERVER = 551166126596554775
 TAG_ROLE_ID = 1534715148676370462
 
 # Second role to assign in the main server
-TAG_ROLE_ID_2 = 1551382001221632010  
+TAG_ROLE_ID_2 = 1551382001221632010
 
 # Role ID allowed to use the second-role blacklist slash commands.
 # The user must have this role in the MAIN_SERVER.
@@ -94,7 +94,7 @@ tag_server_role_ids_2 = {
 # Anyone with ANY of these role IDs will NOT be kicked.
 PROTECTED_ROLE_IDS = {
     1369757095553138768,
-    1369843161102549062,        
+    1369843161102549062,
     1369550591713611856,
     1372370152242286702,
     1366518196315881616,
@@ -128,7 +128,6 @@ AUTO_REMOVE_TRIGGER_ROLE_ID = 1378810715611336914  # Role that causes the remova
 AUTO_REMOVE_ROLE_ID = 1372658714825457729          # Role to automatically remove
 
 
-
 # =========================
 # BLACKLIST HELPERS
 # =========================
@@ -143,13 +142,11 @@ def load_blacklist() -> set[int]:
             data = json.load(file)
 
         if not isinstance(data, list):
-            pass
             return set()
 
         return {int(user_id) for user_id in data}
 
     except (json.JSONDecodeError, ValueError, TypeError, OSError) as e:
-        pass
         return set()
 
 
@@ -828,7 +825,6 @@ def hoodify_text(content: str) -> str:
     return result
 
 
-
 def hood_user_is_whitelisted(member: discord.Member | discord.User) -> bool:
     """Return True when the member has at least one allowed HOODIFY role."""
     return any(
@@ -1371,10 +1367,8 @@ async def cleanup_stale_uwu_webhooks() -> None:
         except discord.Forbidden:
             continue
         except discord.HTTPException as e:
-            pass
             continue
         except Exception as e:
-            pass
             continue
 
         for webhook in webhooks:
@@ -1387,7 +1381,6 @@ async def cleanup_stale_uwu_webhooks() -> None:
             if webhook.user is None or webhook.user.id != bot_id:
                 continue
 
-            pass
 
             try:
                 await webhook.delete(reason="Stale UWU webhook cleanup")
@@ -1478,7 +1471,7 @@ user_blacklists_synced = False
 # =========================
 
 async def delete_original_message(message: discord.Message) -> bool:
-    """Delete a user's original message with detailed terminal debugging."""
+    """Delete a user message, retrying once if Discord has not been cached."""
     guild = message.guild
     bot_member = guild.me if guild is not None else None
     channel_permissions = (
@@ -1487,24 +1480,13 @@ async def delete_original_message(message: discord.Message) -> bool:
         else None
     )
 
-    pass
-    pass
-    pass
-    pass
-    pass
-    pass
     if bot_member is not None:
         pass
 
     try:
-        pass
         await message.delete()
-        pass
-        pass
         return True
     except discord.NotFound as e:
-        pass
-        pass
         return True
     except discord.Forbidden as e:
         pass
@@ -1513,46 +1495,29 @@ async def delete_original_message(message: discord.Message) -> bool:
     except Exception as e:
         pass
 
-    pass
 
     try:
         fresh_message = await message.channel.fetch_message(message.id)
         pass
     except discord.NotFound as e:
-        pass
-        pass
         return True
     except discord.Forbidden as e:
-        pass
         return False
     except discord.HTTPException as e:
-        pass
         return False
     except Exception as e:
-        pass
         return False
 
     try:
-        pass
         await fresh_message.delete()
-        pass
-        pass
         return True
     except discord.NotFound as e:
-        pass
-        pass
         return True
     except discord.Forbidden as e:
-        pass
-        pass
         return False
     except discord.HTTPException as e:
-        pass
-        pass
         return False
     except Exception as e:
-        pass
-        pass
         return False
 
 
@@ -2031,7 +1996,6 @@ async def on_message(message: discord.Message):
     # Prefix UWU setup/disable command.
     if content.lower().startswith(",uwuify"):
         if not uwu_user_is_whitelisted(message.author):
-            pass
             try:
                 await message.reply(
                     "❌ You need one of the allowed UWU roles to use this command.",
@@ -2334,7 +2298,6 @@ async def send_webhook(
     """Sends an embed to the specified Discord webhook."""
 
     if not webhook_url:
-        pass
         return
 
     try:
@@ -2716,7 +2679,6 @@ async def uwu_command(
 
     try:
         await set_uwu_target(interaction.channel, member)
-        pass
 
         if message:
             try:
@@ -3148,7 +3110,6 @@ async def on_app_command_error(
             await interaction.response.send_message(message, ephemeral=False)
         return
 
-    pass
 
     if interaction.response.is_done():
         await interaction.followup.send(
@@ -3244,14 +3205,11 @@ async def ensure_guild_members_loaded(guild: discord.Guild) -> bool:
     """Make sure the guild member cache is populated before role checks."""
     try:
         if not guild.chunked:
-            pass
             await guild.chunk(cache=True)
         return True
     except discord.HTTPException as e:
-        pass
         return False
     except Exception as e:
-        pass
         return False
 
 
@@ -3305,12 +3263,10 @@ async def on_ready():
 
 @tasks.loop(minutes=check_time)
 async def kick_loop():
-    pass
 
     main_guild = bot.get_guild(MAIN_SERVER)
 
     if main_guild is None:
-        pass
         return
 
     main_members = {
@@ -3322,7 +3278,6 @@ async def kick_loop():
         guild = bot.get_guild(server_id)
 
         if guild is None:
-            pass
             continue
 
         for member in guild.members:
@@ -3336,7 +3291,6 @@ async def kick_loop():
                     if role.id in PROTECTED_ROLE_IDS
                 ]
 
-                pass
                 continue
 
             if member.id not in main_members:
@@ -3355,7 +3309,6 @@ async def kick_loop():
                         reason="not in main server",
                     )
 
-                    pass
 
                     await send_webhook(
                         KICK_WEBHOOK_URL,
@@ -3373,7 +3326,6 @@ async def kick_loop():
                     )
 
                 except Exception as e:
-                    pass
 
                     await send_webhook(
                         KICK_WEBHOOK_URL,
@@ -3399,12 +3351,10 @@ async def kick_loop():
 
 @tasks.loop(seconds=tag_check_time)
 async def tag_role_loop():
-    pass
 
     main_guild = bot.get_guild(MAIN_SERVER)
 
     if main_guild is None:
-        pass
         return
 
     # Periodic sweep catches members who already had the trigger role when
@@ -3421,7 +3371,6 @@ async def tag_role_loop():
     tag_role = main_guild.get_role(TAG_ROLE_ID)
 
     if tag_role is None:
-        pass
         return
 
     # Second main-server role is optional. Set TAG_ROLE_ID_2 to 0 to disable it.
@@ -3436,7 +3385,6 @@ async def tag_role_loop():
             pass
 
     if len(tag_servers) != len(tag_server_role_ids):
-        pass
         return
 
     if not await ensure_guild_members_loaded(main_guild):
@@ -3445,36 +3393,28 @@ async def tag_role_loop():
     bot_member = main_guild.me
 
     if bot_member is None:
-        pass
         return
 
     if not bot_member.guild_permissions.manage_roles:
-        pass
         return
 
     if tag_role.is_default():
-        pass
         return
 
     if tag_role.managed:
-        pass
         return
 
     if bot_member.top_role <= tag_role:
-        pass
         return
 
     if second_role_ready and tag_role_2:
         if tag_role_2.is_default():
-            pass
             second_role_ready = False
 
         elif tag_role_2.managed:
-            pass
             second_role_ready = False
 
         elif bot_member.top_role <= tag_role_2:
-            pass
             second_role_ready = False
 
     tagged_users = set()
@@ -3482,7 +3422,6 @@ async def tag_role_loop():
     second_role_check_failed = False
     second_role_servers_configured = 0
 
-    pass
 
     # -------------------------
     # CHECK ALL FIRST-ROLE TAG SERVERS
@@ -3495,7 +3434,6 @@ async def tag_role_loop():
         guild = bot.get_guild(server_id)
 
         if guild is None:
-            pass
             continue
 
         if not await ensure_guild_members_loaded(guild):
@@ -3504,7 +3442,6 @@ async def tag_role_loop():
         tag_server_role = guild.get_role(tag_server_role_id)
 
         if tag_server_role is None:
-            pass
             continue
 
         for member in guild.members:
@@ -3521,11 +3458,9 @@ async def tag_role_loop():
     # server does NOT need to be in the first-role tag_servers list.
 
     if second_role_ready and tag_role_2:
-        pass
 
         for source_server_id, source_role_id in tag_server_role_ids_2.items():
             if not source_role_id:
-                pass
                 continue
 
             second_role_servers_configured += 1
@@ -3533,11 +3468,9 @@ async def tag_role_loop():
             source_guild = bot.get_guild(source_server_id)
 
             if source_guild is None:
-                pass
                 second_role_check_failed = True
                 continue
 
-            pass
 
             if not await ensure_guild_members_loaded(source_guild):
                 second_role_check_failed = True
@@ -3553,16 +3486,13 @@ async def tag_role_loop():
                         None,
                     )
                 except discord.HTTPException as e:
-                    pass
                     second_role_check_failed = True
                     continue
 
             if source_role is None:
-                pass
                 second_role_check_failed = True
                 continue
 
-            pass
 
             found_count = 0
             for source_member in source_guild.members:
@@ -3588,11 +3518,9 @@ async def tag_role_loop():
 
         if has_tag and not has_role:
             if main_guild.owner_id == member.id:
-                pass
                 continue
 
             if member.top_role >= bot_member.top_role:
-                pass
                 continue
 
             try:
@@ -3600,7 +3528,6 @@ async def tag_role_loop():
                     tag_role,
                     reason="User has a configured first tag role in a tag server",
                 )
-                pass
 
                 await send_webhook(
                     ROLE_WEBHOOK_URL,
@@ -3632,7 +3559,6 @@ async def tag_role_loop():
                     tag_role,
                     reason="User no longer has the configured first tag role",
                 )
-                pass
 
                 await send_webhook(
                     ROLE_WEBHOOK_URL,
@@ -3666,7 +3592,6 @@ async def tag_role_loop():
     # -------------------------
 
     if second_role_ready and tag_role_2 and second_role_servers_configured > 0 and not second_role_check_failed:
-        pass
         for member in main_guild.members:
             if member.bot:
                 continue
@@ -3683,7 +3608,6 @@ async def tag_role_loop():
                         main_guild.owner_id == member.id
                         or member.top_role >= bot_member.top_role
                     ):
-                        pass
                         continue
 
                     try:
@@ -3691,7 +3615,6 @@ async def tag_role_loop():
                             tag_role_2,
                             reason="User is on the second-role blacklist",
                         )
-                        pass
 
                         await send_webhook(
                             ROLE_WEBHOOK_URL,
@@ -3720,11 +3643,9 @@ async def tag_role_loop():
 
             if has_tag_2 and not has_role_2:
                 if main_guild.owner_id == member.id:
-                    pass
                     continue
 
                 if member.top_role >= bot_member.top_role:
-                    pass
                     continue
 
                 try:
@@ -3732,7 +3653,6 @@ async def tag_role_loop():
                         tag_role_2,
                         reason="User has the configured second tag role in a tag server",
                     )
-                    pass
 
                     await send_webhook(
                         ROLE_WEBHOOK_URL,
@@ -3766,7 +3686,6 @@ async def tag_role_loop():
                         tag_role_2,
                         reason="User no longer has the configured second tag role",
                     )
-                    pass
 
                     await send_webhook(
                         ROLE_WEBHOOK_URL,
@@ -3811,7 +3730,6 @@ async def tag_role_loop():
 @kick_loop.error
 async def kick_loop_error(error):
     # A single unexpected exception should not permanently stop the kick loop.
-    pass
     await asyncio.sleep(5)
 
     if not bot.is_closed() and not kick_loop.is_running():
@@ -3821,7 +3739,6 @@ async def kick_loop_error(error):
 @tag_role_loop.error
 async def tag_role_loop_error(error):
     # A single unexpected exception should not permanently stop the role loop.
-    pass
     await asyncio.sleep(5)
 
     if not bot.is_closed() and not tag_role_loop.is_running():
