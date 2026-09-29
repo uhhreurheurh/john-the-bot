@@ -1900,16 +1900,32 @@ async def on_message(message: discord.Message):
         if message.author.id in uwu_user_blacklist:
             await disable_uwu_for_user(message.author.id)
             return
+
         bot_member = message.guild.me if message.guild is not None else None
-        if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
+        if bot_member is None:
             return
+
+        permissions = message.channel.permissions_for(bot_member)
+        if not permissions.manage_messages:
+            return
+
+        if not permissions.manage_webhooks:
+            # UWU uses a temporary webhook so the transformed message appears
+            # as the selected user's name/avatar. Without Manage Webhooks,
+            # Discord will reject the send.
+            return
+
         try:
             await send_uwu_message(message.channel, message.author, content)
             await delete_original_message(message)
         except UwuMessageBlocked:
-            pass
+            return
+        except (discord.Forbidden, discord.HTTPException):
+            # Keep the target active. A later message can retry after Discord
+            # recovers or the bot's webhook permission is restored.
+            return
         except Exception:
-            pass
+            return
         return
 
     # Only non-target users continue into the command parser.
@@ -2048,9 +2064,24 @@ async def on_message(message: discord.Message):
         target = message.mentions[0]
 
         bot_member = message.guild.me if message.guild is not None else None
-        if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
+        if bot_member is None:
+            await message.reply(
+                "❌ I could not find my member record in this server.",
+                mention_author=False,
+            )
+            return
+
+        permissions = message.channel.permissions_for(bot_member)
+        if not permissions.manage_messages:
             await message.reply(
                 "❌ I need **Manage Messages** permission in this channel to replace messages.",
+                mention_author=False,
+            )
+            return
+
+        if not permissions.manage_webhooks:
+            await message.reply(
+                "❌ I need **Manage Webhooks** permission in this channel to enable UWU mode.",
                 mention_author=False,
             )
             return
@@ -2670,9 +2701,24 @@ async def uwu_command(
         return
 
     bot_member = interaction.guild.me if interaction.guild is not None else None
-    if bot_member is None or not interaction.channel.permissions_for(bot_member).manage_messages:
+    if bot_member is None:
+        await interaction.response.send_message(
+            "❌ I could not find my member record in this server.",
+            ephemeral=False,
+        )
+        return
+
+    permissions = interaction.channel.permissions_for(bot_member)
+    if not permissions.manage_messages:
         await interaction.response.send_message(
             "❌ I need **Manage Messages** permission in this channel to replace messages.",
+            ephemeral=False,
+        )
+        return
+
+    if not permissions.manage_webhooks:
+        await interaction.response.send_message(
+            "❌ I need **Manage Webhooks** permission in this channel to enable UWU mode.",
             ephemeral=False,
         )
         return
