@@ -1284,7 +1284,25 @@ async def send_uwu_message(
     # Never send a blacklisted word/phrase.
     ensure_uwu_message_is_allowed(content)
 
-    webhook = await get_uwu_webhook(channel)
+    try:
+        webhook = await get_uwu_webhook(channel)
+    except discord.Forbidden:
+        # Webhooks are preferred because they can use the target's name/avatar.
+        # If Manage Webhooks is unavailable, still make UWU work by sending
+        # through the bot account instead of silently doing nothing.
+        uwu_text = uwuify.uwu(content, flags=UWU_FLAGS) or "uwu"
+        ensure_uwu_message_is_allowed(uwu_text)
+
+        sent_message = await channel.send(
+            uwu_text,
+            allowed_mentions=discord.AllowedMentions(
+                everyone=False,
+                roles=False,
+                users=True,
+                replied_user=False,
+            ),
+        )
+        return [sent_message]
 
     # Protect Discord mentions before uwuify transforms the text.
     # This keeps @users, @roles, and #channels intact and clickable.
@@ -2079,13 +2097,6 @@ async def on_message(message: discord.Message):
             )
             return
 
-        if not permissions.manage_webhooks:
-            await message.reply(
-                "❌ I need **Manage Webhooks** permission in this channel to enable UWU mode.",
-                mention_author=False,
-            )
-            return
-
         try:
             await set_uwu_target(message.channel, target)
 
@@ -2712,13 +2723,6 @@ async def uwu_command(
     if not permissions.manage_messages:
         await interaction.response.send_message(
             "❌ I need **Manage Messages** permission in this channel to replace messages.",
-            ephemeral=False,
-        )
-        return
-
-    if not permissions.manage_webhooks:
-        await interaction.response.send_message(
-            "❌ I need **Manage Webhooks** permission in this channel to enable UWU mode.",
             ephemeral=False,
         )
         return
