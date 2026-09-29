@@ -39,10 +39,12 @@ BLACKLIST_ALLOWED_ROLE_ID = 1306082718060384399  # <-- put the whitelisted role 
 # This survives bot restarts.
 BLACKLIST_FILE = Path(__file__).with_name("second_role_blacklist.json")
 
-# Separate persistent blacklists for UWUIFY and HOODIFY targets.
-# A blacklisted member cannot be selected for that mode.
-UWU_USER_BLACKLIST_FILE = Path(__file__).with_name("uwu_user_blacklist.json")
-HOOD_USER_BLACKLIST_FILE = Path(__file__).with_name("hood_user_blacklist.json")
+# Combined persistent blacklist for both UWUIFY and HOODIFY targets.
+# A member on this list cannot be selected for either mode.
+TEXTIFY_BLACKLIST_FILE = Path(__file__).with_name("textify_blacklist.json")
+# Backward-compatible aliases used by the existing mode logic.
+UWU_USER_BLACKLIST_FILE = TEXTIFY_BLACKLIST_FILE
+HOOD_USER_BLACKLIST_FILE = TEXTIFY_BLACKLIST_FILE
 UWU_HOODIFY_BAN_FILE = Path(__file__).with_name("uwu_hoodify_ban.json")
 
 # GitHub persistence for the UWUIFY / HOODIFY user-ID blacklists.
@@ -190,8 +192,10 @@ def _save_user_blacklist_local(path: Path, blacklist: set[int]) -> None:
 
 
 # Initialize these before commands or background tasks can reference them.
-uwu_user_blacklist = load_user_blacklist(UWU_USER_BLACKLIST_FILE)
-hood_user_blacklist = load_user_blacklist(HOOD_USER_BLACKLIST_FILE)
+# UWUIFY and HOODIFY intentionally share the same Textify blacklist.
+textify_blacklist = load_user_blacklist(TEXTIFY_BLACKLIST_FILE)
+uwu_user_blacklist = textify_blacklist
+hood_user_blacklist = textify_blacklist
 uwu_hoodify_ban = load_user_blacklist(UWU_HOODIFY_BAN_FILE)
 
 
@@ -370,8 +374,8 @@ async def save_user_blacklist(
 
 
 async def sync_user_blacklists_from_github() -> bool:
-    """Load UWUIFY, HOODIFY, and command-ban lists from GitHub."""
-    global uwu_user_blacklist, hood_user_blacklist, uwu_hoodify_ban, github_blacklist_sync_error
+    """Load the Textify blacklist and command-ban list from GitHub."""
+    global textify_blacklist, uwu_user_blacklist, hood_user_blacklist, uwu_hoodify_ban, github_blacklist_sync_error
 
     if not GITHUB_TOKEN:
         github_blacklist_sync_error = (
@@ -382,8 +386,7 @@ async def sync_user_blacklists_from_github() -> bool:
     async with GITHUB_USER_BLACKLIST_SYNC_LOCK:
         try:
             for path, name in (
-                (UWU_USER_BLACKLIST_FILE, "uwu"),
-                (HOOD_USER_BLACKLIST_FILE, "hood"),
+                (TEXTIFY_BLACKLIST_FILE, "textify"),
                 (UWU_HOODIFY_BAN_FILE, "ban"),
             ):
                 exists, github_ids, _ = await asyncio.to_thread(
@@ -393,10 +396,8 @@ async def sync_user_blacklists_from_github() -> bool:
 
                 if exists:
                     target = (
-                        uwu_user_blacklist
-                        if name == "uwu"
-                        else hood_user_blacklist
-                        if name == "hood"
+                        textify_blacklist
+                        if name == "textify"
                         else uwu_hoodify_ban
                     )
                     target.clear()
@@ -405,10 +406,8 @@ async def sync_user_blacklists_from_github() -> bool:
                 else:
                     # First run: create the file using any local cached IDs.
                     target = (
-                        uwu_user_blacklist
-                        if name == "uwu"
-                        else hood_user_blacklist
-                        if name == "hood"
+                        textify_blacklist
+                        if name == "textify"
                         else uwu_hoodify_ban
                     )
                     await asyncio.to_thread(
@@ -1772,8 +1771,8 @@ async def on_message(message: discord.Message):
             if textify_action == "blacklist":
                 uwu_user_blacklist.add(target.id)
                 hood_user_blacklist.add(target.id)
-                await save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
-                await save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
+                await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, uwu_user_blacklist)
+                await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, hood_user_blacklist)
                 removed = (
                     await disable_uwu_for_user(target.id)
                     + await disable_hood_for_user(target.id)
@@ -1788,8 +1787,8 @@ async def on_message(message: discord.Message):
                 else:
                     uwu_user_blacklist.discard(target.id)
                     hood_user_blacklist.discard(target.id)
-                    await save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
-                    await save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
+                    await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, uwu_user_blacklist)
+                    await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, hood_user_blacklist)
                     response = f"✅ {target.mention} can use UWUIFY and HOODIFY again."
             else:
                 uwu_blacklisted = target.id in uwu_user_blacklist
@@ -2783,8 +2782,8 @@ async def textify_blacklist_command(interaction: discord.Interaction, member: di
     uwu_user_blacklist.add(member.id)
     hood_user_blacklist.add(member.id)
 
-    uwu_synced = await save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
-    hood_synced = await save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
+    uwu_synced = await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, uwu_user_blacklist)
+    hood_synced = await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, hood_user_blacklist)
 
     removed = (
         await disable_uwu_for_user(member.id)
@@ -2823,8 +2822,8 @@ async def textify_unblacklist_command(interaction: discord.Interaction, member: 
     uwu_user_blacklist.discard(member.id)
     hood_user_blacklist.discard(member.id)
 
-    uwu_synced = await save_user_blacklist(UWU_USER_BLACKLIST_FILE, uwu_user_blacklist)
-    hood_synced = await save_user_blacklist(HOOD_USER_BLACKLIST_FILE, hood_user_blacklist)
+    uwu_synced = await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, uwu_user_blacklist)
+    hood_synced = await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, hood_user_blacklist)
 
     response = f"✅ {member.mention} can use UWUIFY and HOODIFY again."
     if not uwu_synced or not hood_synced:
@@ -2875,7 +2874,7 @@ async def uwu_blacklist_command(
 
     uwu_user_blacklist.add(member.id)
     github_synced = await save_user_blacklist(
-        UWU_USER_BLACKLIST_FILE,
+        TEXTIFY_BLACKLIST_FILE,
         uwu_user_blacklist,
     )
     removed = await disable_uwu_for_user(member.id)
@@ -2917,7 +2916,7 @@ async def uwu_unblacklist_command(
 
     uwu_user_blacklist.remove(member.id)
     github_synced = await save_user_blacklist(
-        UWU_USER_BLACKLIST_FILE,
+        TEXTIFY_BLACKLIST_FILE,
         uwu_user_blacklist,
     )
 
@@ -2948,7 +2947,7 @@ async def hood_blacklist_command(
 
     hood_user_blacklist.add(member.id)
     github_synced = await save_user_blacklist(
-        HOOD_USER_BLACKLIST_FILE,
+        TEXTIFY_BLACKLIST_FILE,
         hood_user_blacklist,
     )
     removed = await disable_hood_for_user(member.id)
@@ -2990,7 +2989,7 @@ async def hood_unblacklist_command(
 
     hood_user_blacklist.remove(member.id)
     github_synced = await save_user_blacklist(
-        HOOD_USER_BLACKLIST_FILE,
+        TEXTIFY_BLACKLIST_FILE,
         hood_user_blacklist,
     )
 
