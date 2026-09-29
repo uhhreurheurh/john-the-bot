@@ -45,7 +45,7 @@ TEXTIFY_BLACKLIST_FILE = Path(__file__).with_name("textify_blacklist.json")
 # Backward-compatible aliases used by the existing mode logic.
 UWU_USER_BLACKLIST_FILE = TEXTIFY_BLACKLIST_FILE
 HOOD_USER_BLACKLIST_FILE = TEXTIFY_BLACKLIST_FILE
-UWU_HOODIFY_BAN_FILE = Path(__file__).with_name("uwu_hoodify_ban.json")
+TEXTIFY_BAN_FILE = Path(__file__).with_name("textify_ban.json")
 
 # GitHub persistence for the UWUIFY / HOODIFY user-ID blacklists.
 # GITHUB_TOKEN is stored securely in Railway. The repository and branch can
@@ -196,7 +196,7 @@ def _save_user_blacklist_local(path: Path, blacklist: set[int]) -> None:
 textify_blacklist = load_user_blacklist(TEXTIFY_BLACKLIST_FILE)
 uwu_user_blacklist = textify_blacklist
 hood_user_blacklist = textify_blacklist
-uwu_hoodify_ban = load_user_blacklist(UWU_HOODIFY_BAN_FILE)
+uwu_hoodify_ban = load_user_blacklist(TEXTIFY_BAN_FILE)
 
 
 def _github_headers() -> dict[str, str]:
@@ -387,7 +387,7 @@ async def sync_user_blacklists_from_github() -> bool:
         try:
             for path, name in (
                 (TEXTIFY_BLACKLIST_FILE, "textify"),
-                (UWU_HOODIFY_BAN_FILE, "ban"),
+                (TEXTIFY_BAN_FILE, "ban"),
             ):
                 exists, github_ids, _ = await asyncio.to_thread(
                     _github_get_user_blacklist,
@@ -1826,7 +1826,7 @@ async def on_message(message: discord.Message):
                     )
                     return
                 uwu_hoodify_ban.add(target.id)
-                await save_user_blacklist(UWU_HOODIFY_BAN_FILE, uwu_hoodify_ban)
+                await save_user_blacklist(TEXTIFY_BAN_FILE, uwu_hoodify_ban)
                 removed = (
                     await disable_uwu_for_user(target.id)
                     + await disable_hood_for_user(target.id)
@@ -1839,7 +1839,7 @@ async def on_message(message: discord.Message):
                     response = f"ℹ️ {target.mention} is not currently banned from running UWUIFY and HOODIFY."
                 else:
                     uwu_hoodify_ban.remove(target.id)
-                    await save_user_blacklist(UWU_HOODIFY_BAN_FILE, uwu_hoodify_ban)
+                    await save_user_blacklist(TEXTIFY_BAN_FILE, uwu_hoodify_ban)
                     response = f"✅ {target.mention} can run UWUIFY and HOODIFY again."
 
             await message.reply(response, mention_author=False)
@@ -1885,7 +1885,7 @@ async def on_message(message: discord.Message):
                 await message.reply(f"ℹ️ {target.mention} is already banned from UWUIFY and HOODIFY.", mention_author=False)
                 return
             uwu_hoodify_ban.add(target.id)
-            await save_user_blacklist(UWU_HOODIFY_BAN_FILE, uwu_hoodify_ban)
+            await save_user_blacklist(TEXTIFY_BAN_FILE, uwu_hoodify_ban)
             removed_uwu = await disable_uwu_for_user(target.id)
             removed_hood = await disable_hood_for_user(target.id)
             removed = removed_uwu + removed_hood
@@ -1898,7 +1898,7 @@ async def on_message(message: discord.Message):
                 await message.reply(f"ℹ️ {target.mention} is not currently banned from UWUIFY and HOODIFY.", mention_author=False)
                 return
             uwu_hoodify_ban.remove(target.id)
-            await save_user_blacklist(UWU_HOODIFY_BAN_FILE, uwu_hoodify_ban)
+            await save_user_blacklist(TEXTIFY_BAN_FILE, uwu_hoodify_ban)
             await message.reply(f"✅ {target.mention} can run UWUIFY and HOODIFY again.", mention_author=False)
         return
     # Textify is the combined UWUIFY + HOODIFY blacklist interface.
@@ -2434,7 +2434,7 @@ async def uwuify_hoodify_ban_command(interaction: discord.Interaction, member: d
         return
 
     uwu_hoodify_ban.add(member.id)
-    await save_user_blacklist(UWU_HOODIFY_BAN_FILE, uwu_hoodify_ban)
+    await save_user_blacklist(TEXTIFY_BAN_FILE, uwu_hoodify_ban)
     removed_uwu = await disable_uwu_for_user(member.id)
     removed_hood = await disable_hood_for_user(member.id)
 
@@ -2462,7 +2462,7 @@ async def uwuify_hoodify_unban_command(interaction: discord.Interaction, member:
         return
 
     uwu_hoodify_ban.remove(member.id)
-    await save_user_blacklist(UWU_HOODIFY_BAN_FILE, uwu_hoodify_ban)
+    await save_user_blacklist(TEXTIFY_BAN_FILE, uwu_hoodify_ban)
     await interaction.followup.send(
         f"✅ {member.mention} can run UWUIFY and HOODIFY again.",
         ephemeral=False,
