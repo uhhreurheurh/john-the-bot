@@ -2067,6 +2067,12 @@ async def sync_review_db_to_github() -> tuple[bool, str]:
 review_db_lock = asyncio.Lock()
 
 
+async def sync_review_db_to_github_locked() -> tuple[bool, str]:
+    """Serialize review database uploads so background syncs cannot overlap."""
+    async with review_db_lock:
+        return await sync_review_db_to_github()
+
+
 # =========================
 # BOT SETUP
 # =========================
