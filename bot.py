@@ -1506,18 +1506,28 @@ def _reopen_review_db() -> None:
 
 
 def add_review(target_id: int, reviewer_id: int, rating: int, comment: str):
+    """Insert a review using its own SQLite connection."""
     with review_db_thread_lock:
-        cursor = review_db.execute(
-            """
-            INSERT INTO reviews
-            (target_id, reviewer_id, rating, comment)
-            VALUES (?, ?, ?, ?)
-            """,
-            (target_id, reviewer_id, rating, comment),
+        connection = sqlite3.connect(
+            REVIEW_DB_FILE,
+            check_same_thread=False,
+            timeout=30,
         )
-        review_db.commit()
-        return cursor.lastrowid
-
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout = 30000")
+        try:
+            cursor = connection.execute(
+                """
+                INSERT INTO reviews
+                (target_id, reviewer_id, rating, comment)
+                VALUES (?, ?, ?, ?)
+                """,
+                (target_id, reviewer_id, rating, comment),
+            )
+            connection.commit()
+            return cursor.lastrowid
+        finally:
+            connection.close()
 
 def get_reviews(target_id: int):
     return review_db.execute(
@@ -1543,10 +1553,19 @@ def get_review(review_id: int):
 
 
 def delete_review(review_id: int):
+    """Delete a review using its own SQLite connection."""
     with review_db_thread_lock:
-        review_db.execute("DELETE FROM reviews WHERE id = ?", (review_id,))
-        review_db.commit()
-
+        connection = sqlite3.connect(
+            REVIEW_DB_FILE,
+            check_same_thread=False,
+            timeout=30,
+        )
+        connection.execute("PRAGMA busy_timeout = 30000")
+        try:
+            connection.execute("DELETE FROM reviews WHERE id = ?", (review_id,))
+            connection.commit()
+        finally:
+            connection.close()
 
 def get_leaderboard_liked(limit: int = 5):
     return review_db.execute(
@@ -1614,24 +1633,34 @@ def get_user_stats(user_id: int):
 
 
 def _review_db_snapshot() -> bytes:
-    temp = REVIEW_DB_FILE.with_name("reviews.db.sync.tmp")
-    try:
-        temp.unlink(missing_ok=True)
-    except TypeError:
-        if temp.exists():
-            temp.unlink()
-    source = sqlite3.connect(REVIEW_DB_FILE, timeout=15)
-    snapshot = sqlite3.connect(temp, timeout=15)
-    try:
-        source.backup(snapshot)
-        snapshot.commit()
-    finally:
-        snapshot.close()
-        source.close()
-    data = temp.read_bytes()
-    temp.unlink(missing_ok=True)
-    return data
+    """Create a consistent SQLite snapshot while review writes are paused."""
+    with review_db_thread_lock:
+        temp = REVIEW_DB_FILE.with_name("reviews.db.sync.tmp")
+        try:
+            temp.unlink(missing_ok=True)
+        except TypeError:
+            if temp.exists():
+                temp.unlink()
 
+        source = sqlite3.connect(
+            REVIEW_DB_FILE,
+            check_same_thread=False,
+            timeout=30,
+        )
+        snapshot = sqlite3.connect(temp, timeout=30)
+        try:
+            source.execute("PRAGMA busy_timeout = 30000")
+            snapshot.execute("PRAGMA busy_timeout = 30000")
+            source.backup(snapshot)
+            snapshot.commit()
+        finally:
+            snapshot.close()
+            source.close()
+
+        try:
+            return temp.read_bytes()
+        finally:
+            temp.unlink(missing_ok=True)
 
 def _github_db_url(path: str) -> str:
     encoded = "/".join(urllib.parse.quote(part, safe="") for part in path.split("/"))
@@ -1713,22 +1742,28 @@ def _review_db_has_reviews() -> bool:
 
 
 async def restore_review_db_from_github() -> bool:
-    if not GITHUB_TOKEN or _review_db_has_reviews():
+    """Restore the latest review database before any review commands run."""
+    if not GITHUB_TOKEN:
         return False
+    if _review_db_has_reviews():
+        return False
+
     try:
         remote = await asyncio.to_thread(_github_download_db, GITHUB_DB_PATH)
         if not remote:
             return False
+
         temp = REVIEW_DB_FILE.with_name("reviews.db.restore.tmp")
         temp.write_bytes(remote)
-        _reopen_review_db()
-        review_db.close()
+        try:
+            review_db.close()
+        except Exception:
+            pass
         temp.replace(REVIEW_DB_FILE)
         _reopen_review_db()
         return True
     except Exception:
         return False
-
 
 async def sync_review_db_to_github() -> tuple[bool, str]:
     if not GITHUB_TOKEN:
