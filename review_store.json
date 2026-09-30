@@ -184,6 +184,14 @@
       "rating": 5,
       "comment": "https://klipy.com/gifs/asda-22",
       "created_at": "2026-09-30 21:38:25"
+    },
+    {
+      "id": 27,
+      "target_id": 1289354582182465633,
+      "reviewer_id": 1485649466928402486,
+      "rating": 1,
+      "comment": "dislikes ukraine",
+      "created_at": "2026-09-30 22:09:18"
     }
   ],
   "review_update_requests": [
