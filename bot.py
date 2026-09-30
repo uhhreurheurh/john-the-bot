@@ -13,6 +13,9 @@ from datetime import datetime, timedelta, timezone
 import urllib.error
 import urllib.parse
 import urllib.request
+import binascii
+import hmac
+import hashlib
 
 import discord
 from discord import app_commands
@@ -1396,11 +1399,16 @@ UWU_ALLOWED_ROLE_IDS = {
 }
 
 # External proxy bots whose output should be checked for active UWU/HOODIFY targets.
-# Use the bot name here so we do not rely on an unverified application ID.
-PROXY_BOT_IDS = set()
-PROXY_BOT_NAMES = {
-    "bleed",
-}
+#
+# SECURITY: set this to the proxy bot's verified APPLICATION ID, found via
+# Developer Mode -> right-click the bot -> Copy User ID (it must equal the
+# bot-user id from GET /oauth2/applications/@me). While this is empty the relay
+# is fully disabled, which is the safe default.
+#
+# Name matching was removed: a bot's application username is attacker-selectable,
+# so trusting a name let any bot (or a webhook) impersonate the proxy and
+# bypass on_message's bot/webhook self-checks.
+PROXY_BOT_IDS: set[int] = set()
 PROXY_REQUEST_TTL_SECONDS = 15
 
 # Safety cleanup interval for leftover UWU webhooks.
@@ -1427,6 +1435,118 @@ UWU_FLAGS = uwuify.SMILEY | uwuify.YU | uwuify.STUTTER
 # =========================
 HOOD_WEBHOOK_NAME = "Hoodify Relay"
 HOOD_WEBHOOK_IDLE_SECONDS = 5 * 60
+
+# Members who may never be used as a transform target, regardless of who asks.
+# Without this, any role-holder could /uwuify the server owner using the owner's
+# real nickname and avatar, making bot output indistinguishable from the owner.
+PROTECTED_TARGET_ROLE_IDS = STAFF_ROLE_IDS | {
+    1518416402141417472,  # Co Owner (already in the hierarchy, kept explicit)
+    1306082718060384399,  # the general "trusted helper" admin role
+}
+
+# Relay webhooks are minted in whichever channel the command was run. A member
+# with Manage Webhooks there can read the webhook URL (which embeds its token)
+# and then post as that identity indefinitely, bypassing the content filter
+# entirely. Empty means the relay is disabled everywhere.
+UWU_RELAY_ALLOWED_CHANNEL_IDS: set[int] = set()
+HOOD_RELAY_ALLOWED_CHANNEL_IDS: set[int] = set()
+
+# Bounds the number of distinct channels holding an active relay. The existing
+# cap counts PEOPLE, so one operator could mint a webhook in every channel and
+# exhaust the guild's shared webhook quota (which the kick/role log webhooks
+# also depend on).
+MAX_ACTIVE_RELAY_CHANNELS = 3
+
+TRANSFORM_COOLDOWN_SECONDS = 30
+MIN_TRANSFORM_INTERVAL_SECONDS = 1.5
+
+_transform_actor_cooldown: dict[tuple[str, int], float] = {}
+_last_transform_send: dict[tuple[int, int], float] = {}
+
+
+class TargetNotPermitted(Exception):
+    """Raised when a requested transform target may not be used."""
+
+
+class RelayChannelNotAllowed(Exception):
+    """Raised when a relay webhook is requested outside the allowlist."""
+
+
+async def validate_transform_target(
+    channel: discord.TextChannel,
+    target: discord.Member,
+    operator,
+) -> None:
+    """Reject targets that must never be relayed through the bot's webhook."""
+    if getattr(target, "bot", False):
+        raise TargetNotPermitted("Bots cannot be transform targets.")
+
+    if operator is not None and target.id == getattr(operator, "id", None):
+        raise TargetNotPermitted("You cannot target yourself.")
+
+    guild = channel.guild
+    if guild is not None and target.guild is not None and target.guild.id != guild.id:
+        raise TargetNotPermitted("That member is not in this server.")
+
+    if guild is not None and target.id == guild.owner_id:
+        raise TargetNotPermitted("The server owner cannot be targeted.")
+
+    if any(role.id in PROTECTED_TARGET_ROLE_IDS for role in target.roles):
+        raise TargetNotPermitted("Staff members cannot be targeted.")
+
+    bot_member = guild.me if guild is not None else None
+    if bot_member is not None and target.top_role >= bot_member.top_role:
+        raise TargetNotPermitted("You cannot target a member you cannot outrank.")
+
+    if isinstance(operator, discord.Member) and guild is not None:
+        if operator.top_role.id != guild.owner_id and target.top_role >= operator.top_role:
+            raise TargetNotPermitted(
+                "You cannot target a member at or above your own role."
+            )
+        if not channel.permissions_for(operator).manage_webhooks:
+            raise TargetNotPermitted(
+                "You need Manage Webhooks in this channel to use the relay."
+            )
+
+
+def ensure_relay_channel_allowed(
+    channel: discord.TextChannel,
+    allowed: set[int],
+) -> None:
+    """Only mint a relay webhook in explicitly allowlisted channels."""
+    if not allowed:
+        raise RelayChannelNotAllowed(
+            "Relay webhooks are not enabled (allowlist is empty)."
+        )
+    if channel.id not in allowed:
+        raise RelayChannelNotAllowed(
+            "Relay webhooks are not permitted in this channel."
+        )
+
+
+def _enforce_actor_cooldown(operator, guild_id: int | None) -> None:
+    """Rate-limit transform commands per actor so one operator cannot churn."""
+    if operator is None:
+        return
+    key = (f"g{guild_id}" if guild_id else "dm", operator.id)
+    now = time.monotonic()
+    if now - _transform_actor_cooldown.get(key, 0.0) < TRANSFORM_COOLDOWN_SECONDS:
+        raise RelayChannelNotAllowed(
+            f"Please wait {TRANSFORM_COOLDOWN_SECONDS}s between transform commands."
+        )
+    _transform_actor_cooldown[key] = now
+
+
+def transform_rate_limited(channel_id: int, user_id: int) -> bool:
+    """Collapse message bursts so one target cannot exhaust the API budget."""
+    key = (channel_id, user_id)
+    now = time.monotonic()
+    if now - _last_transform_send.get(key, 0.0) < MIN_TRANSFORM_INTERVAL_SECONDS:
+        return True
+    _last_transform_send[key] = now
+    if len(_last_transform_send) > 4096:
+        _last_transform_send.clear()
+    return False
 
 # Members with one of these roles may enable/disable HOODIFY.
 # Set to the same roles as UWU, or change them independently.
@@ -1855,6 +1975,7 @@ async def get_hood_webhook(channel: discord.TextChannel) -> discord.Webhook:
 async def set_hood_target(
     channel: discord.TextChannel,
     target: discord.Member,
+    operator=None,
 ) -> discord.Webhook:
     try:
         await ensure_user_blacklists_ready()
@@ -1863,6 +1984,23 @@ async def set_hood_target(
 
     if target.id in hood_user_blacklist:
         raise HoodUserBlacklisted
+
+    ensure_relay_channel_allowed(channel, HOOD_RELAY_ALLOWED_CHANNEL_IDS)
+    _enforce_actor_cooldown(operator, channel.guild.id if channel.guild else None)
+    await validate_transform_target(channel, target, operator)
+
+    # Provision the webhook BEFORE consuming a target slot. Previously the slot
+    # was committed first, so a failed create_webhook (Forbidden for Manage
+    # Webhooks, or a 429) burned a permanent slot that no reaper would ever
+    # reclaim, because the reaper only frees slots as a side effect of deleting
+    # a webhook that never got created.
+    if channel.id not in hood_webhooks and len(hood_webhooks) >= MAX_ACTIVE_RELAY_CHANNELS:
+        raise RelayChannelNotAllowed(
+            f"Too many channels currently have an active HOODIFY relay "
+            f"(max {MAX_ACTIVE_RELAY_CHANNELS})."
+        )
+
+    webhook = await get_hood_webhook(channel)
 
     async with hood_target_lock:
         channel_targets = hood_targets.setdefault(channel.id, set())
@@ -1875,13 +2013,15 @@ async def set_hood_target(
             ):
                 if not channel_targets:
                     hood_targets.pop(channel.id, None)
+                    # Roll back the webhook we just provisioned for a target
+                    # that never got admitted.
+                    await disable_hood_target(channel.id)
                 raise HoodTargetLimitReached(
                     f"The maximum of {MAX_ACTIVE_HOOD_TARGETS} active HOODIFY "
                     "targets has been reached."
                 )
             channel_targets.add(target.id)
 
-    webhook = await get_hood_webhook(channel)
     _reset_hood_webhook_timer(channel.id, webhook)
     return webhook
 
@@ -1939,12 +2079,15 @@ async def send_hood_message(
         sent_messages.append(
             await webhook.send(
                 chunk,
-                username=target.display_name[:80],
-                avatar_url=target.display_avatar.url,
+                # Never borrow the target's real identity: posting with their
+                # exact name AND avatar made bot output indistinguishable from
+                # the member (including the server owner).
+                username=f"{target.display_name[:70]} (relay)",
+                avatar_url=None,
                 allowed_mentions=discord.AllowedMentions(
                     everyone=False,
                     roles=False,
-                    users=True,
+                    users=False,
                     replied_user=False,
                 ),
                 wait=True,
@@ -2123,6 +2266,7 @@ async def get_uwu_webhook(channel: discord.TextChannel) -> discord.Webhook:
 async def set_uwu_target(
     channel: discord.TextChannel,
     target: discord.Member,
+    operator=None,
 ) -> discord.Webhook:
     """Add a target to UWU mode while enforcing a global 5-person cap."""
     try:
@@ -2132,6 +2276,20 @@ async def set_uwu_target(
 
     if target.id in uwu_user_blacklist:
         raise UwuUserBlacklisted
+
+    ensure_relay_channel_allowed(channel, UWU_RELAY_ALLOWED_CHANNEL_IDS)
+    _enforce_actor_cooldown(operator, channel.guild.id if channel.guild else None)
+    await validate_transform_target(channel, target, operator)
+
+    if channel.id not in uwu_webhooks and len(uwu_webhooks) >= MAX_ACTIVE_RELAY_CHANNELS:
+        raise RelayChannelNotAllowed(
+            f"Too many channels currently have an active UWUIFY relay "
+            f"(max {MAX_ACTIVE_RELAY_CHANNELS})."
+        )
+
+    # Provision the webhook BEFORE consuming a slot so a failed create cannot
+    # leak a phantom target that no reaper will ever reclaim.
+    webhook = await get_uwu_webhook(channel)
 
     async with uwu_target_lock:
         channel_targets = uwu_targets.setdefault(channel.id, set())
@@ -2145,9 +2303,11 @@ async def set_uwu_target(
                 target.id not in active_target_ids
                 and len(active_target_ids) >= MAX_ACTIVE_UWU_TARGETS
             ):
-                # Don't leave an empty set behind when the command is rejected.
+                # Don't leave an empty set behind when the command is rejected,
+                # and roll back the webhook we just provisioned.
                 if not channel_targets:
                     uwu_targets.pop(channel.id, None)
+                    await disable_uwu_target(channel.id)
 
                 raise UwuTargetLimitReached(
                     f"The maximum of {MAX_ACTIVE_UWU_TARGETS} active UWU targets has been reached."
@@ -2155,9 +2315,6 @@ async def set_uwu_target(
 
             channel_targets.add(target.id)
 
-    # Create/reuse the webhook outside the cap lock so webhook API calls do not
-    # block another target from being checked against the cap.
-    webhook = await get_uwu_webhook(channel)
     _reset_uwu_webhook_timer(channel.id, webhook)
     return webhook
 
@@ -2256,14 +2413,17 @@ async def send_uwu_message(
         sent_messages.append(
             await webhook.send(
                 chunk,
-                username=target.display_name[:80],
-                avatar_url=target.display_avatar.url,
+                # Never borrow the target's real identity: posting with their
+                # exact name AND avatar made bot output indistinguishable from
+                # the member (including the server owner).
+                username=f"{target.display_name[:70]} (relay)",
+                avatar_url=None,
                 # Never allow the UWU webhook to ping roles, @everyone, or @here.
                 # Normal @user mentions are still allowed.
                 allowed_mentions=discord.AllowedMentions(
                     everyone=False,
                     roles=False,
-                    users=True,
+                    users=False,
                     replied_user=False,
                 ),
                 wait=True,
@@ -2656,6 +2816,14 @@ class ReviewStoreConflict(Exception):
     """Raised when another bot instance changed the shared GitHub store."""
 
 
+class ReviewStoreTooLarge(Exception):
+    """Raised when the store exceeds the GitHub Contents API 1 MB write limit."""
+
+
+class ReviewSelfApprovalError(Exception):
+    """Raised when a moderator tries to decide their own update request."""
+
+
 GITHUB_REVIEW_STORE_PATH = "review_store.json"
 review_store_thread_lock = threading.RLock()
 
@@ -2724,44 +2892,194 @@ def _github_review_store_request(method="GET", content=None, sha=None):
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=45) as response:
+        with urllib.request.urlopen(request, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         if error.code == 404:
             return None
         if error.code == 409:
             raise ReviewStoreConflict from error
+        if error.code == 422:
+            # The Contents API rejects bodies over 1 MB. This is not a conflict,
+            # so _github_update_review_store must NOT retry it -- retrying just
+            # burns the PAT's quota and never succeeds.
+            raise ReviewStoreTooLarge(
+                f"GitHub rejected the review store write (422): "
+                f"{_review_store_serialized_size(content or {})} bytes encoded"
+            ) from error
         body_text = error.read().decode("utf-8", errors="replace")
         raise RuntimeError(
             f"GitHub review store request failed ({error.code}): {body_text}"
         ) from error
 
 
+REVIEW_REQUEST_RETENTION_DAYS = 180
+# The GitHub Contents API rejects PUT bodies over 1 MB with a 422. Stay well
+# under it and fail loudly rather than bricking the review system.
+REVIEW_STORE_MAX_BYTES = 900_000
+_DISCORD_SNOWFLAKE_MIN = 1_000_000_000_000_000
+_REVIEW_VALID_STATUSES = ("pending", "approved", "rejected", "cancelled")
+
+
+def _coerce_store_int(value, field: str, record_id) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise RuntimeError(
+            f"review store record {record_id}: field {field!r} is not an integer"
+        )
+    try:
+        return int(value)
+    except (TypeError, ValueError) as error:
+        raise RuntimeError(
+            f"review store record {record_id}: field {field!r} is not an integer"
+        ) from error
+
+
+def _validate_review_store(store) -> dict:
+    """Reject any store whose shape or types the bot cannot trust.
+
+    Previously only the top level was checked, so one hand-edited or partially
+    written field (e.g. target_id: "x") made every review command raise
+    ValueError permanently -- including /deletereview, which meant there was no
+    in-bot way to repair it. An out-of-range rating also reached
+    review_stars(), where "⭐" * 10000000 allocated ~100 MB to render one embed.
+    """
+    if not isinstance(store, dict):
+        raise RuntimeError("GitHub review store has invalid JSON.")
+
+    reviews = store.get("reviews")
+    requests = store.get("review_update_requests")
+
+    if reviews is None:
+        reviews = []
+    if requests is None:
+        requests = []
+
+    if not isinstance(reviews, list) or not isinstance(requests, list):
+        raise RuntimeError("GitHub review store reviews/requests must be lists.")
+
+    for review in reviews:
+        if not isinstance(review, dict):
+            raise RuntimeError("GitHub review store contains a non-object review.")
+
+        record_id = review.get("id", "<no id>")
+        for field in ("id", "target_id", "reviewer_id", "rating"):
+            review[field] = _coerce_store_int(review.get(field), field, record_id)
+
+        if not _DISCORD_SNOWFLAKE_MIN <= review["target_id"] <= 2**63 - 1:
+            raise RuntimeError(
+                f"review store review {record_id}: implausible target_id."
+            )
+        if not 1 <= review["rating"] <= 5:
+            raise RuntimeError(
+                f"review store review {record_id}: rating {review['rating']!r} is "
+                "outside 1-5."
+            )
+
+        for field in ("comment", "created_at"):
+            review[field] = str(review.get(field) or "")
+        if len(review["comment"]) > 1000:
+            raise RuntimeError(
+                f"review store review {record_id}: comment exceeds 1000 chars."
+            )
+
+    for request in requests:
+        if not isinstance(request, dict):
+            raise RuntimeError("GitHub review store contains a non-object request.")
+
+        record_id = request.get("id", "<no id>")
+        for field in (
+            "id", "review_id", "target_id", "reviewer_id", "old_rating", "new_rating"
+        ):
+            request[field] = _coerce_store_int(request.get(field), field, record_id)
+
+        for field in ("old_rating", "new_rating"):
+            if not 1 <= request[field] <= 5:
+                raise RuntimeError(
+                    f"review store request {record_id}: {field} "
+                    f"{request[field]!r} is outside 1-5."
+                )
+
+        for field in (
+            "old_comment", "new_comment", "update_reason",
+            "status", "created_at", "reviewed_at",
+        ):
+            request[field] = str(request.get(field) or "")
+
+        if request["status"] not in _REVIEW_VALID_STATUSES:
+            raise RuntimeError(
+                f"review store request {record_id}: unknown status "
+                f"{request['status']!r}."
+            )
+        if len(request["old_comment"]) > 1000 or len(request["new_comment"]) > 1000:
+            raise RuntimeError(
+                f"review store request {record_id}: comment exceeds 1000 chars."
+            )
+
+    store["reviews"] = reviews
+    store["review_update_requests"] = requests
+    store.setdefault("version", 1)
+    return store
+
+
+def _prune_review_store(store) -> None:
+    """Drop resolved update requests older than the retention window.
+
+    review_update_requests was never pruned -- complete_review_update only
+    flipped `status` -- so the store grew until it crossed GitHub's 1 MB
+    Contents API limit and every review write started failing with 422.
+    """
+    cutoff = time.time() - REVIEW_REQUEST_RETENTION_DAYS * 86400
+    kept = []
+
+    for request in store.get("review_update_requests", []):
+        if not isinstance(request, dict) or request.get("status") == "pending":
+            kept.append(request)
+            continue
+
+        reviewed_at = str(request.get("reviewed_at") or "")
+        try:
+            stamp = time.mktime(time.strptime(reviewed_at, "%Y-%m-%d %H:%M:%S"))
+        except (ValueError, TypeError):
+            stamp = 0.0
+
+        if stamp and stamp >= cutoff:
+            kept.append(request)
+
+    store["review_update_requests"] = kept
+
+
+def _review_store_serialized_size(store) -> int:
+    return len(
+        base64.b64encode(
+            json.dumps(store, ensure_ascii=False, indent=2).encode("utf-8")
+        )
+    )
+
+
 def _github_read_review_store():
     if not GITHUB_TOKEN:
-        return _new_review_store(), None
+        return _validate_review_store(_new_review_store()), None
 
     payload = _github_review_store_request("GET")
     if payload is None:
         store = _seed_review_store_from_sqlite()
-        return store, None
+        return _validate_review_store(store), None
 
     encoded = payload.get("content")
     if not encoded:
         raise RuntimeError("GitHub review store is empty.")
 
-    raw = base64.b64decode("".join(str(encoded).split())).decode("utf-8")
-    store = json.loads(raw)
+    try:
+        raw = base64.b64decode("".join(str(encoded).split())).decode("utf-8")
+    except (ValueError, TypeError, binascii.Error) as error:
+        raise RuntimeError("GitHub review store is not valid base64/utf-8.") from error
 
-    if not isinstance(store, dict):
-        raise RuntimeError("GitHub review store has invalid JSON.")
+    try:
+        store = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("GitHub review store is not valid JSON.") from error
 
-    store.setdefault("version", 1)
-    store.setdefault("reviews", [])
-    store.setdefault("review_update_requests", [])
-    for request in store["review_update_requests"]:
-        request.setdefault("update_reason", "")
-    return store, payload.get("sha")
+    return _validate_review_store(store), payload.get("sha")
 
 
 def _github_write_review_store(store, sha=None):
@@ -2776,26 +3094,70 @@ def _github_write_review_store(store, sha=None):
 
 
 def _github_update_review_store(mutator):
-    """Atomically update the shared review store with conflict retries."""
+    """Atomically update the shared review store with conflict retries.
+
+    Callers must invoke this via asyncio.to_thread: it performs blocking HTTPS
+    calls, and the retry sleep used to be a blocking time.sleep() executed while
+    the event loop was the caller.
+    """
     with review_store_thread_lock:
         last_error = None
 
-        for _ in range(6):
+        for attempt in range(6):
             store, sha = _github_read_review_store()
+
+            # Prune before every write so the store cannot creep past the 1 MB
+            # Contents API ceiling, and refuse to send a body we know will 422.
+            _prune_review_store(store)
+            encoded_size = _review_store_serialized_size(store)
+            if encoded_size > REVIEW_STORE_MAX_BYTES:
+                raise ReviewStoreTooLarge(
+                    "review_store.json has reached the GitHub Contents API size "
+                    f"limit ({encoded_size} bytes). Archive or split "
+                    "review_store.json and restart the bot. The review system "
+                    "is now read-only until this is fixed."
+                )
 
             result = mutator(store)
 
             try:
                 _github_write_review_store(store, sha)
+                _invalidate_review_store_cache()
                 return result, store
             except ReviewStoreConflict as error:
                 last_error = error
-                time.sleep(0.5)
+                # Bounded backoff. Kept as a blocking sleep because this whole
+                # function is expected to run in a worker thread.
+                time.sleep(min(2**attempt * 0.5, 8.0) + random.uniform(0, 0.25))
 
         raise RuntimeError(
             "The shared review store was changed by another bot instance. "
             "Please try again."
         ) from last_error
+
+
+# Short-TTL cache so the read-heavy commands do not issue one GitHub GET per
+# helper call. /leaderboard previously made ~19 sequential blocking calls.
+_REVIEW_STORE_CACHE: dict = {"store": None, "at": 0.0}
+_REVIEW_STORE_CACHE_TTL_SECONDS = 10.0
+
+
+def _invalidate_review_store_cache() -> None:
+    _REVIEW_STORE_CACHE["store"] = None
+    _REVIEW_STORE_CACHE["at"] = 0.0
+
+
+def _load_shared_review_store_cached():
+    """Return the shared store, reusing a <=10s-old copy to collapse N+1 reads."""
+    cached = _REVIEW_STORE_CACHE["store"]
+    now = time.monotonic()
+    if cached is not None and now - _REVIEW_STORE_CACHE["at"] < _REVIEW_STORE_CACHE_TTL_SECONDS:
+        return cached
+
+    store = _load_shared_review_store()
+    _REVIEW_STORE_CACHE["store"] = store
+    _REVIEW_STORE_CACHE["at"] = now
+    return store
 
 
 def _load_shared_review_store():
@@ -2812,8 +3174,16 @@ def _load_shared_review_store():
         return store
 
 
-def _mirror_review_store_to_sqlite(store):
-    """Keep reviews.db as a local/exported mirror of the shared store."""
+def _mirror_review_store_to_sqlite(store) -> bool:
+    """Keep reviews.db as a local/exported mirror of the shared store.
+
+    BEST EFFORT AND NON-FATAL BY DESIGN. Callers invoke this immediately after
+    the GitHub commit has already succeeded. Previously a missing field made
+    this raise, so the user was told "I couldn't save that review" for a write
+    that was permanently committed -- they would retry, hit DuplicateReviewError
+    and conclude the feature was broken. The local mirror is strictly
+    secondary; a mirror failure must never be reported as a write failure.
+    """
     with review_db_thread_lock:
         connection = sqlite3.connect(REVIEW_DB_FILE, timeout=30)
         connection.row_factory = sqlite3.Row
@@ -2825,22 +3195,27 @@ def _mirror_review_store_to_sqlite(store):
             connection.execute("DELETE FROM reviews")
 
             for review in store.get("reviews", []):
-                connection.execute(
-                    """
-                    INSERT INTO reviews
-                    (id, target_id, reviewer_id, rating, comment, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        review["id"],
-                        review["target_id"],
-                        review["reviewer_id"],
-                        review["rating"],
-                        review["comment"],
-                        review.get("created_at"),
-                    ),
-                )
+                try:
+                    connection.execute(
+                        """
+                        INSERT INTO reviews
+                        (id, target_id, reviewer_id, rating, comment, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            int(review.get("id") or 0),
+                            int(review.get("target_id") or 0),
+                            int(review.get("reviewer_id") or 0),
+                            int(review.get("rating") or 0),
+                            str(review.get("comment") or ""),
+                            review.get("created_at"),
+                        ),
+                    )
+                except (KeyError, TypeError, ValueError, sqlite3.Error) as error:
+                    log.warning("Local mirror: skipping malformed review: %s", error)
 
+            # Column list is hardcoded, so this f-string is not injectable; the
+            # per-row values are still bound as parameters.
             request_columns = [
                 "id",
                 "review_id",
@@ -2862,19 +3237,27 @@ def _mirror_review_store_to_sqlite(store):
             column_sql = ", ".join(request_columns)
 
             for request in store.get("review_update_requests", []):
-                connection.execute(
-                    f"""
-                    INSERT INTO review_update_requests
-                    ({column_sql})
-                    VALUES ({placeholders})
-                    """,
-                    [request.get(column) for column in request_columns],
-                )
+                try:
+                    connection.execute(
+                        f"""
+                        INSERT INTO review_update_requests
+                        ({column_sql})
+                        VALUES ({placeholders})
+                        """,
+                        [request.get(column) for column in request_columns],
+                    )
+                except (KeyError, TypeError, ValueError, sqlite3.Error) as error:
+                    log.warning("Local mirror: skipping malformed request: %s", error)
 
             connection.commit()
-        except Exception:
+            return True
+        except Exception as error:
             connection.rollback()
-            raise
+            log.error(
+                "Local review mirror failed (remote store is authoritative): %s: %s",
+                type(error).__name__, error,
+            )
+            return False
         finally:
             connection.close()
 
@@ -2996,7 +3379,7 @@ def create_review_update_request(
 
 
 def get_review_update_request(request_id):
-    store = _load_shared_review_store()
+    store = _load_shared_review_store_cached()
     for request in store["review_update_requests"]:
         if int(request["id"]) == int(request_id):
             return request
@@ -3004,7 +3387,7 @@ def get_review_update_request(request_id):
 
 
 def get_pending_review_update_requests():
-    store = _load_shared_review_store()
+    store = _load_shared_review_store_cached()
     return [
         request
         for request in store["review_update_requests"]
@@ -3041,6 +3424,11 @@ def complete_review_update(request_id, moderator_id, approve):
 
         if request is None:
             return None, "already_handled"
+
+        # Hard stop inside the mutator: an exception raised here propagates out
+        # of _github_update_review_store before the write, so nothing persists.
+        if int(request["reviewer_id"]) == int(moderator_id):
+            raise ReviewSelfApprovalError
 
         review = next(
             (
@@ -3081,7 +3469,7 @@ def complete_review_update(request_id, moderator_id, approve):
 
 
 def get_reviews(target_id: int):
-    store = _load_shared_review_store()
+    store = _load_shared_review_store_cached()
     return sorted(
         [
             review
@@ -3094,7 +3482,7 @@ def get_reviews(target_id: int):
 
 
 def get_review(review_id: int):
-    store = _load_shared_review_store()
+    store = _load_shared_review_store_cached()
     for review in store["reviews"]:
         if int(review["id"]) == int(review_id):
             return review
@@ -3140,7 +3528,7 @@ def _aggregate_target_stats(store, target_id):
 
 
 def get_leaderboard_liked(limit: int = 5):
-    store = _load_shared_review_store()
+    store = _load_shared_review_store_cached()
     counts = {}
     for review in store["reviews"]:
         if int(review["rating"]) in (4, 5):
@@ -3157,7 +3545,7 @@ def get_leaderboard_liked(limit: int = 5):
 
 
 def get_leaderboard_reviewed(limit: int = 5):
-    store = _load_shared_review_store()
+    store = _load_shared_review_store_cached()
     counts = {}
     ratings = {}
 
@@ -3186,7 +3574,7 @@ def get_leaderboard_reviewed(limit: int = 5):
 
 
 def get_leaderboard_disliked(limit: int = 5):
-    store = _load_shared_review_store()
+    store = _load_shared_review_store_cached()
     counts = {}
     for review in store["reviews"]:
         if int(review["rating"]) in (1, 2, 3):
@@ -3204,7 +3592,7 @@ def get_leaderboard_disliked(limit: int = 5):
 
 def get_user_stats(user_id: int):
     return _aggregate_target_stats(
-        _load_shared_review_store(),
+        _load_shared_review_store_cached(),
         user_id,
     )
 
@@ -3427,53 +3815,58 @@ review_db_restore_checked = False
 # =========================
 
 async def delete_original_message(message: discord.Message) -> bool:
-    """Delete a user message, retrying once if Discord has not cached it."""
-    guild = message.guild
-    bot_member = guild.me if guild is not None else None
-    channel_permissions = (
-        message.channel.permissions_for(bot_member)
-        if bot_member is not None
-        else None
-    )
+    """Delete a user message, retrying once if Discord has not cached it.
 
-    if bot_member is not None:
-        pass
+    The permission check was previously computed into `channel_permissions` and
+    then never read, with an empty `if bot_member is not None: pass` below it --
+    which read as if the guard were present. It is enforced here now, so a future
+    caller that forgets the manage_messages check cannot make the bot delete
+    another member's message.
+    """
+    guild = message.guild
+    if guild is None:
+        return False
+
+    bot_member = guild.me
+    if bot_member is None:
+        return False
+
+    if not message.channel.permissions_for(bot_member).manage_messages:
+        return False
 
     try:
         await message.delete()
         return True
-    except discord.NotFound as e:
+    except discord.NotFound:
+        # Already gone.
         return True
-    except discord.Forbidden as e:
+    except discord.Forbidden:
+        # Fall through to the uncached retry.
         pass
-    except discord.HTTPException as e:
+    except discord.HTTPException:
         pass
-    except Exception as e:
-        pass
-
+    except Exception:
+        log.exception("delete_original_message: unexpected error for %s", message.id)
 
     try:
         fresh_message = await message.channel.fetch_message(message.id)
-        pass
-    except discord.NotFound as e:
+    except discord.NotFound:
         return True
-    except discord.Forbidden as e:
+    except (discord.Forbidden, discord.HTTPException):
         return False
-    except discord.HTTPException as e:
-        return False
-    except Exception as e:
+    except Exception:
+        log.exception("delete_original_message: fetch failed for %s", message.id)
         return False
 
     try:
         await fresh_message.delete()
         return True
-    except discord.NotFound as e:
+    except discord.NotFound:
         return True
-    except discord.Forbidden as e:
+    except (discord.Forbidden, discord.HTTPException):
         return False
-    except discord.HTTPException as e:
-        return False
-    except Exception as e:
+    except Exception:
+        log.exception("delete_original_message: retry delete failed for %s", message.id)
         return False
 
 
@@ -3485,18 +3878,19 @@ proxy_requests: dict[int, dict] = {}
 
 
 def is_proxy_bot_message(message: discord.Message) -> bool:
-    """Return True when a message came from a configured proxy bot."""
-    author = message.author
-    if author.id in PROXY_BOT_IDS:
-        return True
+    """Return True only for a message from a verified proxy-bot application ID.
 
-    author_name = (
-        getattr(author, "name", "")
-        or getattr(author, "display_name", "")
-        or ""
-    ).strip().lower()
-
-    return bool(author.bot and author_name in PROXY_BOT_NAMES)
+    The old version also trusted a display-name match. A bot's application
+    username is attacker-selectable, so any bot or webhook named "bleed" was
+    treated as the trusted proxy -- and setting proxy_message=True disabled
+    BOTH of on_message's self-checks, letting its messages reach the relay
+    branch. Pin the ID instead; a webhook must never qualify even if it matches.
+    """
+    if not message.author.bot:
+        return False
+    if message.author.id not in PROXY_BOT_IDS:
+        return False
+    return message.webhook_id is None
 
 
 def remember_proxy_request(message: discord.Message, content: str) -> None:
@@ -3510,7 +3904,7 @@ def remember_proxy_request(message: discord.Message, content: str) -> None:
         return
 
     mode_match = re.match(
-        r"^\s*[,!](uwu(?:ify)?|hood(?:ify)?)\b",
+        r"^\s*[,.!]\s*(uwu(?:ify)?|hood(?:ify)?)(?:\s|$)",
         content,
         flags=re.IGNORECASE,
     )
@@ -3653,6 +4047,47 @@ async def on_message(message: discord.Message):
         return
 
     content = message.content.strip()
+
+    # Enforce active transformations BEFORE parsing any prefix command.
+    # This prevents an active target from bypassing UWU/HOODIFY by sending
+    # command-looking text such as ",uwuify @user text".
+    hood_target_ids = hood_targets.get(message.channel.id, set())
+    uwu_target_ids = uwu_targets.get(message.channel.id, set())
+
+    if message.author.id in hood_target_ids and content:
+        if message.author.id in hood_user_blacklist:
+            await disable_hood_for_user(message.author.id)
+            return
+        bot_member = message.guild.me if message.guild is not None else None
+        if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
+            return
+        try:
+            await send_hood_message(message.channel, message.author, content)
+            await delete_original_message(message)
+        except HoodMessageBlocked:
+            pass
+        except Exception:
+            pass
+        return
+
+    if message.author.id in uwu_target_ids and content:
+        if message.author.id in uwu_user_blacklist:
+            await disable_uwu_for_user(message.author.id)
+            return
+        bot_member = message.guild.me if message.guild is not None else None
+        if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
+            return
+        try:
+            await send_uwu_message(message.channel, message.author, content)
+            await delete_original_message(message)
+        except UwuMessageBlocked:
+            pass
+        except Exception:
+            pass
+        return
+
+    # Only non-target users continue into the command parser.
+    remember_proxy_request(message, content)
 
     # Parse the readable spaced prefix syntax once so all handlers can use it.
     spaced_parts = content.split(maxsplit=2)
@@ -4172,47 +4607,6 @@ async def on_message(message: discord.Message):
             return
         return
 
-    # Enforce active transformations BEFORE parsing any prefix command.
-    # This prevents an active target from bypassing UWU/HOODIFY by sending
-    # command-looking text such as ",uwuify @user text".
-    hood_target_ids = hood_targets.get(message.channel.id, set())
-    uwu_target_ids = uwu_targets.get(message.channel.id, set())
-
-    if message.author.id in hood_target_ids and content:
-        if message.author.id in hood_user_blacklist:
-            await disable_hood_for_user(message.author.id)
-            return
-        bot_member = message.guild.me if message.guild is not None else None
-        if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
-            return
-        try:
-            await send_hood_message(message.channel, message.author, content)
-            await delete_original_message(message)
-        except HoodMessageBlocked:
-            pass
-        except Exception:
-            pass
-        return
-
-    if message.author.id in uwu_target_ids and content:
-        if message.author.id in uwu_user_blacklist:
-            await disable_uwu_for_user(message.author.id)
-            return
-        bot_member = message.guild.me if message.guild is not None else None
-        if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
-            return
-        try:
-            await send_uwu_message(message.channel, message.author, content)
-            await delete_original_message(message)
-        except UwuMessageBlocked:
-            pass
-        except Exception:
-            pass
-        return
-
-    # Only non-target users continue into the command parser.
-    remember_proxy_request(message, content)
-
     # Translate readable mode/count prefixes to the existing command parser.
     if len(spaced_parts) >= 2:
         spaced_root = spaced_parts[0].lower()
@@ -4354,7 +4748,7 @@ async def on_message(message: discord.Message):
             return
 
         try:
-            await set_uwu_target(message.channel, target)
+            await set_uwu_target(message.channel, target, operator=message.author)
 
             if len(parts) >= 3:
                 try:
@@ -4381,6 +4775,8 @@ async def on_message(message: discord.Message):
                 f"so I will not activate this target. Error: `{error}`",
                 mention_author=False,
             )
+        except (TargetNotPermitted, RelayChannelNotAllowed) as error:
+            await message.reply(f"? {error}", mention_author=False)
         except UwuTargetLimitReached:
             await message.reply(
                 f"❌ The global limit of {MAX_ACTIVE_UWU_TARGETS} UWUified people has been reached. "+
@@ -4526,7 +4922,7 @@ async def on_message(message: discord.Message):
             return
 
         try:
-            await set_hood_target(message.channel, target)
+            await set_hood_target(message.channel, target, operator=message.author)
 
             if len(parts) >= 3:
                 try:
@@ -4557,6 +4953,8 @@ async def on_message(message: discord.Message):
                 f"so I will not activate this target. Error: `{error}`",
                 mention_author=False,
             )
+        except (TargetNotPermitted, RelayChannelNotAllowed) as error:
+            await message.reply(f"? {error}", mention_author=False)
         except HoodTargetLimitReached:
             await message.reply(
                 f"❌ The global limit of {MAX_ACTIVE_HOOD_TARGETS} HOODIFIED "
@@ -5016,7 +5414,7 @@ async def hoodify_command(
         return
 
     try:
-        await set_hood_target(interaction.channel, member)
+        await set_hood_target(interaction.channel, member, operator=interaction.user)
 
         if message:
             try:
@@ -5048,6 +5446,8 @@ async def hoodify_command(
             f"so I will not activate this target. Error: `{error}`",
             ephemeral=False,
         )
+    except (TargetNotPermitted, RelayChannelNotAllowed) as error:
+        await interaction.response.send_message(f"? {error}", ephemeral=False)
     except HoodTargetLimitReached:
         await interaction.response.send_message(
             f"❌ The global limit of {MAX_ACTIVE_HOOD_TARGETS} HOODIFIED people has been reached. "
@@ -5114,7 +5514,7 @@ async def uwu_command(
         return
 
     try:
-        await set_uwu_target(interaction.channel, member)
+        await set_uwu_target(interaction.channel, member, operator=interaction.user)
 
         if message:
             try:
@@ -5144,6 +5544,8 @@ async def uwu_command(
             f"so I will not activate this target. Error: `{error}`",
             ephemeral=False,
         )
+    except (TargetNotPermitted, RelayChannelNotAllowed) as error:
+        await interaction.response.send_message(f"? {error}", ephemeral=False)
     except UwuTargetLimitReached:
         await interaction.response.send_message(
             f"❌ The global limit of {MAX_ACTIVE_UWU_TARGETS} UWUified people has been reached. "
@@ -6005,7 +6407,13 @@ def verify_protected_roles() -> None:
 # ============================================================
 
 def review_stars(rating: int) -> str:
-    return "⭐" * rating + "☆" * (5 - rating)
+    # Clamped: a stored rating of 10000000 previously built a ~100 MB string
+    # ("⭐" * 10000000) to render a single embed field.
+    try:
+        stars = max(0, min(5, int(rating)))
+    except (TypeError, ValueError):
+        stars = 0
+    return "⭐" * stars + "☆" * (5 - stars)
 
 
 def review_approval_emoji(rating: int) -> str:
@@ -6013,17 +6421,22 @@ def review_approval_emoji(rating: int) -> str:
 
 
 async def get_review_member_or_user(
-    guild: discord.Guild,
+    guild: discord.Guild | None,
     user_id: int
 ):
-    member = guild.get_member(user_id)
-
-    if member:
-        return member
+    # guild was previously dereferenced OUTSIDE the try, so a None guild (DM
+    # invocation) raised AttributeError that the bare except never saw.
+    if guild is not None:
+        member = guild.get_member(user_id)
+        if member:
+            return member
 
     try:
         return await bot.fetch_user(user_id)
-    except:
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        return None
+    except Exception:
+        log.exception("get_review_member_or_user failed for %s", user_id)
         return None
 
 
@@ -6108,7 +6521,8 @@ class ReviewModal(discord.ui.Modal):
         try:
             async with review_db_lock:
                 await refresh_local_review_db_from_github()
-                review_id = add_review(
+                review_id = await asyncio.to_thread(
+                    add_review,
                     target_id=self.target.id,
                     reviewer_id=interaction.user.id,
                     rating=self.rating,
@@ -6543,6 +6957,45 @@ class UpdateReviewModal(discord.ui.Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
+
+        # A modal stays submittable for up to 15 minutes after send_modal, and
+        # every authorization decision used to be made at OPEN time only. A user
+        # could run /updatereview, be blacklisted (or have their review deleted)
+        # by a moderator, and still land the change. Re-validate at submit.
+        if review_user_is_blacklisted(interaction.user.id):
+            await interaction.followup.send(
+                '❌ You are blacklisted from using the review system.', ephemeral=True
+            )
+            return
+
+        if interaction.user.id == self.target.id:
+            await interaction.followup.send(
+                '❌ You cannot update a review for yourself.', ephemeral=True
+            )
+            return
+
+        try:
+            current = await asyncio.to_thread(
+                get_user_review, self.target.id, interaction.user.id
+            )
+        except Exception:
+            log.exception("UpdateReviewModal.on_submit: re-resolve failed")
+            await interaction.followup.send(
+                '❌ Could not verify that review. Please try again shortly.',
+                ephemeral=True,
+            )
+            return
+
+        if current is None or int(current['id']) != int(self.current_review['id']):
+            await interaction.followup.send(
+                '❌ That review is no longer yours to update. Run `/updatereview` again.',
+                ephemeral=True,
+            )
+            return
+
+        # Trust the re-resolved record, not the captured modal payload.
+        self.current_review = current
+
         try:
             new_rating = int(self.rating.value.strip())
             if new_rating < 1 or new_rating > 5:
@@ -6562,7 +7015,8 @@ class UpdateReviewModal(discord.ui.Modal):
             return
 
         try:
-            request_id = create_review_update_request(
+            request_id = await asyncio.to_thread(
+                create_review_update_request,
                 self.current_review['id'],
                 self.target.id,
                 interaction.user.id,
@@ -6575,8 +7029,21 @@ class UpdateReviewModal(discord.ui.Modal):
         except PendingReviewUpdateError:
             await interaction.followup.send('❌ You already have an update waiting for approval for this vote.', ephemeral=True)
             return
+        except ReviewStoreTooLarge as error:
+            log.error("[REVIEW-STORE-TOO-LARGE] %s", error)
+            await interaction.followup.send(
+                '❌ The review system is temporarily read-only. Please try again later.',
+                ephemeral=True,
+            )
+            return
         except Exception as error:
-            await interaction.followup.send(f'❌ I could not create the update request: `{error}`', ephemeral=True)
+            # L2: the raw exception (including a GitHub API body) used to be
+            # echoed straight back to the user.
+            log.error("Review update request failed: %s: %s", type(error).__name__, error)
+            await interaction.followup.send(
+                '❌ I could not create the update request. Please try again later.',
+                ephemeral=True,
+            )
             return
 
         try:
@@ -6604,8 +7071,11 @@ class UpdateReviewModal(discord.ui.Modal):
 )
 @app_commands.describe(user='The member whose review you want to update.')
 async def updatereview(interaction: discord.Interaction, user: discord.Member):
+    # Defer first: the refresh below is a network round trip.
+    await interaction.response.defer(ephemeral=True)
+
     if review_user_is_blacklisted(interaction.user.id):
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "❌ You are blacklisted from using the review system.",
             ephemeral=True,
         )
@@ -6613,13 +7083,15 @@ async def updatereview(interaction: discord.Interaction, user: discord.Member):
 
     await refresh_local_review_db_from_github()
     if user.id == interaction.user.id:
-        await interaction.response.send_message('❌ You cannot update a review for yourself.', ephemeral=True)
+        await interaction.followup.send('❌ You cannot update a review for yourself.', ephemeral=True)
         return
-    current = get_user_review(user.id, interaction.user.id)
+    # The caller's own id is hard-coded as reviewer_id, so this can only ever
+    # return a review the caller authored. No cross-user IDOR here.
+    current = await asyncio.to_thread(get_user_review, user.id, interaction.user.id)
     if not current:
-        await interaction.response.send_message('❌ You have not reviewed this user yet. Use `/review` first.', ephemeral=True)
+        await interaction.followup.send('❌ You have not reviewed this user yet. Use `/review` first.', ephemeral=True)
         return
-    await interaction.response.send_modal(UpdateReviewModal(user, current))
+    await interaction.followup.send_modal(UpdateReviewModal(user, current))
 
 
 async def review_approval_allowed(interaction: discord.Interaction) -> bool:
@@ -6639,8 +7111,38 @@ async def handle_review_update_decision(interaction: discord.Interaction, reques
     if not await review_approval_allowed(interaction):
         await interaction.response.send_message('❌ You do not have permission to approve or reject review updates.', ephemeral=True)
         return
+
+    # HIGH: the requester is published in the approval embed, and nothing ever
+    # compared them to the approver. Anyone holding an approval role could file
+    # /updatereview and then click Approve on their own request, bypassing the
+    # entire moderator-approval workflow.
+    if not isinstance(interaction.user, discord.Member):
+        await interaction.response.send_message('❌ Could not verify your server roles.', ephemeral=True)
+        return
+
+    existing_request = await asyncio.to_thread(get_review_update_request, request_id)
+    if existing_request is None or existing_request.get("status") != "pending":
+        await interaction.response.send_message('❌ That review update has already been handled or does not exist.', ephemeral=True)
+        return
+
+    if int(existing_request["reviewer_id"]) == interaction.user.id:
+        await interaction.response.send_message(
+            '❌ You cannot approve or reject your own review update request.',
+            ephemeral=True,
+        )
+        return
+
     await interaction.response.defer(ephemeral=True)
-    request, status = await asyncio.to_thread(complete_review_update, request_id, interaction.user.id, approve)
+    try:
+        request, status = await asyncio.to_thread(
+            complete_review_update, request_id, interaction.user.id, approve
+        )
+    except ReviewSelfApprovalError:
+        await interaction.followup.send(
+            '❌ You cannot approve or reject your own review update request.',
+            ephemeral=True,
+        )
+        return
     if request is None:
         await interaction.followup.send('❌ That review update has already been handled or does not exist.', ephemeral=True)
         return
@@ -6668,14 +7170,26 @@ async def handle_review_update_decision(interaction: discord.Interaction, reques
 
 async def register_pending_review_update_views():
     """Re-register persistent buttons after a bot restart."""
-    for request in get_pending_review_update_requests():
+    # The iterable used to be evaluated OUTSIDE the try, so any GitHub failure
+    # here escaped on_ready entirely and took the background loops with it.
+    try:
+        requests = await asyncio.to_thread(get_pending_review_update_requests)
+    except Exception:
+        log.exception("register_pending_review_update_views: could not load requests")
+        return
+
+    for request in requests:
         try:
             bot.add_view(
                 ReviewUpdateApprovalView(request['id']),
                 message_id=request['approval_message_id'],
             )
         except Exception:
-            pass
+            log.exception(
+                "register_pending_review_update_views: view registration failed "
+                "for request %s",
+                request.get('id'),
+            )
 
 # ============================================================
 # /reviews
@@ -6693,11 +7207,15 @@ async def reviews(
     user: discord.Member
 ):
 
+    # Defer first: refresh_local_review_db_from_github() does a network round
+    # trip, and Discord requires a response within 3 seconds.
+    await interaction.response.defer(ephemeral=True)
+
     await refresh_local_review_db_from_github()
-    review_list = get_reviews(user.id)
+    review_list = await asyncio.to_thread(get_reviews, user.id)
 
     if not review_list:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"**{user.display_name}** has no reviews yet.",
             ephemeral=True
         )
@@ -6708,7 +7226,7 @@ async def reviews(
         reviews=review_list
     )
 
-    await interaction.response.send_message(
+    await interaction.followup.send(
         embed=view.make_embed(),
         view=view
     )
@@ -6724,10 +7242,26 @@ async def reviews(
     description="View the reputation leaderboard."
 )
 async def leaderboard(interaction: discord.Interaction):
+    if interaction.guild_id != MAIN_SERVER:
+        await interaction.response.send_message(
+            "❌ This command can only be used in the main server.",
+            ephemeral=True,
+        )
+        return
+
+    # Defer first: this command performs network reads before building the
+    # embed, and Discord requires a response within 3 seconds.
+    await interaction.response.defer()
+
     await refresh_local_review_db_from_github()
-    liked = get_leaderboard_liked(5)
-    reviewed = get_leaderboard_reviewed(5)
-    disliked = get_leaderboard_disliked(5)
+
+    # One concurrent batch instead of three sequential blocking calls. Combined
+    # with the 10s store cache this drops ~19 blocking GitHub calls to ~1.
+    liked, reviewed, disliked = await asyncio.gather(
+        asyncio.to_thread(get_leaderboard_liked, 5),
+        asyncio.to_thread(get_leaderboard_reviewed, 5),
+        asyncio.to_thread(get_leaderboard_disliked, 5),
+    )
 
     embed = discord.Embed(
         title="leaderboard",
@@ -6742,7 +7276,7 @@ async def leaderboard(interaction: discord.Interaction):
             member = await get_review_member_or_user(interaction.guild, row["target_id"])
             name = member.mention if member else f"<@{row['target_id']}>"
             username = member.name if member else "unknown"
-            stats = get_user_stats(row["target_id"])
+            stats = await asyncio.to_thread(get_user_stats, row["target_id"])
             liked_text += (
                 f"{index} {name} ({username}) 🟢 **{row['approved']}** "
                 f"({stats['approval']:.2f}% approval)\n"
@@ -6771,14 +7305,14 @@ async def leaderboard(interaction: discord.Interaction):
             member = await get_review_member_or_user(interaction.guild, row["target_id"])
             name = member.mention if member else f"<@{row['target_id']}>"
             username = member.name if member else "unknown"
-            stats = get_user_stats(row["target_id"])
+            stats = await asyncio.to_thread(get_user_stats, row["target_id"])
             disliked_text += (
                 f"{index} {name} ({username}) 🔴 **{row['disliked']} negative reviews** "
                 f"({stats['approval']:.2f}% approval)\n"
             )
     embed.add_field(name="Most Disliked", value=disliked_text, inline=False)
 
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 
 # ============================================================
@@ -6807,18 +7341,28 @@ async def deletereview(
     interaction: discord.Interaction,
     review_id: int
 ):
+    await interaction.response.defer(ephemeral=True)
 
     await refresh_local_review_db_from_github()
-    review = get_review(review_id)
+    review = await asyncio.to_thread(get_review, review_id)
 
     if not review:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "❌ Review not found.",
             ephemeral=True
         )
         return
 
-    delete_review(review_id)
+    try:
+        await asyncio.to_thread(delete_review, review_id)
+    except Exception as error:
+        log.error("/deletereview failed: %s: %s", type(error).__name__, error)
+        await interaction.followup.send(
+            "❌ Could not delete that review. Please try again in a moment.",
+            ephemeral=True,
+        )
+        return
+
     asyncio.create_task(sync_review_db_to_github_locked())
 
     await log_review_event(
@@ -6835,7 +7379,7 @@ async def deletereview(
         color=discord.Color.red(),
     )
 
-    await interaction.response.send_message(
+    await interaction.followup.send(
         f"✅ Review `{review_id}` deleted.",
         ephemeral=True
     )
@@ -6850,14 +7394,26 @@ async def deletereview_error(
     interaction: discord.Interaction,
     error
 ):
-
     if isinstance(error, app_commands.errors.CheckFailure):
         await interaction.response.send_message(
             "❌ You do not have one of the required roles to use `/deletereview`.",
             ephemeral=True
         )
-    else:
-        raise error
+        return
+
+    # MEDIUM: this handler used to re-raise anything that was not a
+    # CheckFailure, which escaped to Client._run_event, was logged through a
+    # logger that was disabled, and left the user with Discord's bare
+    # "This interaction failed" and no explanation. Report instead.
+    log.error("/deletereview error: %s: %s", type(error).__name__, error)
+    message = "❌ Could not delete that review. Please try again in a moment."
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)
+    except discord.HTTPException:
+        pass
 
 
 # =========================
