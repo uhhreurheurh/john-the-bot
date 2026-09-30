@@ -3572,27 +3572,55 @@ class ReviewModal(discord.ui.Modal):
         interaction: discord.Interaction
     ):
 
-        # Don't allow reviewing yourself.
+        # Acknowledge the modal immediately so Discord does not time out.
+        await interaction.response.defer(ephemeral=True)
+
         if interaction.user.id == self.target.id:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ You can't review yourself.",
                 ephemeral=True
             )
             return
 
-        review_id = add_review(
-            target_id=self.target.id,
-            reviewer_id=interaction.user.id,
-            rating=self.rating,
-            comment=self.comment.value
-        )
+        try:
+            review_id = add_review(
+                target_id=self.target.id,
+                reviewer_id=interaction.user.id,
+                rating=self.rating,
+                comment=self.comment.value
+            )
+        except Exception:
+            await interaction.followup.send(
+                "❌ I couldn't save that review to the database. Please try again.",
+                ephemeral=True
+            )
+            return
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"✅ Your review for {self.target.mention} was added.\n"
             f"**Rating:** {review_stars(self.rating)}\n"
             f"**Review ID:** `{review_id}`",
             ephemeral=True
         )
+
+    async def on_error(
+        self,
+        interaction: discord.Interaction,
+        error: Exception
+    ):
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    "❌ Something went wrong while saving the review. Please try again.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    "❌ Something went wrong while saving the review. Please try again.",
+                    ephemeral=True
+                )
+        except Exception:
+            pass
 
 
 # ============================================================
