@@ -4683,17 +4683,24 @@ async def deletereview_error(
 # REVIEW DATABASE SYNC LOOP + MANUAL SAVE
 # =========================
 
-@tasks.loop(minutes=REVIEW_DB_SYNC_MINUTES)
-async def review_db_sync_loop():
-    async with review_db_lock:
-        await sync_review_db_to_github()
+review_db_auto_sync_task: asyncio.Task | None = None
 
 
-@review_db_sync_loop.before_loop
-async def before_review_db_sync():
+async def review_db_auto_sync_worker():
+    """Reliably sync the review database immediately and every 30 minutes."""
     await bot.wait_until_ready()
-    # Wait the full 30 minutes after startup before the first automatic commit.
-    await asyncio.sleep(REVIEW_DB_SYNC_MINUTES * 60)
+
+    while not bot.is_closed():
+        try:
+            success, error = await sync_review_db_to_github_locked()
+            if not success:
+                print(f"Review database auto-save failed: {error}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            print(f"Review database auto-save crashed: {type(error).__name__}: {error}")
+
+        await asyncio.sleep(REVIEW_DB_SYNC_MINUTES * 60)
 
 
 @tree.command(
@@ -4773,8 +4780,18 @@ async def on_ready():
         await register_pending_review_update_views()
         review_update_views_registered = True
 
-    if not review_db_sync_loop.is_running():
-        review_db_sync_loop.start()
+    global review_db_auto_sync_task
+    if review_db_auto_sync_task is None or review_db_auto_sync_task.done():
+        try:
+            success, error = await sync_review_db_to_github_locked()
+            if not success:
+                print(f"Review database initial save failed: {error}")
+        except Exception as error:
+            print(f"Review database initial save crashed: {type(error).__name__}: {error}")
+
+        review_db_auto_sync_task = asyncio.create_task(
+            review_db_auto_sync_worker()
+        )
 
     global user_blacklists_synced
     if not user_blacklists_synced:
