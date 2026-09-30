@@ -3849,6 +3849,7 @@ class StarView(discord.ui.View):
     name="review",
     description="Leave a review for a member."
 )
+@app_commands.default_permissions()
 @app_commands.describe(
     user="The member you want to review."
 )
@@ -4109,6 +4110,7 @@ async def leaderboard(interaction: discord.Interaction):
     name="deletereview",
     description="Delete a review by ID."
 )
+@app_commands.default_permissions(manage_messages=True)
 @app_commands.describe(
     review_id="The review ID to delete."
 )
@@ -4230,6 +4232,9 @@ async def on_ready():
     if not commands_synced:
         try:
             main_guild_object = discord.Object(id=MAIN_SERVER)
+            # Replace stale guild command definitions so /review and
+            # /deletereview use the current visibility/permission metadata.
+            tree.clear_commands(guild=main_guild_object)
             tree.copy_global_to(guild=main_guild_object)
             await tree.sync(guild=main_guild_object)
             commands_synced = True
