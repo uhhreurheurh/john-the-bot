@@ -1240,8 +1240,27 @@ async def sync_user_blacklists_from_github() -> bool:
                         if name == "ban"
                         else review_blacklist
                     )
+                    # Union, not remote-wins. Previously this was clear() +
+                    # update(github_ids), so any ID whose GitHub write had failed
+                    # (outage, 5xx, rate limit) was silently DROPPED on the next
+                    # boot or sync. A ban would vanish with no moderator ever
+                    # being told, while the command that issued it had already
+                    # reported success. Remote removal is still honoured: it is
+                    # an explicit unban performed by a moderator's own command,
+                    # and any local-only leftovers are re-persisted below.
+                    missing_locally = set(target) - github_ids
                     target.clear()
                     target.update(github_ids)
+                    if missing_locally:
+                        target.update(missing_locally)
+                        log.warning(
+                            "%s locally-recorded id(s) for %s were absent from "
+                            "GitHub and have been KEPT. Re-persisting.",
+                            len(missing_locally), path.name,
+                        )
+                        await asyncio.to_thread(
+                            _github_save_user_blacklist, path, set(target)
+                        )
                     _save_user_blacklist_local(path, target)
                 else:
                     # First run: create the file using any local cached IDs.
@@ -1263,7 +1282,72 @@ async def sync_user_blacklists_from_github() -> bool:
 
         except Exception as error:
             github_blacklist_sync_error = str(error)
+            log.warning("Blacklist sync from GitHub failed: %s", error)
             return False
+
+
+async def blacklist_durability_loop() -> None:
+    """Re-persist local-only blacklist entries that never reached GitHub.
+
+    A moderator ban whose GitHub write failed was reported as a success, so
+    without this the ban would silently disappear at the next restart. This
+    surfaces a lapsed ban within 15 minutes instead.
+    """
+    await bot.wait_until_ready()
+
+    while True:
+        await asyncio.sleep(900)
+        try:
+            for path, target in (
+                (TEXTIFY_BLACKLIST_FILE, textify_blacklist),
+                (TEXTIFY_BAN_FILE, uwu_hoodify_ban),
+                (REVIEW_BLACKLIST_FILE, review_blacklist),
+            ):
+                if not GITHUB_TOKEN:
+                    return
+
+                exists, github_ids, _ = await asyncio.to_thread(
+                    _github_get_user_blacklist, path
+                )
+                if not exists:
+                    continue
+
+                pending = set(target) - set(github_ids)
+                if pending:
+                    if await save_user_blacklist(path, target):
+                        log.info(
+                            "Re-persisted %s local-only blacklist id(s) for %s.",
+                            len(pending), path.name,
+                        )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("blacklist_durability_loop pass failed")
+
+
+GITHUB_SYNC_ERROR_REF = "GH-SYNC-FAIL"
+
+
+def _github_sync_notice(synced: bool) -> str:
+    """User-facing sync warning. Deliberately contains no remote response body.
+
+    The raw GitHub error body used to be interpolated straight into channel
+    messages, which disclosed the repo/branch, the token's health (expired vs
+    rate-limited vs lacking scope) and a rate-limit reset timestamp. It also
+    gave any member an unauthenticated error oracle driven by the bot's own PAT.
+    """
+    if synced:
+        return ""
+    return (
+        "\n⚠️ **Persistence backend unreachable; this change is LOCAL ONLY and "
+        "will be lost on the next restart.** Re-run this command later. "
+        f"(ref `{GITHUB_SYNC_ERROR_REF}`)"
+    )
+
+
+def _log_github_sync_failure(context: str) -> None:
+    """Send the sync failure detail to the log, never to a Discord channel."""
+    log.warning("[%s] %s: %s", GITHUB_SYNC_ERROR_REF, context, github_blacklist_sync_error)
 
 
 async def ensure_user_blacklists_ready() -> None:
@@ -3607,8 +3691,14 @@ async def on_message(message: discord.Message):
             if textify_action == "blacklist":
                 uwu_user_blacklist.add(target.id)
                 hood_user_blacklist.add(target.id)
-                await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, uwu_user_blacklist)
-                await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, hood_user_blacklist)
+                uwu_synced = await save_user_blacklist(
+                    TEXTIFY_BLACKLIST_FILE, uwu_user_blacklist
+                )
+                hood_synced = await save_user_blacklist(
+                    TEXTIFY_BLACKLIST_FILE, hood_user_blacklist
+                )
+                if not uwu_synced or not hood_synced:
+                    _log_github_sync_failure(",textify blacklist")
                 removed = (
                     await disable_uwu_for_user(target.id)
                     + await disable_hood_for_user(target.id)
@@ -3616,6 +3706,7 @@ async def on_message(message: discord.Message):
                 response = (
                     f"✅ {target.mention} is now blacklisted from both UWUIFY and HOODIFY."
                     + (f" Removed them from **{removed}** active mode(s)." if removed else "")
+                    + _github_sync_notice(uwu_synced and hood_synced)
                 )
             elif textify_action == "unblacklist":
                 if target.id not in uwu_user_blacklist and target.id not in hood_user_blacklist:
@@ -3623,9 +3714,18 @@ async def on_message(message: discord.Message):
                 else:
                     uwu_user_blacklist.discard(target.id)
                     hood_user_blacklist.discard(target.id)
-                    await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, uwu_user_blacklist)
-                    await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, hood_user_blacklist)
-                    response = f"✅ {target.mention} can use UWUIFY and HOODIFY again."
+                    uwu_synced = await save_user_blacklist(
+                        TEXTIFY_BLACKLIST_FILE, uwu_user_blacklist
+                    )
+                    hood_synced = await save_user_blacklist(
+                        TEXTIFY_BLACKLIST_FILE, hood_user_blacklist
+                    )
+                    if not uwu_synced or not hood_synced:
+                        _log_github_sync_failure(",textify unblacklist")
+                    response = (
+                        f"✅ {target.mention} can use UWUIFY and HOODIFY again."
+                        + _github_sync_notice(uwu_synced and hood_synced)
+                    )
             else:
                 uwu_blacklisted = target.id in uwu_user_blacklist
                 hood_blacklisted = target.id in hood_user_blacklist
@@ -3662,7 +3762,9 @@ async def on_message(message: discord.Message):
                     )
                     return
                 uwu_hoodify_ban.add(target.id)
-                await save_user_blacklist(TEXTIFY_BAN_FILE, uwu_hoodify_ban)
+                ban_synced = await save_user_blacklist(TEXTIFY_BAN_FILE, uwu_hoodify_ban)
+                if not ban_synced:
+                    _log_github_sync_failure(",textify ban")
                 removed = (
                     await disable_uwu_for_user(target.id)
                     + await disable_hood_for_user(target.id)
@@ -3670,13 +3772,21 @@ async def on_message(message: discord.Message):
                 response = f"✅ {target.mention} is now banned from running UWUIFY and HOODIFY."
                 if removed:
                     response += f" Removed {removed} active mode(s)."
+                response += _github_sync_notice(ban_synced)
             else:
                 if target.id not in uwu_hoodify_ban:
                     response = f"ℹ️ {target.mention} is not currently banned from running UWUIFY and HOODIFY."
                 else:
                     uwu_hoodify_ban.remove(target.id)
-                    await save_user_blacklist(TEXTIFY_BAN_FILE, uwu_hoodify_ban)
-                    response = f"✅ {target.mention} can run UWUIFY and HOODIFY again."
+                    unban_synced = await save_user_blacklist(
+                        TEXTIFY_BAN_FILE, uwu_hoodify_ban
+                    )
+                    if not unban_synced:
+                        _log_github_sync_failure(",textify unban")
+                    response = (
+                        f"✅ {target.mention} can run UWUIFY and HOODIFY again."
+                        + _github_sync_notice(unban_synced)
+                    )
 
             await message.reply(response, mention_author=False)
             return
@@ -3703,27 +3813,23 @@ async def on_message(message: discord.Message):
             return
 
         target = message.mentions[0] if message.mentions else None
-        target_token = strike_parts[1].strip("<@!>")
 
-        if target is None:
-            try:
-                target_id = int(target_token)
-            except ValueError:
-                target_id = 0
-
-            if target_id:
-                target = message.guild.get_member(target_id)
-                if target is None:
-                    try:
-                        target = await message.guild.fetch_member(target_id)
-                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                        target = None
-
-        if target is None:
+        # Require a real mention. The raw-user-ID path used message.guild.
+        # fetch_member(), which widened the target set beyond /strike (which
+        # resolves only against the interaction member cache) and bypassed the
+        # resolved-Member guarantee the rank check depends on.
+        if target is None or not isinstance(target, discord.Member):
             await message.reply(
-                "❌ Mention a valid member or provide their user ID.",
+                "❌ Mention a member of this server.",
                 mention_author=False,
             )
+            return
+
+        # Same issuer-outranks-target gate as /strike. Checked before any
+        # prune/save so a denied issuer triggers no side effect at all.
+        allowed, denial = staff_strike_target_allowed(message.author, target)
+        if not allowed:
+            await message.reply(f"❌ {denial}", mention_author=False)
             return
 
         days = parse_staff_strike_duration(strike_parts[2])
@@ -3813,27 +3919,17 @@ async def on_message(message: discord.Message):
             return
 
         target = message.mentions[0] if message.mentions else None
-        target_token = strike_parts[1].strip("<@!>")
 
-        if target is None:
-            try:
-                target_id = int(target_token)
-            except ValueError:
-                target_id = 0
-
-            if target_id:
-                target = message.guild.get_member(target_id)
-                if target is None:
-                    try:
-                        target = await message.guild.fetch_member(target_id)
-                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                        target = None
-
-        if target is None:
+        if target is None or not isinstance(target, discord.Member):
             await message.reply(
-                "❌ Mention a valid member or provide their user ID.",
+                "❌ Mention a member of this server.",
                 mention_author=False,
             )
+            return
+
+        allowed, denial = staff_strike_target_allowed(message.author, target)
+        if not allowed:
+            await message.reply(f"❌ {denial}", mention_author=False)
             return
 
         try:
@@ -3881,15 +3977,43 @@ async def on_message(message: discord.Message):
             "Suspended" if len(get_user_staff_strikes(target.id)) >= 3 else "No Staff Role"
         )
 
-        staff_strikes.remove(matching)
+        removed_reason = str(matching.get("reason") or "")
+        removed_issued_by = matching.get("issued_by")
+        removed_issued_at = matching.get("issued_at")
 
-        active_count = len(get_user_staff_strikes(target.id))
-        consequence = await apply_staff_strike_consequences(
-            target,
-            active_count=active_count,
-            original_role_id_override=original_role_id,
-        )
+        async with _user_strike_lock(target.id):
+            staff_strikes.remove(matching)
+
+            active_count = len(get_user_staff_strikes(target.id))
+            consequence = await apply_staff_strike_consequences(
+                target,
+                active_count=active_count,
+                original_role_id_override=original_role_id,
+            )
         synced = await save_staff_strikes()
+
+        audit_lines = [
+            f"Strike #{strike_number} removed from {target.mention} / {target.id}",
+            f"by {message.author.mention} ({message.author.id})",
+            f"Active strikes: {active_count}",
+        ]
+        if removed_reason:
+            audit_lines.append(f"Reason on file: {removed_reason}")
+        if removed_issued_by is not None:
+            audit_lines.append(
+                f"Originally issued by: <@{int(removed_issued_by)}> on {removed_issued_at}"
+            )
+        if consequence is not None:
+            audit_lines.append(f"Role action: **{consequence[0]} → {consequence[1]}**")
+        else:
+            audit_lines.append("Role action: none")
+        if not synced:
+            audit_lines.append("⚠️ GitHub sync failed; saved locally only.")
+
+        await send_staff_strike_log(
+            STAFF_STRIKE_REMOVED_CHANNEL_ID,
+            "\n".join(audit_lines),
+        )
 
         response = (
             f"✅ Removed strike #{strike_number} from "
@@ -4012,21 +4136,33 @@ async def on_message(message: discord.Message):
                 await message.reply(f"ℹ️ {target.mention} is already banned from UWUIFY and HOODIFY.", mention_author=False)
                 return
             uwu_hoodify_ban.add(target.id)
-            await save_user_blacklist(TEXTIFY_BAN_FILE, uwu_hoodify_ban)
+            ban_synced = await save_user_blacklist(TEXTIFY_BAN_FILE, uwu_hoodify_ban)
+            if not ban_synced:
+                _log_github_sync_failure(",uwuify hoodify ban")
             removed_uwu = await disable_uwu_for_user(target.id)
             removed_hood = await disable_hood_for_user(target.id)
             removed = removed_uwu + removed_hood
             response = f"✅ {target.mention} is now banned from running UWUIFY and HOODIFY."
             if removed:
                 response += f" Removed {removed} active mode(s)."
-            await message.reply(response, mention_author=False)
+            await message.reply(
+                response + _github_sync_notice(ban_synced), mention_author=False
+            )
         else:
             if target.id not in uwu_hoodify_ban:
                 await message.reply(f"ℹ️ {target.mention} is not currently banned from UWUIFY and HOODIFY.", mention_author=False)
                 return
             uwu_hoodify_ban.remove(target.id)
-            await save_user_blacklist(TEXTIFY_BAN_FILE, uwu_hoodify_ban)
-            await message.reply(f"✅ {target.mention} can run UWUIFY and HOODIFY again.", mention_author=False)
+            unban_synced = await save_user_blacklist(
+                TEXTIFY_BAN_FILE, uwu_hoodify_ban
+            )
+            if not unban_synced:
+                _log_github_sync_failure(",uwuify hoodify unban")
+            await message.reply(
+                f"✅ {target.mention} can run UWUIFY and HOODIFY again."
+                + _github_sync_notice(unban_synced),
+                mention_author=False,
+            )
         return
     # Textify is the combined UWUIFY + HOODIFY blacklist interface.
 
@@ -4691,14 +4827,17 @@ async def uwuify_hoodify_ban_command(interaction: discord.Interaction, member: d
         return
 
     uwu_hoodify_ban.add(member.id)
-    await save_user_blacklist(TEXTIFY_BAN_FILE, uwu_hoodify_ban)
+    ban_synced = await save_user_blacklist(TEXTIFY_BAN_FILE, uwu_hoodify_ban)
+    if not ban_synced:
+        _log_github_sync_failure("/uwuify_hoodify_ban")
     removed_uwu = await disable_uwu_for_user(member.id)
     removed_hood = await disable_hood_for_user(member.id)
 
     removed = removed_uwu + removed_hood
     await interaction.followup.send(
         f"✅ {member.mention} is now banned from running UWUIFY and HOODIFY."
-        + (f" Removed {removed} active mode(s)." if removed else ""),
+        + (f" Removed {removed} active mode(s)." if removed else "")
+        + _github_sync_notice(ban_synced),
         ephemeral=False,
     )
 
@@ -4719,9 +4858,12 @@ async def uwuify_hoodify_unban_command(interaction: discord.Interaction, member:
         return
 
     uwu_hoodify_ban.remove(member.id)
-    await save_user_blacklist(TEXTIFY_BAN_FILE, uwu_hoodify_ban)
+    unban_synced = await save_user_blacklist(TEXTIFY_BAN_FILE, uwu_hoodify_ban)
+    if not unban_synced:
+        _log_github_sync_failure("/uwuify_hoodify_unban")
     await interaction.followup.send(
-        f"✅ {member.mention} can run UWUIFY and HOODIFY again.",
+        f"✅ {member.mention} can run UWUIFY and HOODIFY again."
+        + _github_sync_notice(unban_synced),
         ephemeral=False,
     )
 
@@ -5794,10 +5936,68 @@ async def ensure_guild_members_loaded(guild: discord.Guild) -> bool:
         if not guild.chunked:
             await guild.chunk(cache=True)
         return True
-    except discord.HTTPException as e:
+    except discord.HTTPException:
+        log.warning("ensure_guild_members_loaded: chunk failed for guild %s", guild.id)
         return False
-    except Exception as e:
+    except Exception:
+        log.exception(
+            "ensure_guild_members_loaded: unexpected failure for guild %s", guild.id
+        )
         return False
+
+
+def is_kick_protected(guild: discord.Guild, member: discord.Member) -> bool:
+    """Return True when a member must never be kicked from this guild.
+
+    PROTECTED_ROLE_IDS are main-server role IDs. Role IDs are guild-scoped and
+    globally unique, so testing a *tag server* member's roles against main-server
+    role IDs can never match unless those same roles also exist in the tag
+    server. Resolve the IDs against the guild the kick would actually happen in,
+    and always exempt the guild owner and anyone the bot cannot outrank.
+    """
+    if guild.owner_id == member.id:
+        return True
+
+    bot_member = guild.me
+    if bot_member is not None and member.top_role >= bot_member.top_role:
+        # Above the bot: unkickable. Skipping without an API call also stops the
+        # "Kick Failed" webhook from firing every cycle.
+        return True
+
+    guild_role_ids = {role.id for role in guild.roles}
+    if not PROTECTED_ROLE_IDS & guild_role_ids:
+        # None of the protected roles exist in this guild, so no member can hold
+        # one. Fail the check cheaply rather than per-member.
+        return False
+
+    return any(role.id in PROTECTED_ROLE_IDS for role in member.roles)
+
+
+def verify_protected_roles() -> None:
+    """Warn at startup if PROTECTED_ROLE_IDS do not exist in the tag guilds.
+
+    Their absence means kick protection is silently inert for those guilds.
+    """
+    missing = []
+    for server_id in tag_servers:
+        guild = bot.get_guild(server_id)
+        if guild is None:
+            continue
+        present = {role.id for role in guild.roles}
+        for role_id in PROTECTED_ROLE_IDS:
+            if role_id not in present:
+                missing.append((server_id, role_id))
+
+    if missing:
+        log.warning(
+            "PROTECTED_ROLE_IDS absent from %s tag guild(s); kick protection is "
+            "INERT for %s (guild, role) pair(s): %s",
+            len({guild_id for guild_id, _ in missing}),
+            len(missing),
+            missing,
+        )
+    else:
+        log.info("PROTECTED_ROLE_IDS verified present in all reachable tag guilds.")
 
 
 # ============================================================
@@ -6666,6 +6866,7 @@ async def deletereview_error(
 
 review_db_auto_sync_task: asyncio.Task | None = None
 staff_strike_expiry_task: asyncio.Task | None = None
+blacklist_durability_task: asyncio.Task | None = None
 
 
 async def staff_strike_expiry_worker():
@@ -6754,6 +6955,23 @@ async def on_ready():
         print("Bot is alive")
         terminal_status_printed = True
 
+    # CRITICAL: start the background loops FIRST.
+    # Previously the command sync, the schema setup, and the pending-view
+    # registration all ran before the .start() calls, and two of them were
+    # unguarded. A single GitHub failure there escaped on_ready, so kicks, tag
+    # roles and both webhook cleanup loops never started -- while the client
+    # stayed online and looked healthy.
+    for _loop in (
+        kick_loop,
+        tag_role_loop,
+        uwu_webhook_cleanup_loop,
+        hood_webhook_cleanup_loop,
+    ):
+        if not _loop.is_running():
+            _loop.start()
+
+    verify_protected_roles()
+
     if not commands_synced:
         try:
             main_guild_object = discord.Object(id=MAIN_SERVER)
@@ -6763,35 +6981,44 @@ async def on_ready():
             tree.copy_global_to(guild=main_guild_object)
             await tree.sync(guild=main_guild_object)
             commands_synced = True
-            pass
-        except Exception as e:
-            pass
+        except Exception:
+            log.exception("on_ready: command sync failed; will retry next ready")
 
     if not review_db_restore_checked:
-        restored = await restore_review_db_from_github()
-        if restored or _review_db_has_reviews() or not GITHUB_TOKEN:
-            review_db_restore_checked = True
+        try:
+            restored = await restore_review_db_from_github()
+            if restored or _review_db_has_reviews() or not GITHUB_TOKEN:
+                review_db_restore_checked = True
+        except Exception:
+            log.exception("on_ready: review DB restore raised")
 
     # Always ensure the restored database has the review schema.
-    _ensure_review_db_schema()
+    try:
+        _ensure_review_db_schema()
+    except Exception:
+        log.exception("on_ready: review DB schema setup failed")
+
     try:
         await asyncio.to_thread(_ensure_shared_review_store)
     except Exception as error:
-        print(f"Review store initialization failed: {type(error).__name__}: {error}")
+        log.error("Review store initialization failed: %s: %s", type(error).__name__, error)
 
     global review_update_views_registered
     if not review_update_views_registered:
-        await register_pending_review_update_views()
-        review_update_views_registered = True
+        try:
+            await register_pending_review_update_views()
+            review_update_views_registered = True
+        except Exception:
+            log.exception("on_ready: pending review-update views not registered")
 
     global review_db_auto_sync_task
     if review_db_auto_sync_task is None or review_db_auto_sync_task.done():
         try:
             success, error = await sync_review_db_to_github_locked()
             if not success:
-                print(f"Review database initial save failed: {error}")
+                log.error("Review database initial save failed: %s", error)
         except Exception as error:
-            print(f"Review database initial save crashed: {type(error).__name__}: {error}")
+            log.exception("Review database initial save crashed: %s", error)
 
         review_db_auto_sync_task = asyncio.create_task(
             review_db_auto_sync_worker()
@@ -6801,12 +7028,15 @@ async def on_ready():
         try:
             await sync_staff_strikes_from_github()
         except Exception:
-            pass
+            log.exception("on_ready: staff strike sync failed")
 
-    startup_expired = prune_expired_staff_strikes()
-    if startup_expired:
-        await handle_expired_staff_strikes(startup_expired)
-        await save_staff_strikes()
+    try:
+        startup_expired = prune_expired_staff_strikes()
+        if startup_expired:
+            await handle_expired_staff_strikes(startup_expired)
+            await save_staff_strikes()
+    except Exception:
+        log.exception("on_ready: startup strike expiry pass failed")
 
     if staff_strike_expiry_task is None or staff_strike_expiry_task.done():
         staff_strike_expiry_task = asyncio.create_task(
@@ -6815,20 +7045,24 @@ async def on_ready():
 
     global user_blacklists_synced
     if not user_blacklists_synced:
-        if await sync_user_blacklists_from_github():
-            user_blacklists_synced = True
+        try:
+            if await sync_user_blacklists_from_github():
+                user_blacklists_synced = True
+        except Exception:
+            log.exception("on_ready: user blacklist sync failed")
 
-    if not kick_loop.is_running():
-        kick_loop.start()
+    if blacklist_durability_task is None or blacklist_durability_task.done():
+        blacklist_durability_task = asyncio.create_task(
+            blacklist_durability_loop()
+        )
 
-    if not tag_role_loop.is_running():
-        tag_role_loop.start()
-
-    if not uwu_webhook_cleanup_loop.is_running():
-        uwu_webhook_cleanup_loop.start()
-
-    if not hood_webhook_cleanup_loop.is_running():
-        hood_webhook_cleanup_loop.start()
+    log.info(
+        "on_ready complete: kick=%s tag=%s uwu_cleanup=%s hood_cleanup=%s",
+        kick_loop.is_running(),
+        tag_role_loop.is_running(),
+        uwu_webhook_cleanup_loop.is_running(),
+        hood_webhook_cleanup_loop.is_running(),
+    )
 
 
 # =========================
@@ -6843,6 +7077,14 @@ async def kick_loop():
     if main_guild is None:
         return
 
+    # bot.wait_until_ready() returns on the first IDENTIFY; it does NOT wait for
+    # GUILD_MEMBERS_CHUNK. Without this, a gateway reconnect or a deploy during
+    # chunking yields a partial main_guild.members and every tag-server member
+    # missing from it gets kicked. Fail closed instead.
+    if not await ensure_guild_members_loaded(main_guild):
+        log.warning("kick_loop: main guild member list not loaded; skipping cycle.")
+        return
+
     main_members = {
         member.id
         for member in main_guild.members
@@ -6854,74 +7096,121 @@ async def kick_loop():
         if guild is None:
             continue
 
+        if not await ensure_guild_members_loaded(guild):
+            log.warning(
+                "kick_loop: tag guild %s member list not loaded; skipping.", server_id
+            )
+            continue
+
         for member in guild.members:
             if member.bot:
                 continue
 
-            # Anyone with ANY protected role will never be kicked.
-            if any(role.id in PROTECTED_ROLE_IDS for role in member.roles):
-                protected_roles = [
-                    role for role in member.roles
-                    if role.id in PROTECTED_ROLE_IDS
-                ]
-
+            # Owner, unkickable-by-hierarchy, and configured protected roles.
+            if is_kick_protected(guild, member):
                 continue
 
-            if member.id not in main_members:
-                try:
-                    await member.send(
-                        f"Hey {member.mention}, you were kicked from **{guild.name}** "
-                        f"because you are not in the main server.\n\n"
-                        f"Please join the main server here: {MAIN_SERVER_INVITE}"
-                    )
-                except Exception:
-                    pass
+            if member.id in main_members:
+                continue
 
-                try:
-                    await guild.kick(
-                        member,
-                        reason="not in main server",
-                    )
+            # Re-read the main cache immediately before the destructive act: a
+            # member who joined during this long loop must not be kicked.
+            if not await ensure_guild_members_loaded(main_guild):
+                log.warning("kick_loop: main guild cache lost mid-run; aborting.")
+                return
 
+            if member.id in {m.id for m in main_guild.members}:
+                continue
 
-                    await send_webhook(
-                        KICK_WEBHOOK_URL,
-                        title="🚫 Member Kicked",
-                        description=(
-                            f"{member.mention} was kicked from a tag server "
-                            "because they are not in the main server."
-                        ),
-                        color=discord.Color.red(),
-                        fields=[
-                            ("User", f"{member} (`{member.id}`)", True),
-                            ("Tag Server", f"{guild.name}\n`{guild.id}`", True),
-                            ("Reason", "Not a member of the main server", False),
-                        ],
-                    )
+            try:
+                await member.send(
+                    f"Hey {member.mention}, you were kicked from **{guild.name}** "
+                    f"because you are not in the main server.\n\n"
+                    f"Please join the main server here: {MAIN_SERVER_INVITE}"
+                )
+            except Exception:
+                pass
 
-                except Exception as e:
+            try:
+                await guild.kick(
+                    member,
+                    reason="not in main server",
+                )
 
-                    await send_webhook(
-                        KICK_WEBHOOK_URL,
-                        title="⚠️ Kick Failed",
-                        description=(
-                            f"Failed to kick {member.mention} "
-                            f"from **{guild.name}**."
-                        ),
-                        color=discord.Color.orange(),
-                        fields=[
-                            ("User", f"{member} (`{member.id}`)", True),
-                            ("Server", f"{guild.name}\n`{guild.id}`", True),
-                            ("Error", f"`{e}`", False),
-                        ],
-                    )
+                await send_webhook(
+                    KICK_WEBHOOK_URL,
+                    title="🚫 Member Kicked",
+                    description=(
+                        f"{member.mention} was kicked from a tag server "
+                        "because they are not in the main server."
+                    ),
+                    color=discord.Color.red(),
+                    fields=[
+                        ("User", f"{member} (`{member.id}`)", True),
+                        ("Tag Server", f"{guild.name}\n`{guild.id}`", True),
+                        ("Reason", "Not a member of the main server", False),
+                    ],
+                )
 
-                await asyncio.sleep(1)
+            except Exception as e:
+                log.warning("kick_loop: failed to kick %s from %s", member.id, guild.id)
+
+                await send_webhook(
+                    KICK_WEBHOOK_URL,
+                    title="⚠️ Kick Failed",
+                    description=(
+                        f"Failed to kick {member.mention} "
+                        f"from **{guild.name}**."
+                    ),
+                    color=discord.Color.orange(),
+                    fields=[
+                        ("User", f"{member} (`{member.id}`)", True),
+                        ("Server", f"{guild.name}\n`{guild.id}`", True),
+                        ("Error", f"`{type(e).__name__}`", False),
+                    ],
+                )
+
+            await asyncio.sleep(1)
 
 
 # =========================
 # TAG ROLE LOOP
 # =========================
+
+# Negative cache for tag-role mutations. Without it a member the bot cannot
+# modify re-arms the same failing condition every single tick.
+_tag_role_backoff_until: dict[tuple[int, int], float] = {}
+TAG_ROLE_BACKOFF_STRUCTURAL_SECONDS = 300.0
+TAG_ROLE_BACKOFF_TRANSIENT_SECONDS = 30.0
+
+
+def _tag_role_backoff(
+    guild_id: int,
+    member_id: int,
+    structural: bool,
+) -> None:
+    window = (
+        TAG_ROLE_BACKOFF_STRUCTURAL_SECONDS
+        if structural
+        else TAG_ROLE_BACKOFF_TRANSIENT_SECONDS
+    )
+    _tag_role_backoff_until[(guild_id, member_id)] = time.monotonic() + window
+
+
+def _tag_role_backoff_active(guild_id: int, member_id: int) -> bool:
+    key = (guild_id, member_id)
+    deadline = _tag_role_backoff_until.get(key)
+    if deadline is None:
+        return False
+    if time.monotonic() >= deadline:
+        _tag_role_backoff_until.pop(key, None)
+        return False
+    return True
+
+
+def _tag_role_backoff_clear(guild_id: int, member_id: int) -> None:
+    _tag_role_backoff_until.pop((guild_id, member_id), None)
+
 
 @tasks.loop(seconds=tag_check_time)
 async def tag_role_loop():
@@ -6993,6 +7282,7 @@ async def tag_role_loop():
 
     tagged_users = set()
     tagged_users_2 = set()
+    first_role_check_failed = False
     second_role_check_failed = False
     second_role_servers_configured = 0
 
@@ -7008,14 +7298,17 @@ async def tag_role_loop():
         guild = bot.get_guild(server_id)
 
         if guild is None:
+            first_role_check_failed = True
             continue
 
         if not await ensure_guild_members_loaded(guild):
+            first_role_check_failed = True
             continue
 
         tag_server_role = guild.get_role(tag_server_role_id)
 
         if tag_server_role is None:
+            first_role_check_failed = True
             continue
 
         for member in guild.members:
@@ -7024,6 +7317,17 @@ async def tag_role_loop():
 
             if tag_server_role in member.roles:
                 tagged_users.add(member.id)
+
+    if first_role_check_failed:
+        # Fail CLOSED. An unreadable tag server must never be read as "these
+        # members lost their tag": the removal branch below would strip
+        # TAG_ROLE_ID from every main-server member whose only tag source was
+        # this server, permanently. The second-role reconciliation below is
+        # independent and still runs.
+        log.warning(
+            "tag_role_loop: one or more first-role tag servers could not be read; "
+            "skipping first-role reconciliation this cycle."
+        )
 
     # -------------------------
     # CHECK SECOND-ROLE SOURCE SERVERS
@@ -7083,6 +7387,11 @@ async def tag_role_loop():
     # FIRST MAIN ROLE
     # -------------------------
 
+    # The removal branch is destructive and irreversible, so it is gated on the
+    # first-role read having succeeded for every tag server. The add branch only
+    # grants a role, so it still runs on incomplete data.
+    first_role_removals_allowed = not first_role_check_failed
+
     for member in main_guild.members:
         if member.bot:
             continue
@@ -7118,21 +7427,42 @@ async def tag_role_loop():
                         ),
                     ],
                 )
-            except discord.Forbidden as e:
-                pass
-            except discord.HTTPException as e:
-                pass
-            except Exception as e:
-                pass
+            except discord.Forbidden:
+                _tag_role_backoff(main_guild.id, member.id, structural=True)
+            except discord.HTTPException:
+                _tag_role_backoff(main_guild.id, member.id, structural=False)
+            except Exception:
+                log.exception(
+                    "tag_role_loop: unexpected error adding tag role to %s", member.id
+                )
+                _tag_role_backoff(main_guild.id, member.id, structural=False)
 
             await asyncio.sleep(0.5)
 
         elif not has_tag and has_role:
+            if not first_role_removals_allowed:
+                continue
+
+            # The add branch above guards hierarchy; the removal branch did not,
+            # so a member at or above the bot pinned this loop into a permanent
+            # 1 Hz retry storm (one guaranteed-403 PUT + one webhook POST, every
+            # second, forever) with the failure swallowed by send_webhook.
+            if main_guild.owner_id == member.id:
+                continue
+
+            if member.top_role >= bot_member.top_role:
+                continue
+
+            if _tag_role_backoff_active(main_guild.id, member.id):
+                continue
+
             try:
                 await member.remove_roles(
                     tag_role,
                     reason="User no longer has the configured first tag role",
                 )
+
+                _tag_role_backoff_clear(main_guild.id, member.id)
 
                 await send_webhook(
                     ROLE_WEBHOOK_URL,
@@ -7152,12 +7482,18 @@ async def tag_role_loop():
                         ),
                     ],
                 )
-            except discord.Forbidden as e:
-                pass
-            except discord.HTTPException as e:
-                pass
-            except Exception as e:
-                pass
+            except discord.Forbidden:
+                # Structural failure (hierarchy/permissions): stop retrying for
+                # a long window instead of every tick.
+                _tag_role_backoff(main_guild.id, member.id, structural=True)
+            except discord.HTTPException:
+                _tag_role_backoff(main_guild.id, member.id, structural=False)
+            except Exception:
+                log.exception(
+                    "tag_role_loop: unexpected error removing tag role from %s",
+                    member.id,
+                )
+                _tag_role_backoff(main_guild.id, member.id, structural=False)
 
             await asyncio.sleep(0.5)
 
@@ -7190,6 +7526,8 @@ async def tag_role_loop():
                             reason="User is on the second-role blacklist",
                         )
 
+                        _tag_role_backoff_clear(main_guild.id, member.id)
+
                         await send_webhook(
                             ROLE_WEBHOOK_URL,
                             title="🚫 Second Role Removed (Blacklisted)",
@@ -7204,12 +7542,17 @@ async def tag_role_loop():
                                 ("Reason", "Member is on the second-role blacklist.", False),
                             ],
                         )
-                    except discord.Forbidden as e:
-                        pass
-                    except discord.HTTPException as e:
-                        pass
-                    except Exception as e:
-                        pass
+                    except discord.Forbidden:
+                        _tag_role_backoff(main_guild.id, member.id, structural=True)
+                    except discord.HTTPException:
+                        _tag_role_backoff(main_guild.id, member.id, structural=False)
+                    except Exception:
+                        log.exception(
+                            "tag_role_loop: unexpected error removing second role "
+                            "(blacklist) from %s",
+                            member.id,
+                        )
+                        _tag_role_backoff(main_guild.id, member.id, structural=False)
 
                     await asyncio.sleep(0.5)
 
@@ -7245,21 +7588,37 @@ async def tag_role_loop():
                             ),
                         ],
                     )
-                except discord.Forbidden as e:
-                    pass
-                except discord.HTTPException as e:
-                    pass
-                except Exception as e:
-                    pass
+                except discord.Forbidden:
+                    _tag_role_backoff(main_guild.id, member.id, structural=True)
+                except discord.HTTPException:
+                    _tag_role_backoff(main_guild.id, member.id, structural=False)
+                except Exception:
+                    log.exception(
+                        "tag_role_loop: unexpected error adding second role to %s",
+                        member.id,
+                    )
+                    _tag_role_backoff(main_guild.id, member.id, structural=False)
 
                 await asyncio.sleep(0.5)
 
             elif not has_tag_2 and has_role_2:
+                # Same missing hierarchy guard the first-role removal had.
+                if main_guild.owner_id == member.id:
+                    continue
+
+                if member.top_role >= bot_member.top_role:
+                    continue
+
+                if _tag_role_backoff_active(main_guild.id, member.id):
+                    continue
+
                 try:
                     await member.remove_roles(
                         tag_role_2,
                         reason="User no longer has the configured second tag role",
                     )
+
+                    _tag_role_backoff_clear(main_guild.id, member.id)
 
                     await send_webhook(
                         ROLE_WEBHOOK_URL,
@@ -7279,12 +7638,16 @@ async def tag_role_loop():
                             ),
                         ],
                     )
-                except discord.Forbidden as e:
-                    pass
-                except discord.HTTPException as e:
-                    pass
-                except Exception as e:
-                    pass
+                except discord.Forbidden:
+                    _tag_role_backoff(main_guild.id, member.id, structural=True)
+                except discord.HTTPException:
+                    _tag_role_backoff(main_guild.id, member.id, structural=False)
+                except Exception:
+                    log.exception(
+                        "tag_role_loop: unexpected error removing second role from %s",
+                        member.id,
+                    )
+                    _tag_role_backoff(main_guild.id, member.id, structural=False)
 
                 await asyncio.sleep(0.5)
 
@@ -7302,21 +7665,33 @@ async def tag_role_loop():
 # =========================
 
 @kick_loop.error
-async def kick_loop_error(error):
-    # A single unexpected exception should not permanently stop the kick loop.
-    await asyncio.sleep(5)
-
-    if not bot.is_closed() and not kick_loop.is_running():
-        kick_loop.restart()
+async def kick_loop_error(error: Exception):
+    # discord.py already sleeps before invoking this handler and continues to the
+    # next iteration, so the old `await asyncio.sleep(5)` doubled the stall and
+    # the `not is_running()` guard could never be true (the task is still alive
+    # while the handler runs), making restart() dead code. Just log it.
+    log.exception("kick_loop iteration failed; continuing next interval")
 
 
 @tag_role_loop.error
-async def tag_role_loop_error(error):
-    # A single unexpected exception should not permanently stop the role loop.
-    await asyncio.sleep(5)
+async def tag_role_loop_error(error: Exception):
+    log.exception("tag_role_loop iteration failed; continuing next interval")
 
-    if not bot.is_closed() and not tag_role_loop.is_running():
-        tag_role_loop.restart()
+
+@uwu_webhook_cleanup_loop.error
+async def uwu_webhook_cleanup_error(error: Exception):
+    # This loop previously had NO error handler, so a single exception killed it
+    # permanently and every relay webhook then leaked into Discord on restart.
+    log.exception("uwu_webhook_cleanup_loop iteration failed; restarting")
+    if not bot.is_closed() and not uwu_webhook_cleanup_loop.is_running():
+        uwu_webhook_cleanup_loop.restart()
+
+
+@hood_webhook_cleanup_loop.error
+async def hood_webhook_cleanup_error(error: Exception):
+    log.exception("hood_webhook_cleanup_loop iteration failed; restarting")
+    if not bot.is_closed() and not hood_webhook_cleanup_loop.is_running():
+        hood_webhook_cleanup_loop.restart()
 
 
 # =========================
