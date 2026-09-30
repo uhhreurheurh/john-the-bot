@@ -2001,7 +2001,7 @@ def get_leaderboard_liked(limit: int = 5):
         LIMIT ?
         """,
         (limit,),
-    ).fetchall()
+    )
 
 
 def get_leaderboard_reviewed(limit: int = 5):
@@ -2016,7 +2016,7 @@ def get_leaderboard_reviewed(limit: int = 5):
         LIMIT ?
         """,
         (limit,),
-    ).fetchall()
+    )
 
 
 def get_leaderboard_disliked(limit: int = 5):
@@ -2030,7 +2030,7 @@ def get_leaderboard_disliked(limit: int = 5):
         LIMIT ?
         """,
         (limit,),
-    ).fetchall()
+    )
 
 
 def get_user_stats(user_id: int):
@@ -2044,7 +2044,7 @@ def get_user_stats(user_id: int):
         WHERE target_id = ?
         """,
         (user_id,),
-    ).fetchone()
+    )
     total = row["total"] or 0
     approved = row["approved"] or 0
     return {
