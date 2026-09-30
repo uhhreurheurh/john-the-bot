@@ -85,8 +85,8 @@
       "id": 13,
       "target_id": 1368674912943866010,
       "reviewer_id": 1512484378050302053,
-      "rating": 1,
-      "comment": "Fucking bitch ass nigger",
+      "rating": 4,
+      "comment": "Cute femboy ngl pretty funny i guess",
       "created_at": "2026-09-30 21:04:49"
     },
     {
@@ -223,12 +223,12 @@
       "new_rating": 4,
       "new_comment": "Cute femboy ngl pretty funny i guess",
       "update_reason": "Your not bad baby your are a great mod",
-      "status": "pending",
+      "status": "approved",
       "approval_message_id": 1554969503513706537,
       "approval_channel_id": 1554700806220161164,
-      "reviewed_by": null,
+      "reviewed_by": 191233879175200768,
       "created_at": "2026-09-30 21:33:38",
-      "reviewed_at": null
+      "reviewed_at": "2026-09-30 21:36:26"
     }
   ],
   "review_id_sequence": 6
