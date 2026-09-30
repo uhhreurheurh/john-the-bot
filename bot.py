@@ -19,8 +19,25 @@ from discord import app_commands
 import uwuify
 from discord.ext import tasks
 
-# Keep the terminal quiet; the only intentional terminal output is "Bot is alive".
-logging.disable(logging.CRITICAL)
+# Quiet the noisy third-party libraries, but never disable logging outright.
+# A blanket logging.disable(logging.CRITICAL) also silences ERROR/CRITICAL, which
+# hid the failure of every background task and of on_ready itself.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+)
+for _noisy in (
+    "discord",
+    "discord.gateway",
+    "discord.http",
+    "websockets",
+    "urllib3",
+    "asyncio",
+    "aiosqlite",
+):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
+log = logging.getLogger("jbot")
 
 # =========================
 # CONFIG
@@ -94,6 +111,9 @@ STAFF_STRIKE_EXPIRY_CHECK_SECONDS = 60
 STAFF_STRIKE_TWO_ACTIVE_CHANNEL_ID = 1371890083833319554
 STAFF_STRIKE_EXPIRED_CHANNEL_ID = 1371889867151114343
 STAFF_STRIKE_ACTIVE_CHANNEL_ID = 1380990378605281290
+# NEW: removals used to be completely silent, so a suspend-then-un-strike cycle
+# left no trace. Point this at a moderation log channel.
+STAFF_STRIKE_REMOVED_CHANNEL_ID = 1380990378605281290
 
 # Staff rank order, highest to lowest.
 STAFF_ROLE_HIERARCHY = [
@@ -250,6 +270,27 @@ uwu_hoodify_ban = load_user_blacklist(TEXTIFY_BAN_FILE)
 review_blacklist = load_user_blacklist(REVIEW_BLACKLIST_FILE)
 
 
+def _sanitize_original_staff_role_id(value: object) -> int | None:
+    """Only accept a rank from STAFF_ROLE_HIERARCHY.
+
+    Anything else is a corrupt or tampered record. It must never drive a role
+    grant: original_staff_role_id flows straight into add_roles(), and the only
+    other gate is `bot.top_role > role`, which passes for every role beneath the
+    bot — including privileged non-staff roles.
+
+    Defined before load_staff_strikes() runs at import time.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    try:
+        role_id = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return role_id if role_id in STAFF_ROLE_IDS else None
+
+
 def load_staff_strikes() -> list[dict]:
     """Load all staff strikes from local disk."""
     if not STAFF_STRIKES_FILE.exists():
@@ -276,10 +317,8 @@ def load_staff_strikes() -> list[dict]:
             reason = str(item["reason"]).strip()
             issued_at = str(item["issued_at"])
             expires_at = str(item["expires_at"])
-            original_staff_role_id = (
-                int(item["original_staff_role_id"])
-                if item.get("original_staff_role_id") is not None
-                else None
+            original_staff_role_id = _sanitize_original_staff_role_id(
+                item.get("original_staff_role_id")
             )
         except (KeyError, TypeError, ValueError):
             continue
@@ -312,10 +351,22 @@ def _save_staff_strikes_local(strikes: list[dict]) -> None:
 
 staff_strikes = load_staff_strikes()
 
+# Set by prune_expired_staff_strikes when a stored expires_at is unparseable.
+# Surfaced on /strikes so a corrupt record is visible instead of silently
+# promoting the member back to their pre-strike rank.
+staff_strike_timestamp_error: str | None = None
+
 
 def _staff_strike_datetime(value: str) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+
+    text = value.strip()
+    if text.endswith(("Z", "z")):
+        text = f"{text[:-1]}+00:00"
+
     try:
-        parsed = datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(text)
     except (TypeError, ValueError):
         return None
 
@@ -326,21 +377,42 @@ def _staff_strike_datetime(value: str) -> datetime | None:
 
 
 def prune_expired_staff_strikes() -> list[dict]:
-    """Remove expired strikes and return the records that expired."""
+    """Remove expired strikes and return the records that expired.
+
+    A strike whose timestamp cannot be parsed is NEVER treated as expired.
+    Dropping it would silently restore the member's rank, so it is kept active
+    and the condition is surfaced to operators instead.
+    """
     global staff_strikes
+    global staff_strike_timestamp_error
 
     now = datetime.now(timezone.utc)
     expired = []
     active = []
+    unreadable = []
 
     for strike in staff_strikes:
         expires_at = _staff_strike_datetime(strike.get("expires_at", ""))
-        if expires_at is not None and expires_at > now:
+        if expires_at is None:
+            unreadable.append(strike)
+            active.append(strike)  # fail CLOSED: still counts as active
+            continue
+        if expires_at > now:
             active.append(strike)
         else:
             expired.append(strike)
 
     staff_strikes = active
+
+    if unreadable:
+        staff_strike_timestamp_error = (
+            f"{len(unreadable)} staff strike(s) have an unreadable expires_at "
+            "and were treated as ACTIVE. Inspect staff_strikes.json."
+        )
+        log.warning(staff_strike_timestamp_error)
+    else:
+        staff_strike_timestamp_error = None
+
     return expired
 
 
@@ -374,6 +446,60 @@ def get_original_staff_role_id(user_id: int) -> int | None:
         if original_role_id:
             return int(original_role_id)
     return None
+
+
+# Per-user locks so two concurrent strike commands against the same member cannot
+# interleave their read-modify-write and role mutation, which used to leave a
+# member at a rank that no longer matched their active strike count.
+_staff_strike_user_locks: dict[int, asyncio.Lock] = {}
+
+
+def _user_strike_lock(user_id: int) -> asyncio.Lock:
+    """Return the per-user strike lock, creating it on first use.
+
+    dict.setdefault is atomic for a single call under the GIL, so no second lock
+    is required to guard creation.
+    """
+    return _staff_strike_user_locks.setdefault(user_id, asyncio.Lock())
+
+
+def staff_rank_of(role_id: int) -> int:
+    """Lower index == higher rank. Returns -1 if not a configured staff role."""
+    for index, (_, current_id) in enumerate(STAFF_ROLE_HIERARCHY):
+        if current_id == role_id:
+            return index
+    return -1
+
+
+def staff_strike_target_allowed(
+    issuer: discord.Member,
+    target: discord.Member,
+) -> tuple[bool, str]:
+    """Return (allowed, denial_reason) for striking or un-striking a member.
+
+    The role gate in staff_strike_command_allowed only answers "may this person
+    strike someone?". It never answered "may they strike THIS someone?", which
+    let the lowest-ranked permitted issuer demote and suspend the Co Owner.
+    """
+    if issuer.id == target.id:
+        return False, "You cannot issue a staff strike against yourself."
+
+    issuer_info = get_staff_role_for_member(issuer)
+    issuer_rank = staff_rank_of(issuer_info[1].id) if issuer_info is not None else -1
+    if issuer_rank < 0:
+        return False, "You do not hold a ranked staff role."
+
+    target_info = get_staff_role_for_member(target)
+    if target_info is None:
+        return False, "The selected member does not have a configured staff role."
+
+    if issuer_rank >= staff_rank_of(target_info[1].id):
+        return False, "You cannot strike a staff member at or above your rank."
+
+    if target.guild is not None and target.guild.owner_id == target.id:
+        return False, "The server owner cannot be struck."
+
+    return True, ""
 
 
 async def send_staff_strike_log(channel_id: int, content: str) -> bool:
@@ -458,8 +584,19 @@ async def apply_staff_strike_consequences(
     original_role_name = original_role.name if original_role is not None else "No Staff Role"
 
     if active_count < 2:
+        if original_role is None:
+            # The original rank is unknown. Returning early aborts the mutation
+            # entirely rather than letting desired_role=None fall through to
+            # "remove every staff role", which is how a normally-expiring final
+            # strike used to silently strip a member of all their ranks.
+            log.warning(
+                "apply_staff_strike_consequences: refusing to change roles for %s "
+                "(%s) — original staff rank is unknown, active_count=%s",
+                member.id, member.display_name, active_count,
+            )
+            return None
         desired_role = original_role
-        desired_name = original_role_name if desired_role is not None else "No Staff Role"
+        desired_name = original_role_name
     elif active_count == 2:
         next_role_info = get_next_staff_role(original_role_id) if original_role_id else None
         desired_role = (
@@ -501,6 +638,16 @@ async def apply_staff_strike_consequences(
     )
 
     if can_manage:
+        if desired_role is not None and desired_role.id not in STAFF_ROLE_IDS:
+            # The strike system only ever manages ranks from STAFF_ROLE_HIERARCHY.
+            # Anything else means a tampered or corrupt record reached the grant.
+            log.warning(
+                "apply_staff_strike_consequences: refusing to grant non-staff role "
+                "%s to %s",
+                desired_role.id, member.id,
+            )
+            return None
+
         try:
             removable = [
                 role
@@ -584,6 +731,31 @@ async def handle_expired_staff_strikes(
         active_count = len(get_user_staff_strikes(user_id))
         before_active_count = active_count + len(user_expired)
 
+        # These records were ALREADY removed from staff_strikes by
+        # prune_expired_staff_strikes(), so get_original_staff_role_id() cannot see
+        # them. The expired batch is the only remaining record of the rank the
+        # member started at — read the original rank from here or the restore
+        # would resolve to None and strip every staff role.
+        original_role_id = next(
+            (
+                int(strike["original_staff_role_id"])
+                for strike in sorted(
+                    user_expired,
+                    key=lambda s: int(s.get("strike_number") or 0),
+                )
+                if strike.get("original_staff_role_id") is not None
+            ),
+            None,
+        )
+        if original_role_id is None:
+            original_role_id = get_original_staff_role_id(user_id)
+        if original_role_id is None:
+            # Last resort: whatever rank the member holds right now. If they hold
+            # none there is nothing to restore and the floor inside
+            # apply_staff_strike_consequences aborts the mutation.
+            current_info = get_staff_role_for_member(member)
+            original_role_id = current_info[1].id if current_info is not None else None
+
         before_info = get_staff_role_for_member(member)
         if before_info is not None:
             before_name = before_info[0]
@@ -595,6 +767,7 @@ async def handle_expired_staff_strikes(
         await apply_staff_strike_consequences(
             member,
             active_count=active_count,
+            original_role_id_override=original_role_id,
         )
 
         refreshed = await resolve_main_guild_member(user_id) or member
@@ -715,10 +888,8 @@ def _github_get_staff_strikes() -> tuple[bool, list[dict], str | None]:
                 "issued_by": int(item["issued_by"]),
                 "issued_at": str(item["issued_at"]),
                 "expires_at": str(item["expires_at"]),
-                "original_staff_role_id": (
-                    int(item["original_staff_role_id"])
-                    if item.get("original_staff_role_id") is not None
-                    else None
+                "original_staff_role_id": _sanitize_original_staff_role_id(
+                    item.get("original_staff_role_id")
                 ),
             })
         except (KeyError, TypeError, ValueError):
@@ -827,13 +998,24 @@ async def staff_strike_command_check(interaction: discord.Interaction) -> bool:
 
 
 def format_staff_strike(target: discord.Member, strike: dict) -> str:
+    issued_by = strike.get("issued_by")
+    issuer_line = (
+        f"issued by <@{int(issued_by)}>\n\n" if issued_by is not None else ""
+    )
+
+    issued_at = _staff_strike_datetime(strike.get("issued_at"))
+    expires_at = _staff_strike_datetime(strike.get("expires_at"))
+    if issued_at is not None and expires_at is not None:
+        days = int(round((expires_at - issued_at).total_seconds() / 86400))
+        duration_line = f"{days}d"
+    else:
+        duration_line = "unknown duration"
+
     return (
-        f"{target.mention} / {target.id}\n\n"
+        f"{target.mention} / {target.id}\n"
+        f"{issuer_line}"
         f"strike #{int(strike['strike_number'])}: {strike['reason']}\n\n"
-        f"{int(round((
-            _staff_strike_datetime(strike['expires_at'])
-            - _staff_strike_datetime(strike['issued_at'])
-        ).total_seconds() / 86400))}d"
+        f"{duration_line}"
     )
 
 
@@ -1519,7 +1701,7 @@ def get_blacklisted_hood_word(content: str) -> str | None:
         blocked = str(blocked).strip()
         if not blocked:
             continue
-        pattern = rf"(?<!\\w){re.escape(blocked)}(?!\\w)"
+        pattern = rf"(?<!\w){re.escape(blocked)}(?!\w)"
         if re.search(pattern, content, flags=re.IGNORECASE):
             return blocked
     return None
@@ -2317,7 +2499,9 @@ def _sqlite_file_is_valid(path: Path) -> bool:
         if not path.exists() or path.stat().st_size < 16:
             return False
         with path.open("rb") as file:
-            if file.read(16) != b"SQLite format 3\\x00":
+            # Exactly 16 bytes: b"SQLite format 3" + NUL. A double backslash
+            # here decodes to a literal backslash and makes this never match.
+            if file.read(16) != b"SQLite format 3\x00":
                 return False
         connection = sqlite3.connect(path, timeout=10)
         try:
@@ -5219,6 +5403,20 @@ async def strike_command(
     """Issue a time-limited staff strike."""
     await interaction.response.defer(ephemeral=False)
 
+    if not isinstance(interaction.user, discord.Member):
+        await interaction.followup.send(
+            "❌ Could not verify your server roles.",
+            ephemeral=True,
+        )
+        return
+
+    # Authorisation must happen before any prune/save, so a denied issuer can
+    # never trigger a side effect.
+    allowed, denial = staff_strike_target_allowed(interaction.user, member)
+    if not allowed:
+        await interaction.followup.send(f"❌ {denial}", ephemeral=True)
+        return
+
     reason = reason.strip()
     if not reason:
         await interaction.followup.send(
@@ -5242,20 +5440,23 @@ async def strike_command(
 
     original_role_id = get_original_staff_role_id(member.id) or current_staff_info[1].id
 
-    strike = create_staff_strike(
-        user_id=member.id,
-        reason=reason,
-        days=int(days),
-        issued_by=interaction.user.id,
-        original_staff_role_id=original_role_id,
-    )
-    active_count = len(get_user_staff_strikes(member.id))
-    consequence = await apply_staff_strike_consequences(
-        member,
-        active_count=active_count,
-        log_two_strikes=(active_count == 2),
-        log_three_strikes=(active_count >= 3),
-    )
+    # Serialise per-user so two concurrent strikes cannot interleave their role
+    # writes and leave the member at a rank that no longer matches their count.
+    async with _user_strike_lock(member.id):
+        strike = create_staff_strike(
+            user_id=member.id,
+            reason=reason,
+            days=int(days),
+            issued_by=interaction.user.id,
+            original_staff_role_id=original_role_id,
+        )
+        active_count = len(get_user_staff_strikes(member.id))
+        consequence = await apply_staff_strike_consequences(
+            member,
+            active_count=active_count,
+            log_two_strikes=(active_count == 2),
+            log_three_strikes=(active_count >= 3),
+        )
     synced = await save_staff_strikes()
 
     await send_staff_strike_log(
@@ -5289,27 +5490,46 @@ async def strikes_command(
     member: discord.Member,
 ):
     """Show a member's active staff strikes."""
+    await interaction.response.defer(ephemeral=False)
+
     expired = prune_expired_staff_strikes()
     if expired:
         await handle_expired_staff_strikes(expired)
         await save_staff_strikes()
 
+    # Surface unreadable-timestamp records so a corrupt store is visible here
+    # rather than silently keeping a strike active forever.
+    warning_block = (
+        f"\n\n⚠️ {staff_strike_timestamp_error}"
+        if staff_strike_timestamp_error
+        else ""
+    )
+
     strikes = get_user_staff_strikes(member.id)
     if not strikes:
-        await interaction.response.send_message(
-            f"{member.mention} / {member.id}\n\nNo active strikes.",
+        await interaction.followup.send(
+            f"{member.mention} / {member.id}\n\nNo active strikes.{warning_block}",
             ephemeral=False,
         )
         return
 
     blocks = []
     for strike in strikes:
+        expires_at = _staff_strike_datetime(strike.get("expires_at"))
+        expires_text = (
+            expires_at.strftime("%Y-%m-%d %H:%M UTC")
+            if expires_at is not None
+            else "UNREADABLE expires_at"
+        )
+        issued_by = strike.get("issued_by")
+        issuer_text = f" by <@{int(issued_by)}>" if issued_by is not None else ""
         blocks.append(
             f"strike #{int(strike['strike_number'])}: {strike['reason']}"
+            f"{issuer_text}\nexpires {expires_text}"
         )
 
-    await interaction.response.send_message(
-        f"{member.mention} / {member.id}\n\n" + "\n\n".join(blocks),
+    await interaction.followup.send(
+        f"{member.mention} / {member.id}\n\n" + "\n\n".join(blocks) + warning_block,
         ephemeral=False,
     )
 
@@ -5330,6 +5550,20 @@ async def removestrike_command(
 ):
     """Remove one active strike and immediately recalculate staff rank."""
     await interaction.response.defer(ephemeral=False)
+
+    if not isinstance(interaction.user, discord.Member):
+        await interaction.followup.send(
+            "❌ Could not verify your server roles.",
+            ephemeral=True,
+        )
+        return
+
+    # Checked BEFORE staff_strikes.remove() so a denied operator can never strip
+    # a record or trigger a role change.
+    allowed, denial = staff_strike_target_allowed(interaction.user, member)
+    if not allowed:
+        await interaction.followup.send(f"❌ {denial}", ephemeral=True)
+        return
 
     expired = prune_expired_staff_strikes()
     if expired:
@@ -5364,15 +5598,60 @@ async def removestrike_command(
         "Suspended" if len(get_user_staff_strikes(member.id)) >= 3 else "No Staff Role"
     )
 
-    staff_strikes.remove(matching)
+    # Snapshot the record fields needed for the audit log before removal.
+    removed_reason = str(matching.get("reason") or "")
+    removed_issued_by = matching.get("issued_by")
+    removed_issued_at = matching.get("issued_at")
 
-    active_count = len(get_user_staff_strikes(member.id))
-    consequence = await apply_staff_strike_consequences(
-        member,
-        active_count=active_count,
-        original_role_id_override=original_role_id,
-    )
+    async with _user_strike_lock(member.id):
+        staff_strikes.remove(matching)
+
+        active_count = len(get_user_staff_strikes(member.id))
+        consequence = await apply_staff_strike_consequences(
+            member,
+            active_count=active_count,
+            original_role_id_override=original_role_id,
+        )
     synced = await save_staff_strikes()
+
+    # MEDIUM-17: strike removals were previously silent. Without this, a
+    # suspend-then-un-strike cycle left no trace that the suspension was undone.
+    audit_lines = [
+        f"Strike #{int(strike_number)} removed from {member.mention} / {member.id}",
+        f"by <@{interaction.user.id}> ({interaction.user})",
+        f"Active strikes: {active_count}",
+    ]
+    if removed_reason:
+        audit_lines.append(f"Reason on file: {removed_reason}")
+    if removed_issued_by is not None:
+        audit_lines.append(
+            f"Originally issued by: <@{int(removed_issued_by)}> on {removed_issued_at}"
+        )
+    if consequence is not None:
+        audit_lines.append(f"Role action: **{consequence[0]} → {consequence[1]}**")
+    else:
+        audit_lines.append("Role action: none")
+    if not synced:
+        audit_lines.append("⚠️ GitHub sync failed; saved locally only.")
+
+    await send_staff_strike_log(
+        STAFF_STRIKE_REMOVED_CHANNEL_ID,
+        "\n".join(audit_lines),
+    )
+    await send_webhook(
+        ROLE_WEBHOOK_URL,
+        title="Staff Strike Removed",
+        description=(
+            f"{member.mention} had strike #{int(strike_number)} removed by "
+            f"{interaction.user}."
+        ),
+        color=discord.Color.orange(),
+        fields=[
+            ("User", f"{member} (`{member.id}`)", True),
+            ("Removed By", f"{interaction.user} (`{interaction.user.id}`)", True),
+            ("Active Strikes", str(active_count), True),
+        ],
+    )
 
     response = (
         f"✅ Removed strike #{int(strike_number)} from "
