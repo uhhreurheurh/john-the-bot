@@ -136,6 +136,14 @@
       "rating": 5,
       "comment": "midget killer",
       "created_at": "2026-09-30 21:23:50"
+    },
+    {
+      "id": 20,
+      "target_id": 191233879175200768,
+      "reviewer_id": 1485649466928402486,
+      "rating": 1,
+      "comment": "dictator against human empathy and democracy",
+      "created_at": "2026-09-30 21:29:40"
     }
   ],
   "review_update_requests": [
