@@ -91,6 +91,21 @@ STAFF_STRIKE_ALLOWED_ROLE_IDS = {
 }
 STAFF_STRIKES_FILE = Path(__file__).with_name("staff_strikes.json")
 STAFF_STRIKE_EXPIRY_CHECK_SECONDS = 60
+STAFF_STRIKE_TWO_ACTIVE_CHANNEL_ID = 1371890083833319554
+STAFF_STRIKE_EXPIRED_CHANNEL_ID = 1371889867151114343
+
+# Staff rank order, highest to lowest.
+STAFF_ROLE_HIERARCHY = [
+    ("Co Owner", 1518416402141417472),
+    ("Director", 1397677852056354948),
+    ("Staff Manager", 1371738883401711656),
+    ("Head Admin", 1371739870380425236),
+    ("Admin", 1371738346900029510),
+    ("Head Mod", 1371739816227504160),
+    ("Mod", 1371738357897494589),
+    ("Trial Mod", 1371738371441037343),
+]
+STAFF_ROLE_IDS = {role_id for _, role_id in STAFF_ROLE_HIERARCHY}
 
 # Tag server ids
 # Keep this list in the same order as tag_server_role_ids below.
@@ -260,6 +275,11 @@ def load_staff_strikes() -> list[dict]:
             reason = str(item["reason"]).strip()
             issued_at = str(item["issued_at"])
             expires_at = str(item["expires_at"])
+            original_staff_role_id = (
+                int(item["original_staff_role_id"])
+                if item.get("original_staff_role_id") is not None
+                else None
+            )
         except (KeyError, TypeError, ValueError):
             continue
 
@@ -273,6 +293,7 @@ def load_staff_strikes() -> list[dict]:
             "issued_by": issued_by,
             "issued_at": issued_at,
             "expires_at": expires_at,
+            "original_staff_role_id": original_staff_role_id,
         })
 
     return cleaned
@@ -303,27 +324,243 @@ def _staff_strike_datetime(value: str) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def prune_expired_staff_strikes() -> bool:
-    """Remove expired strikes. Returns True when anything was removed."""
+def prune_expired_staff_strikes() -> list[dict]:
+    """Remove expired strikes and return the records that expired."""
     global staff_strikes
 
     now = datetime.now(timezone.utc)
-    before = len(staff_strikes)
-    staff_strikes = [
-        strike
-        for strike in staff_strikes
-        if (
-            (expires_at := _staff_strike_datetime(strike.get("expires_at", "")))
-            is not None
-            and expires_at > now
+    expired = []
+    active = []
+
+    for strike in staff_strikes:
+        expires_at = _staff_strike_datetime(strike.get("expires_at", ""))
+        if expires_at is not None and expires_at > now:
+            active.append(strike)
+        else:
+            expired.append(strike)
+
+    staff_strikes = active
+    return expired
+
+
+def get_staff_role_for_member(member: discord.Member) -> tuple[str, discord.Role] | None:
+    """Return the member's highest configured staff role."""
+    role_by_id = {role.id: role for role in member.roles}
+    for role_name, role_id in STAFF_ROLE_HIERARCHY:
+        role = role_by_id.get(role_id)
+        if role is not None:
+            return role_name, role
+    return None
+
+
+def get_next_staff_role(role_id: int) -> tuple[str, int] | None:
+    """Return the configured rank one level below the supplied role."""
+    for index, (_, current_id) in enumerate(STAFF_ROLE_HIERARCHY):
+        if current_id != role_id:
+            continue
+        if index + 1 >= len(STAFF_ROLE_HIERARCHY):
+            return None
+        return STAFF_ROLE_HIERARCHY[index + 1]
+    return None
+
+
+def get_original_staff_role_id(user_id: int) -> int | None:
+    """Get the role the member had before strike consequences were applied."""
+    for strike in staff_strikes:
+        if int(strike.get("user_id", 0)) != int(user_id):
+            continue
+        original_role_id = strike.get("original_staff_role_id")
+        if original_role_id:
+            return int(original_role_id)
+    return None
+
+
+async def send_staff_strike_log(channel_id: int, content: str) -> bool:
+    """Send a normal-text staff strike role-change message."""
+    guild = bot.get_guild(MAIN_SERVER)
+    if guild is None:
+        return False
+
+    channel = guild.get_channel(channel_id)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return False
+
+    if not hasattr(channel, "send"):
+        return False
+
+    try:
+        await channel.send(
+            content,
+            allowed_mentions=discord.AllowedMentions(
+                everyone=False,
+                roles=False,
+                users=True,
+                replied_user=False,
+            ),
         )
+        return True
+    except (discord.Forbidden, discord.HTTPException):
+        return False
+
+
+async def resolve_main_guild_member(user_id: int) -> discord.Member | None:
+    guild = bot.get_guild(MAIN_SERVER)
+    if guild is None:
+        return None
+
+    member = guild.get_member(int(user_id))
+    if member is not None:
+        return member
+
+    try:
+        return await guild.fetch_member(int(user_id))
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        return None
+
+
+async def apply_staff_strike_consequences(
+    member: discord.Member,
+    *,
+    active_count: int | None = None,
+    log_two_strikes: bool = False,
+    log_three_strikes: bool = False,
+) -> tuple[str, str] | None:
+    """Apply the role consequence for the member's current active strike count."""
+    active_strikes = (
+        get_user_staff_strikes(member.id)
+        if active_count is None
+        else [
+            strike
+            for strike in staff_strikes
+            if int(strike.get("user_id", 0)) == int(member.id)
+        ]
+    )
+    active_count = len(active_strikes)
+
+    original_role_id = get_original_staff_role_id(member.id)
+    current_info = get_staff_role_for_member(member)
+
+    if original_role_id is None and current_info is not None and active_count > 0:
+        original_role_id = current_info[1].id
+        for strike in active_strikes:
+            strike["original_staff_role_id"] = original_role_id
+
+    original_role = member.guild.get_role(original_role_id) if original_role_id else None
+    original_role_name = original_role.name if original_role is not None else "No Staff Role"
+
+    if active_count < 2:
+        desired_role = original_role
+        desired_name = original_role_name if desired_role is not None else "No Staff Role"
+    elif active_count == 2:
+        next_role_info = get_next_staff_role(original_role_id) if original_role_id else None
+        desired_role = (
+            member.guild.get_role(next_role_info[1])
+            if next_role_info is not None
+            else None
+        )
+        desired_name = (
+            next_role_info[0]
+            if next_role_info is not None
+            else "Suspended"
+        )
+    else:
+        desired_role = None
+        desired_name = "Suspended"
+
+    managed_staff_roles = [
+        member.guild.get_role(role_id)
+        for _, role_id in STAFF_ROLE_HIERARCHY
     ]
-    return len(staff_strikes) != before
+    managed_staff_roles = [role for role in managed_staff_roles if role is not None]
+
+    current_staff_role = current_info[1] if current_info is not None else None
+    current_name = current_info[0] if current_info is not None else (
+        "Suspended" if current_staff_role is None and active_count >= 3 else "No Staff Role"
+    )
+
+    roles_to_remove = [
+        role
+        for role in managed_staff_roles
+        if desired_role is None or role.id != desired_role.id
+    ]
+
+    bot_member = member.guild.me
+    can_manage = (
+        bot_member is not None
+        and bot_member.guild_permissions.manage_roles
+        and member.guild.owner_id != member.id
+    )
+
+    if can_manage:
+        try:
+            removable = [
+                role
+                for role in roles_to_remove
+                if not role.managed and not role.is_default()
+                and bot_member.top_role > role
+                and member.top_role < bot_member.top_role
+            ]
+            if removable:
+                await member.remove_roles(
+                    *removable,
+                    reason=f"Staff strike consequence ({active_count} active strikes)",
+                )
+
+            if (
+                desired_role is not None
+                and desired_role not in member.roles
+                and not desired_role.managed
+                and not desired_role.is_default()
+                and bot_member.top_role > desired_role
+                and member.top_role < bot_member.top_role
+            ):
+                await member.add_roles(
+                    desired_role,
+                    reason=f"Staff strike consequence ({active_count} active strikes)",
+                )
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+    refreshed = await resolve_main_guild_member(member.id)
+    if refreshed is not None:
+        member = refreshed
+        refreshed_info = get_staff_role_for_member(member)
+        actual_name = refreshed_info[0] if refreshed_info is not None else (
+            "Suspended" if active_count >= 3 else "No Staff Role"
+        )
+        role_changed = (
+            desired_role is not None
+            and refreshed_info is not None
+            and refreshed_info[1].id == desired_role.id
+        ) or (
+            desired_role is None and refreshed_info is None
+        )
+    else:
+        actual_name = desired_name
+        role_changed = current_name != desired_name
+
+    if role_changed and current_name != actual_name:
+        if log_two_strikes and active_count == 2:
+            await send_staff_strike_log(
+                STAFF_STRIKE_TWO_ACTIVE_CHANNEL_ID,
+                f"<@{member.id}> {current_name} to {actual_name}",
+            )
+        elif log_three_strikes and active_count >= 3:
+            await send_staff_strike_log(
+                STAFF_STRIKE_TWO_ACTIVE_CHANNEL_ID,
+                f"<@{member.id}> {original_role_name} to Suspended",
+            )
+
+        return current_name, actual_name
+
+    return None
 
 
 def get_user_staff_strikes(user_id: int) -> list[dict]:
     """Return currently active strikes for one user, sorted by strike number."""
-    prune_expired_staff_strikes()
     return sorted(
         (
             strike
@@ -353,6 +590,7 @@ def create_staff_strike(
     reason: str,
     days: int,
     issued_by: int,
+    original_staff_role_id: int | None = None,
 ) -> dict:
     """Create a new time-limited staff strike."""
     reason = reason.strip()
@@ -366,6 +604,11 @@ def create_staff_strike(
         "issued_by": int(issued_by),
         "issued_at": now.isoformat(),
         "expires_at": (now + timedelta(days=int(days))).isoformat(),
+        "original_staff_role_id": (
+            int(original_staff_role_id)
+            if original_staff_role_id is not None
+            else None
+        ),
     }
     staff_strikes.append(strike)
     return strike
@@ -421,6 +664,11 @@ def _github_get_staff_strikes() -> tuple[bool, list[dict], str | None]:
                 "issued_by": int(item["issued_by"]),
                 "issued_at": str(item["issued_at"]),
                 "expires_at": str(item["expires_at"]),
+                "original_staff_role_id": (
+                    int(item["original_staff_role_id"])
+                    if item.get("original_staff_role_id") is not None
+                    else None
+                ),
             })
         except (KeyError, TypeError, ValueError):
             continue
@@ -3266,16 +3514,50 @@ async def on_message(message: discord.Message):
             )
             return
 
-        prune_expired_staff_strikes()
+        expired = prune_expired_staff_strikes()
+        if expired:
+            for expired_strike in expired:
+                expired_member = await resolve_main_guild_member(int(expired_strike["user_id"]))
+                if expired_member is not None:
+                    await apply_staff_strike_consequences(
+                        expired_member,
+                        active_count=len(get_user_staff_strikes(expired_member.id)),
+                    )
+            await save_staff_strikes()
+
+        current_staff_info = get_staff_role_for_member(target)
+        if current_staff_info is None:
+            await message.reply(
+                "❌ The selected member does not have a configured staff role.",
+                mention_author=False,
+            )
+            return
+
+        original_role_id = get_original_staff_role_id(target.id) or current_staff_info[1].id
+
         strike = create_staff_strike(
             user_id=target.id,
             reason=reason,
             days=days,
             issued_by=message.author.id,
+            original_staff_role_id=original_role_id,
+        )
+        active_count = len(get_user_staff_strikes(target.id))
+        consequence = await apply_staff_strike_consequences(
+            target,
+            active_count=active_count,
+            log_two_strikes=(active_count == 2),
+            log_three_strikes=(active_count >= 3),
         )
         synced = await save_staff_strikes()
 
-        response = format_staff_strike(target, strike)
+        response = (
+            format_staff_strike(target, strike)
+            + f"\n\nActive strikes: **{active_count}**"
+        )
+        if consequence is not None:
+            old_role, new_role = consequence
+            response += f"\nRole action: **{old_role} → {new_role}**"
         if not synced:
             response += "\n⚠️ GitHub sync failed; the strike was saved locally."
 
@@ -4776,22 +5058,51 @@ async def strike_command(
         )
         return
 
-    prune_expired_staff_strikes()
+    expired = prune_expired_staff_strikes()
+    if expired:
+        for expired_strike in expired:
+            expired_member = await resolve_main_guild_member(int(expired_strike["user_id"]))
+            if expired_member is not None:
+                await apply_staff_strike_consequences(expired_member, active_count=len(get_user_staff_strikes(expired_member.id)))
+        await save_staff_strikes()
+
+    current_staff_info = get_staff_role_for_member(member)
+    if current_staff_info is None:
+        await interaction.response.send_message(
+            "❌ The selected member does not have a configured staff role.",
+            ephemeral=True,
+        )
+        return
+
+    original_role_id = get_original_staff_role_id(member.id) or current_staff_info[1].id
+
     strike = create_staff_strike(
         user_id=member.id,
         reason=reason,
         days=int(days),
         issued_by=interaction.user.id,
+        original_staff_role_id=original_role_id,
+    )
+    active_count = len(get_user_staff_strikes(member.id))
+    consequence = await apply_staff_strike_consequences(
+        member,
+        active_count=active_count,
+        log_two_strikes=(active_count == 2),
+        log_three_strikes=(active_count >= 3),
     )
     synced = await save_staff_strikes()
 
+    extra = ""
+    if not synced:
+        extra = "\n⚠️ GitHub sync failed; the strike was saved locally."
+    elif consequence is not None:
+        old_role, new_role = consequence
+        extra = f"\nRole action: **{old_role} → {new_role}**"
+
     await interaction.response.send_message(
         format_staff_strike(member, strike)
-        + (
-            ""
-            if synced
-            else "\n⚠️ GitHub sync failed; the strike was saved locally."
-        ),
+        + f"\n\nActive strikes: **{active_count}**"
+        + extra,
         ephemeral=False,
     )
 
@@ -5823,12 +6134,40 @@ staff_strike_expiry_task: asyncio.Task | None = None
 
 
 async def staff_strike_expiry_worker():
-    """Expire staff strikes automatically and keep persistent storage current."""
+    """Expire staff strikes, restore/demote roles, and announce promotions."""
     await bot.wait_until_ready()
 
     while not bot.is_closed():
         try:
-            if prune_expired_staff_strikes():
+            expired = prune_expired_staff_strikes()
+            if expired:
+                affected_ids = sorted({int(strike["user_id"]) for strike in expired})
+                for user_id in affected_ids:
+                    member = await resolve_main_guild_member(user_id)
+                    if member is None:
+                        continue
+
+                    before_info = get_staff_role_for_member(member)
+                    before_name = before_info[0] if before_info is not None else "Suspended"
+                    active_count = len(get_user_staff_strikes(user_id))
+
+                    await apply_staff_strike_consequences(
+                        member,
+                        active_count=active_count,
+                    )
+
+                    member = await resolve_main_guild_member(user_id) or member
+                    after_info = get_staff_role_for_member(member)
+                    after_name = after_info[0] if after_info is not None else (
+                        "Suspended" if active_count >= 3 else "No Staff Role"
+                    )
+
+                    if before_name != after_name:
+                        await send_staff_strike_log(
+                            STAFF_STRIKE_EXPIRED_CHANNEL_ID,
+                            f"<@{user_id}> {before_name} to {after_name}",
+                        )
+
                 await save_staff_strikes()
         except asyncio.CancelledError:
             raise
@@ -5954,9 +6293,31 @@ async def on_ready():
             await sync_staff_strikes_from_github()
         except Exception:
             pass
-    else:
-        if prune_expired_staff_strikes():
-            await save_staff_strikes()
+
+    startup_expired = prune_expired_staff_strikes()
+    if startup_expired:
+        for expired_strike in startup_expired:
+            expired_member = await resolve_main_guild_member(int(expired_strike["user_id"]))
+            if expired_member is None:
+                continue
+            before_info = get_staff_role_for_member(expired_member)
+            before_name = before_info[0] if before_info is not None else "Suspended"
+            active_count = len(get_user_staff_strikes(expired_member.id))
+            await apply_staff_strike_consequences(
+                expired_member,
+                active_count=active_count,
+            )
+            refreshed = await resolve_main_guild_member(expired_member.id) or expired_member
+            after_info = get_staff_role_for_member(refreshed)
+            after_name = after_info[0] if after_info is not None else (
+                "Suspended" if active_count >= 3 else "No Staff Role"
+            )
+            if before_name != after_name:
+                await send_staff_strike_log(
+                    STAFF_STRIKE_EXPIRED_CHANNEL_ID,
+                    f"<@{expired_member.id}> {before_name} to {after_name}",
+                )
+        await save_staff_strikes()
 
     if staff_strike_expiry_task is None or staff_strike_expiry_task.done():
         staff_strike_expiry_task = asyncio.create_task(
