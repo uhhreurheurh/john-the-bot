@@ -3492,6 +3492,37 @@ uwu_group = app_commands.Group(name="legacy_uwu", description="Legacy")
 hood_group = app_commands.Group(name="legacy_hood", description="Legacy")
 blacklist_group = app_commands.Group(name="blacklist", description="Manage the second-role blacklist")
 textify_group = app_commands.Group(name="textify", description="Manage UWUIFY and HOODIFY controls")
+# ============================================================
+# REVIEW BLACKLIST HELPERS
+# ============================================================
+
+def review_user_is_blacklisted(user_id: int) -> bool:
+    return user_id in review_blacklist
+
+
+async def save_review_blacklist() -> bool:
+    return await save_user_blacklist(REVIEW_BLACKLIST_FILE, review_blacklist)
+
+
+async def review_blacklist_command_check(interaction: discord.Interaction) -> bool:
+    if interaction.guild_id != MAIN_SERVER:
+        raise app_commands.CheckFailure("This command can only be used in the main server.")
+
+    if not isinstance(interaction.user, discord.Member):
+        raise app_commands.CheckFailure("Could not verify your server roles.")
+
+    if not any(
+        role.id in DELETE_REVIEW_ALLOWED_ROLE_IDS
+        for role in interaction.user.roles
+    ):
+        raise app_commands.CheckFailure(
+            "You do not have permission to manage the review blacklist."
+        )
+
+    return True
+
+
+
 review_blacklist_group = app_commands.Group(
     name="reviewblacklist",
     description="Manage the review user blacklist",
@@ -4447,36 +4478,6 @@ async def get_review_member_or_user(
         return await bot.fetch_user(user_id)
     except:
         return None
-
-
-# ============================================================
-# REVIEW BLACKLIST HELPERS
-# ============================================================
-
-def review_user_is_blacklisted(user_id: int) -> bool:
-    return user_id in review_blacklist
-
-
-async def save_review_blacklist() -> bool:
-    return await save_user_blacklist(REVIEW_BLACKLIST_FILE, review_blacklist)
-
-
-async def review_blacklist_command_check(interaction: discord.Interaction) -> bool:
-    if interaction.guild_id != MAIN_SERVER:
-        raise app_commands.CheckFailure("This command can only be used in the main server.")
-
-    if not isinstance(interaction.user, discord.Member):
-        raise app_commands.CheckFailure("Could not verify your server roles.")
-
-    if not any(
-        role.id in DELETE_REVIEW_ALLOWED_ROLE_IDS
-        for role in interaction.user.roles
-    ):
-        raise app_commands.CheckFailure(
-            "You do not have permission to manage the review blacklist."
-        )
-
-    return True
 
 
 # ============================================================
