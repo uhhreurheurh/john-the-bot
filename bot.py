@@ -73,6 +73,7 @@ DELETE_REVIEW_ALLOWED_ROLE_IDS = {
 }
 REVIEW_DB_FILE = Path(__file__).with_name("reviews.db")
 REVIEW_APPROVAL_RATINGS = (4, 5)
+REVIEW_UPDATE_APPROVAL_CHANNEL_ID = 1554700806220161164
 
 # Tag server ids
 # Keep this list in the same order as tag_server_role_ids below.
@@ -1491,6 +1492,24 @@ CREATE TABLE IF NOT EXISTS reviews (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """)
+review_db.execute('''
+CREATE TABLE IF NOT EXISTS review_update_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    review_id INTEGER NOT NULL,
+    target_id INTEGER NOT NULL,
+    reviewer_id INTEGER NOT NULL,
+    old_rating INTEGER NOT NULL,
+    old_comment TEXT NOT NULL,
+    new_rating INTEGER NOT NULL,
+    new_comment TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    approval_message_id INTEGER,
+    approval_channel_id INTEGER,
+    reviewed_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    reviewed_at TIMESTAMP
+)
+''')
 review_db.commit()
 
 review_db_thread_lock = threading.RLock()
@@ -1516,6 +1535,24 @@ def _ensure_review_db_schema() -> None:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            connection.execute('''
+                CREATE TABLE IF NOT EXISTS review_update_requests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    review_id INTEGER NOT NULL,
+                    target_id INTEGER NOT NULL,
+                    reviewer_id INTEGER NOT NULL,
+                    old_rating INTEGER NOT NULL,
+                    old_comment TEXT NOT NULL,
+                    new_rating INTEGER NOT NULL,
+                    new_comment TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    approval_message_id INTEGER,
+                    approval_channel_id INTEGER,
+                    reviewed_by INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    reviewed_at TIMESTAMP
+                )
+            ''')
             connection.commit()
         finally:
             connection.close()
@@ -1544,6 +1581,24 @@ def _reopen_review_db() -> None:
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    review_db.execute('''
+        CREATE TABLE IF NOT EXISTS review_update_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            review_id INTEGER NOT NULL,
+            target_id INTEGER NOT NULL,
+            reviewer_id INTEGER NOT NULL,
+            old_rating INTEGER NOT NULL,
+            old_comment TEXT NOT NULL,
+            new_rating INTEGER NOT NULL,
+            new_comment TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            approval_message_id INTEGER,
+            approval_channel_id INTEGER,
+            reviewed_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            reviewed_at TIMESTAMP
+        )
+    ''')
     review_db.commit()
 
 
@@ -1612,29 +1667,133 @@ def _ensure_review_db_file_ready_sync() -> None:
         _reopen_review_db()
 
 
+class DuplicateReviewError(Exception):
+    '''Raised when a reviewer already has an active review for a target.'''
+
+
+class PendingReviewUpdateError(Exception):
+    '''Raised when a review already has a pending update request.'''
+
+
 def add_review(target_id: int, reviewer_id: int, rating: int, comment: str):
-    """Insert a review after ensuring the reviews table exists."""
+    '''Insert one review per reviewer and target.'''
     with review_db_thread_lock:
-        _ensure_review_db_schema()
         _ensure_review_db_file_ready_sync()
-        connection = sqlite3.connect(
-            REVIEW_DB_FILE,
-            check_same_thread=False,
-            timeout=30,
-        )
+        connection = sqlite3.connect(REVIEW_DB_FILE, check_same_thread=False, timeout=30)
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = 30000")
+        connection.execute('PRAGMA busy_timeout = 30000')
         try:
+            existing = connection.execute(
+                'SELECT id FROM reviews WHERE target_id = ? AND reviewer_id = ? LIMIT 1',
+                (target_id, reviewer_id),
+            ).fetchone()
+            if existing:
+                raise DuplicateReviewError
             cursor = connection.execute(
-                """
+                '''
                 INSERT INTO reviews
                 (target_id, reviewer_id, rating, comment)
                 VALUES (?, ?, ?, ?)
-                """,
+                ''',
                 (target_id, reviewer_id, rating, comment),
             )
             connection.commit()
             return cursor.lastrowid
+        finally:
+            connection.close()
+
+def get_user_review(target_id: int, reviewer_id: int):
+    return review_db.execute(
+        'SELECT * FROM reviews WHERE target_id = ? AND reviewer_id = ? ORDER BY id DESC LIMIT 1',
+        (target_id, reviewer_id),
+    ).fetchone()
+
+
+def create_review_update_request(review_id, target_id, reviewer_id, old_rating, old_comment, new_rating, new_comment):
+    with review_db_thread_lock:
+        connection = sqlite3.connect(REVIEW_DB_FILE, timeout=30)
+        connection.row_factory = sqlite3.Row
+        connection.execute('PRAGMA busy_timeout = 30000')
+        try:
+            pending = connection.execute(
+                'SELECT id FROM review_update_requests WHERE review_id = ? AND status = ? LIMIT 1',
+                (review_id, 'pending'),
+            ).fetchone()
+            if pending:
+                raise PendingReviewUpdateError
+            cursor = connection.execute(
+                '''
+                INSERT INTO review_update_requests
+                (review_id, target_id, reviewer_id, old_rating, old_comment, new_rating, new_comment)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (review_id, target_id, reviewer_id, old_rating, old_comment, new_rating, new_comment),
+            )
+            connection.commit()
+            return cursor.lastrowid
+        finally:
+            connection.close()
+
+
+def get_review_update_request(request_id):
+    return review_db.execute(
+        'SELECT * FROM review_update_requests WHERE id = ? LIMIT 1',
+        (request_id,),
+    ).fetchone()
+
+
+def set_review_update_message(request_id, channel_id, message_id):
+    with review_db_thread_lock:
+        connection = sqlite3.connect(REVIEW_DB_FILE, timeout=30)
+        try:
+            connection.execute(
+                'UPDATE review_update_requests SET approval_channel_id = ?, approval_message_id = ? WHERE id = ?',
+                (channel_id, message_id, request_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+
+def complete_review_update(request_id, moderator_id, approve):
+    with review_db_thread_lock:
+        connection = sqlite3.connect(REVIEW_DB_FILE, timeout=30)
+        connection.row_factory = sqlite3.Row
+        connection.execute('PRAGMA busy_timeout = 30000')
+        try:
+            connection.execute('BEGIN IMMEDIATE')
+            request = connection.execute(
+                'SELECT * FROM review_update_requests WHERE id = ? AND status = ? LIMIT 1',
+                (request_id, 'pending'),
+            ).fetchone()
+            if not request:
+                return None, 'already_handled'
+            review = connection.execute(
+                'SELECT id FROM reviews WHERE id = ? AND target_id = ? AND reviewer_id = ?',
+                (request['review_id'], request['target_id'], request['reviewer_id']),
+            ).fetchone()
+            if not review:
+                connection.execute(
+                    "UPDATE review_update_requests SET status = 'cancelled', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (moderator_id, request_id),
+                )
+                connection.commit()
+                return request, 'cancelled'
+            status = 'approved' if approve else 'rejected'
+            if approve:
+                connection.execute(
+                    'UPDATE reviews SET rating = ?, comment = ? WHERE id = ?',
+                    (request['new_rating'], request['new_comment'], request['review_id']),
+                )
+            connection.execute(
+                "UPDATE review_update_requests SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (status, moderator_id, request_id),
+            )
+            connection.commit()
+            return request, status
+        except Exception:
+            connection.rollback()
+            raise
         finally:
             connection.close()
 
@@ -3733,6 +3892,12 @@ class ReviewModal(discord.ui.Modal):
                 rating=self.rating,
                 comment=self.comment.value
             )
+        except DuplicateReviewError:
+            await interaction.followup.send(
+                '❌ You already reviewed this user. Use `/updatereview` to change your vote.',
+                ephemeral=True,
+            )
+            return
         except Exception as error:
             # Return the real database error instead of hiding it behind the
             # generic Discord modal failure message. This also makes Railway
@@ -3753,6 +3918,7 @@ class ReviewModal(discord.ui.Modal):
             f"**Review ID:** `{review_id}`",
             ephemeral=True
         )
+        asyncio.create_task(sync_review_db_to_github_locked())
 
     async def on_error(
         self,
@@ -4010,6 +4176,180 @@ class ReviewPagination(discord.ui.View):
 
 
 # ============================================================
+# REVIEW UPDATE / APPROVAL
+# ============================================================
+
+def review_update_embed(request, status=None, moderator_id=None):
+    embed = discord.Embed(
+        title=f'Review Update Request #{request["id"]}',
+        description=f'<@{request["reviewer_id"]}> requested an update for <@{request["target_id"]}>.',
+        color=discord.Color.orange() if status is None else (discord.Color.green() if status == 'approved' else discord.Color.red()),
+    )
+    embed.add_field(
+        name='Current Vote',
+        value=f'{review_stars(request["old_rating"])}\n> {request["old_comment"]}',
+        inline=False,
+    )
+    embed.add_field(
+        name='Proposed Vote',
+        value=f'{review_stars(request["new_rating"])}\n> {request["new_comment"]}',
+        inline=False,
+    )
+    if status:
+        embed.add_field(
+            name='Decision',
+            value=f'{status.title()} by <@{moderator_id}>',
+            inline=False,
+        )
+    embed.set_footer(text='Use /approvevote or /rejectvote with the request ID.')
+    return embed
+
+
+async def post_review_update_request(request_id):
+    request = get_review_update_request(request_id)
+    if not request:
+        raise RuntimeError('Review update request was not found.')
+    channel = bot.get_channel(REVIEW_UPDATE_APPROVAL_CHANNEL_ID)
+    if channel is None:
+        channel = await bot.fetch_channel(REVIEW_UPDATE_APPROVAL_CHANNEL_ID)
+    approval_message = await channel.send(embed=review_update_embed(request))
+    set_review_update_message(request_id, REVIEW_UPDATE_APPROVAL_CHANNEL_ID, approval_message.id)
+    return approval_message
+
+
+class UpdateReviewModal(discord.ui.Modal):
+    def __init__(self, target, current_review):
+        super().__init__(title='Update your vote')
+        self.target = target
+        self.current_review = current_review
+        self.rating = discord.ui.TextInput(
+            label='New rating (1-5)',
+            placeholder='Enter 1, 2, 3, 4, or 5',
+            required=True,
+            max_length=1,
+            default=str(current_review['rating']),
+        )
+        self.comment = discord.ui.TextInput(
+            label='Review text',
+            placeholder='Leave blank to keep your current review text.',
+            style=discord.TextStyle.paragraph,
+            required=False,
+            max_length=1000,
+            default=current_review['comment'],
+        )
+        self.add_item(self.rating)
+        self.add_item(self.comment)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            new_rating = int(self.rating.value.strip())
+            if new_rating < 1 or new_rating > 5:
+                raise ValueError
+        except ValueError:
+            await interaction.followup.send('❌ Rating must be a number from 1 to 5.', ephemeral=True)
+            return
+
+        new_comment = self.comment.value.strip() or self.current_review['comment']
+        try:
+            request_id = create_review_update_request(
+                self.current_review['id'],
+                self.target.id,
+                interaction.user.id,
+                self.current_review['rating'],
+                self.current_review['comment'],
+                new_rating,
+                new_comment,
+            )
+        except PendingReviewUpdateError:
+            await interaction.followup.send('❌ You already have an update waiting for approval for this vote.', ephemeral=True)
+            return
+        except Exception as error:
+            await interaction.followup.send(f'❌ I could not create the update request: `{error}`', ephemeral=True)
+            return
+
+        try:
+            await post_review_update_request(request_id)
+        except Exception:
+            connection = sqlite3.connect(REVIEW_DB_FILE, timeout=30)
+            try:
+                connection.execute('DELETE FROM review_update_requests WHERE id = ? AND status = ?', (request_id, 'pending'))
+                connection.commit()
+            finally:
+                connection.close()
+            await interaction.followup.send('❌ I could not send the update to the approval channel. Check the bot permissions there.', ephemeral=True)
+            return
+
+        asyncio.create_task(sync_review_db_to_github_locked())
+        await interaction.followup.send(
+            f'✅ Your updated vote was sent for approval. Request ID: `{request_id}`',
+            ephemeral=True,
+        )
+
+
+@tree.command(
+    name='updatereview',
+    description='Submit an updated vote for a member for moderator approval.'
+)
+@app_commands.describe(user='The member whose review you want to update.')
+async def updatereview(interaction: discord.Interaction, user: discord.Member):
+    if user.id == interaction.user.id:
+        await interaction.response.send_message('❌ You cannot update a review for yourself.', ephemeral=True)
+        return
+    current = get_user_review(user.id, interaction.user.id)
+    if not current:
+        await interaction.response.send_message('❌ You have not reviewed this user yet. Use `/review` first.', ephemeral=True)
+        return
+    await interaction.response.send_modal(UpdateReviewModal(user, current))
+
+
+async def review_approval_allowed(interaction: discord.Interaction) -> bool:
+    return (
+        isinstance(interaction.user, discord.Member)
+        and any(role.id in DELETE_REVIEW_ALLOWED_ROLE_IDS for role in interaction.user.roles)
+    )
+
+
+async def handle_review_update_decision(interaction: discord.Interaction, request_id: int, approve: bool):
+    if not await review_approval_allowed(interaction):
+        await interaction.response.send_message('❌ You do not have permission to approve or reject review updates.', ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    request, status = await asyncio.to_thread(complete_review_update, request_id, interaction.user.id, approve)
+    if request is None:
+        await interaction.followup.send('❌ That review update has already been handled or does not exist.', ephemeral=True)
+        return
+    try:
+        channel = bot.get_channel(request['approval_channel_id']) if request['approval_channel_id'] else None
+        if channel is None and request['approval_channel_id']:
+            channel = await bot.fetch_channel(request['approval_channel_id'])
+        if channel is not None and request['approval_message_id']:
+            message = await channel.fetch_message(request['approval_message_id'])
+            await message.edit(embed=review_update_embed(request, status, interaction.user.id))
+    except Exception:
+        pass
+    asyncio.create_task(sync_review_db_to_github_locked())
+    if status == 'approved':
+        text = f'✅ Review update #{request_id} approved. The vote has been updated.'
+    elif status == 'rejected':
+        text = f'✅ Review update #{request_id} rejected. The original vote remains unchanged.'
+    else:
+        text = f'⚠️ Review update #{request_id} was cancelled because the original review no longer exists.'
+    await interaction.followup.send(text, ephemeral=True)
+
+
+@tree.command(name='approvevote', description='Approve a pending review vote update.')
+@app_commands.describe(request_id='The review update request ID.')
+async def approvevote(interaction: discord.Interaction, request_id: int):
+    await handle_review_update_decision(interaction, request_id, True)
+
+
+@tree.command(name='rejectvote', description='Reject a pending review vote update.')
+@app_commands.describe(request_id='The review update request ID.')
+async def rejectvote(interaction: discord.Interaction, request_id: int):
+    await handle_review_update_decision(interaction, request_id, False)
+
+# ============================================================
 # /reviews
 # ============================================================
 
@@ -4145,6 +4485,7 @@ async def deletereview(
         return
 
     delete_review(review_id)
+    asyncio.create_task(sync_review_db_to_github_locked())
 
     await interaction.response.send_message(
         f"✅ Review `{review_id}` deleted.",
