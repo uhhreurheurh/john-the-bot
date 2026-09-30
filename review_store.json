@@ -5,8 +5,8 @@
       "id": 3,
       "target_id": 1426737306458652742,
       "reviewer_id": 1542311839210406029,
-      "rating": 1,
-      "comment": "extremely loose asshole, also shat all over my shirt.",
+      "rating": 5,
+      "comment": "tight :heart_eyes:",
       "created_at": "2026-09-30 14:36:23"
     },
     {
@@ -52,12 +52,12 @@
       "old_comment": "extremely loose asshole, also shat all over my shirt.",
       "new_rating": 5,
       "new_comment": "tight :heart_eyes:",
-      "status": "pending",
+      "status": "approved",
       "approval_message_id": 1554874173682229249,
       "approval_channel_id": 1554700806220161164,
-      "reviewed_by": null,
+      "reviewed_by": 191233879175200768,
       "created_at": "2026-09-30 15:14:49",
-      "reviewed_at": null
+      "reviewed_at": "2026-09-30 15:15:13"
     }
   ],
   "review_id_sequence": 6
