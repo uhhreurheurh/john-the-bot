@@ -1790,11 +1790,43 @@ def add_review(target_id: int, reviewer_id: int, rating: int, comment: str):
         finally:
             connection.close()
 
+def _review_db_fetchone(sql: str, params=()):
+    """Read from a fresh SQLite connection so reads always see the latest file."""
+    with review_db_thread_lock:
+        connection = sqlite3.connect(
+            REVIEW_DB_FILE,
+            check_same_thread=False,
+            timeout=30,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout = 30000")
+        try:
+            return connection.execute(sql, params).fetchone()
+        finally:
+            connection.close()
+
+
+def _review_db_fetchall(sql: str, params=()):
+    """Read multiple rows from a fresh SQLite connection."""
+    with review_db_thread_lock:
+        connection = sqlite3.connect(
+            REVIEW_DB_FILE,
+            check_same_thread=False,
+            timeout=30,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout = 30000")
+        try:
+            return connection.execute(sql, params).fetchall()
+        finally:
+            connection.close()
+
+
 def get_user_review(target_id: int, reviewer_id: int):
-    return review_db.execute(
+    return _review_db_fetchone(
         'SELECT * FROM reviews WHERE target_id = ? AND reviewer_id = ? ORDER BY id DESC LIMIT 1',
         (target_id, reviewer_id),
-    ).fetchone()
+    )
 
 
 def create_review_update_request(review_id, target_id, reviewer_id, old_rating, old_comment, new_rating, new_comment):
@@ -1921,7 +1953,7 @@ def complete_review_update(request_id, moderator_id, approve):
             connection.close()
 
 def get_reviews(target_id: int):
-    return review_db.execute(
+    return _review_db_fetchall(
         """
         SELECT *
         FROM reviews
@@ -1929,18 +1961,18 @@ def get_reviews(target_id: int):
         ORDER BY id DESC
         """,
         (target_id,),
-    ).fetchall()
+    )
 
 
 def get_review(review_id: int):
-    return review_db.execute(
+    return _review_db_fetchone(
         """
         SELECT *
         FROM reviews
         WHERE id = ?
         """,
         (review_id,),
-    ).fetchone()
+    )
 
 
 def delete_review(review_id: int):
@@ -1959,7 +1991,7 @@ def delete_review(review_id: int):
             connection.close()
 
 def get_leaderboard_liked(limit: int = 5):
-    return review_db.execute(
+    return _review_db_fetchall(
         """
         SELECT target_id, COUNT(*) AS approved
         FROM reviews
@@ -1973,7 +2005,7 @@ def get_leaderboard_liked(limit: int = 5):
 
 
 def get_leaderboard_reviewed(limit: int = 5):
-    return review_db.execute(
+    return _review_db_fetchall(
         """
         SELECT target_id,
                COUNT(*) AS review_count,
@@ -1988,7 +2020,7 @@ def get_leaderboard_reviewed(limit: int = 5):
 
 
 def get_leaderboard_disliked(limit: int = 5):
-    return review_db.execute(
+    return _review_db_fetchall(
         """
         SELECT target_id, COUNT(*) AS disliked
         FROM reviews
@@ -2002,7 +2034,7 @@ def get_leaderboard_disliked(limit: int = 5):
 
 
 def get_user_stats(user_id: int):
-    row = review_db.execute(
+    row = _review_db_fetchone(
         """
         SELECT
             COUNT(*) AS total,
