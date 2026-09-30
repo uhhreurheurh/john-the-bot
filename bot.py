@@ -4950,9 +4950,10 @@ async def leaderboard(interaction: discord.Interaction):
         for index, row in enumerate(liked, start=1):
             member = await get_review_member_or_user(interaction.guild, row["target_id"])
             name = member.mention if member else f"<@{row['target_id']}>"
+            username = member.name if member else "unknown"
             stats = get_user_stats(row["target_id"])
             liked_text += (
-                f"**{index}**  {name} 🟢 **{row['approved']}** "
+                f"{index} {name} ({username}) 🟢 **{row['approved']}** "
                 f"({stats['approval']:.2f}% approval)\n"
             )
     embed.add_field(name="Most Liked", value=liked_text, inline=False)
@@ -4964,8 +4965,9 @@ async def leaderboard(interaction: discord.Interaction):
         for index, row in enumerate(reviewed, start=1):
             member = await get_review_member_or_user(interaction.guild, row["target_id"])
             name = member.mention if member else f"<@{row['target_id']}>"
+            username = member.name if member else "unknown"
             reviewed_text += (
-                f"**{index}**  {name} 📝 **{row['review_count']} reviews** "
+                f"{index} {name} ({username}) 📝 **{row['review_count']} reviews** "
                 f"(⭐ {row['average_rating']:.1f} avg)\n"
             )
     embed.add_field(name="Most Reviewed", value=reviewed_text, inline=False)
@@ -4977,9 +4979,10 @@ async def leaderboard(interaction: discord.Interaction):
         for index, row in enumerate(disliked, start=1):
             member = await get_review_member_or_user(interaction.guild, row["target_id"])
             name = member.mention if member else f"<@{row['target_id']}>"
+            username = member.name if member else "unknown"
             stats = get_user_stats(row["target_id"])
             disliked_text += (
-                f"**{index}**  {name} 🔴 **{row['disliked']} negative reviews** "
+                f"{index} {name} ({username}) 🔴 **{row['disliked']} negative reviews** "
                 f"({stats['approval']:.2f}% approval)\n"
             )
     embed.add_field(name="Most Disliked", value=disliked_text, inline=False)
