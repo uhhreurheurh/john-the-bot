@@ -7,6 +7,7 @@ import json
 import re
 import random
 import logging
+import time
 from pathlib import Path
 import urllib.error
 import urllib.parse
@@ -1741,6 +1742,19 @@ class PendingReviewUpdateError(Exception):
     '''Raised when a review already has a pending update request.'''
 
 
+def _generate_review_id(connection: sqlite3.Connection) -> int:
+    """Generate a globally unique numeric review ID."""
+    while True:
+        # Time-derived IDs prevent separate Railway processes from both
+        # starting their own AUTOINCREMENT counter at 1.
+        review_id = (int(time.time() * 1000) * 1000) + random.randrange(1000)
+        if connection.execute(
+            'SELECT 1 FROM reviews WHERE id = ? LIMIT 1',
+            (review_id,),
+        ).fetchone() is None:
+            return review_id
+
+
 def add_review(target_id: int, reviewer_id: int, rating: int, comment: str):
     '''Insert one review per reviewer and target.'''
     with review_db_thread_lock:
@@ -1755,17 +1769,19 @@ def add_review(target_id: int, reviewer_id: int, rating: int, comment: str):
             ).fetchone()
             if existing:
                 raise DuplicateReviewError
+
+            review_id = _generate_review_id(connection)
             try:
-                cursor = connection.execute(
+                connection.execute(
                     '''
                     INSERT INTO reviews
-                    (target_id, reviewer_id, rating, comment)
-                    VALUES (?, ?, ?, ?)
+                    (id, target_id, reviewer_id, rating, comment)
+                    VALUES (?, ?, ?, ?, ?)
                     ''',
-                    (target_id, reviewer_id, rating, comment),
+                    (review_id, target_id, reviewer_id, rating, comment),
                 )
                 connection.commit()
-                return cursor.lastrowid
+                return review_id
             except sqlite3.IntegrityError as error:
                 connection.rollback()
                 if 'UNIQUE' in str(error).upper():
@@ -4218,7 +4234,9 @@ class ReviewModal(discord.ui.Modal):
             f"**Review ID:** `{review_id}`",
             ephemeral=True
         )
-        asyncio.create_task(sync_review_db_to_github_locked())
+        success, sync_error = await sync_review_db_to_github_locked()
+        if not success:
+            print(f"Review database save after /review failed: {sync_error}")
 
     async def on_error(
         self,
