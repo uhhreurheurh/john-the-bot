@@ -997,8 +997,7 @@ async def send_hood_message(
     if target.id in hood_user_blacklist:
         raise HoodUserBlacklisted
 
-    ensure_hood_message_is_allowed(content)
-    webhook = await get_hood_webhook(channel)
+    ensure_hood_message_is_allowed(content)    webhook = await get_hood_webhook(channel)
     hood_text = hoodify_text(content)
 
     if not hood_text:
@@ -1997,8 +1996,7 @@ async def on_message(message: discord.Message):
 
     # Parse the readable spaced prefix syntax once so all handlers can use it.
     spaced_parts = content.split(maxsplit=2)
-    prefix_command = content.lower().split(maxsplit=1)[0]
-    if prefix_command in {
+    prefix_command = content.lower().split(maxsplit=1)[0]    if prefix_command in {
         ",uwuify", ",unuwuify", ",hoodify", ",unhoodify", ",uwu", ",hood"
     } and uwu_hoodify_user_is_banned(message.author):
         await message.reply(
@@ -2997,8 +2995,7 @@ async def uwu_command(
     except UwuUserBlacklisted:
         await interaction.response.send_message(            f"❌ {member.mention} is blacklisted from using UWUIFY.",
             ephemeral=False,
-        )
-    except UserBlacklistStorageUnavailable as error:
+        )    except UserBlacklistStorageUnavailable as error:
         await interaction.response.send_message(
             "❌ I could not verify the UWUIFY blacklist from GitHub, "
             f"so I will not activate this target. Error: `{error}`",
@@ -3997,8 +3994,7 @@ async def leaderboard(
     review_id="The review ID to delete.")
 @app_commands.checks.has_permissions(
     manage_messages=True
-)
-async def deletereview(
+)async def deletereview(
     interaction: discord.Interaction,
     review_id: int
 ):
@@ -4040,31 +4036,6 @@ async def deletereview_error(
         )
     else:
         raise error
-
-
-# ============================================================
-# READY
-# ============================================================
-
-@bot.event
-async def on_ready():
-
-    print(
-        f"Logged in as "
-        f"{bot.user} ({bot.user.id})"
-    )
-
-
-# ============================================================
-# START
-# ============================================================
-
-if not TOKEN:
-    raise RuntimeError(
-        "DISCORD_TOKEN is missing from your .env file."
-    )
-
-bot.run(TOKEN)
 
 
 # =========================
