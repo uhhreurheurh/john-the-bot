@@ -841,6 +841,33 @@ def create_staff_strike(
     return strike
 
 
+# A single compromised or misused staff account could otherwise append
+# hundreds of records and issue one blocking GitHub GET+PUT per strike against
+# the SHARED token that also protects the blacklist and review stores.
+MAX_ACTIVE_STRIKES_PER_USER = 5
+STAFF_STRIKE_COMMAND_COOLDOWN_SECONDS = 10
+
+_last_strike_command: dict[int, float] = {}
+
+
+def staff_strike_cooldown_active(actor_id: int) -> float:
+    """Return remaining cooldown seconds for this actor, 0 when clear."""
+    now = time.monotonic()
+    elapsed = now - _last_strike_command.get(actor_id, 0.0)
+    remaining = STAFF_STRIKE_COMMAND_COOLDOWN_SECONDS - elapsed
+    return remaining if remaining > 0 else 0.0
+
+
+def staff_strike_mark_issued(actor_id: int) -> None:
+    _last_strike_command[actor_id] = time.monotonic()
+    if len(_last_strike_command) > 4096:
+        _last_strike_command.clear()
+
+
+def staff_strike_cap_reached(user_id: int) -> bool:
+    return len(get_user_staff_strikes(user_id)) >= MAX_ACTIVE_STRIKES_PER_USER
+
+
 STAFF_STRIKE_SYNC_LOCK = asyncio.Lock()
 staff_strike_github_sync_error: str | None = None
 
@@ -1459,9 +1486,46 @@ MAX_ACTIVE_RELAY_CHANNELS = 3
 
 TRANSFORM_COOLDOWN_SECONDS = 30
 MIN_TRANSFORM_INTERVAL_SECONDS = 1.5
+# Hard cap on how long one member can occupy a transform slot, independent of
+# channel activity. Without it, five colluding targets posting every few
+# minutes reset the 5-minute idle timer forever and lock UWUIFY/HOODIFY out for
+# everyone with no way out but a manual ,unuwuify.
+TRANSFORM_TARGET_TTL_SECONDS = 30 * 60
 
 _transform_actor_cooldown: dict[tuple[str, int], float] = {}
 _last_transform_send: dict[tuple[int, int], float] = {}
+_transform_target_expiry: dict[tuple[int, int], float] = {}
+
+
+def _sweep_expired_transform_targets() -> None:
+    """Drop transform targets whose TTL has elapsed.
+
+    Keyed by (mode, channel_id, member_id) semantics via a flat (kind, channel,
+    member) tuple, so the existing uwu_targets/hood_targets set logic (and every
+    `in` / add / discard on it) is unchanged.
+    """
+    now = time.monotonic()
+    for key, expiry in list(_transform_target_expiry.items()):
+        if now < expiry:
+            continue
+        _transform_target_expiry.pop(key, None)
+        kind, channel_id, member_id = key
+        store = uwu_targets if kind == "uwu" else hood_targets
+        targets = store.get(channel_id)
+        if targets is not None:
+            targets.discard(member_id)
+            if not targets:
+                store.pop(channel_id, None)
+
+
+def _set_transform_target_expiry(kind: str, channel_id: int, member_id: int) -> None:
+    _transform_target_expiry[(kind, channel_id, member_id)] = (
+        time.monotonic() + TRANSFORM_TARGET_TTL_SECONDS
+    )
+
+
+def _clear_transform_target_expiry(kind: str, channel_id: int, member_id: int) -> None:
+    _transform_target_expiry.pop((kind, channel_id, member_id), None)
 
 
 class TargetNotPermitted(Exception):
@@ -1881,11 +1945,13 @@ def hood_user_is_whitelisted(member: discord.Member | discord.User) -> bool:
         for role in getattr(member, "roles", ())
     )
 
-def get_active_hood_target_ids(exclude_channel_id: int | None = None) -> set[int]:
+def get_active_hood_target_ids() -> set[int]:
+    # exclude_channel_id was never passed by any caller, so the union always
+    # spanned every channel. Dropping the dead parameter preserves that exact
+    # behaviour -- the 5-person cap is global, not per-channel.
+    _sweep_expired_transform_targets()
     active: set[int] = set()
-    for channel_id, target_ids in hood_targets.items():
-        if channel_id == exclude_channel_id:
-            continue
+    for target_ids in hood_targets.values():
         active.update(target_ids)
     return active
 
@@ -1953,12 +2019,13 @@ async def get_hood_webhook(channel: discord.TextChannel) -> discord.Webhook:
     if entry is not None:
         webhook = entry.get("webhook")
         if webhook is not None:
-            try:
-                await webhook.fetch()
-                _reset_hood_webhook_timer(channel_id, webhook)
-                return webhook
-            except (discord.NotFound, discord.HTTPException):
-                hood_webhooks.pop(channel_id, None)
+            # No webhook.fetch() here. This runs on EVERY message from an active
+            # target, so validating cost one extra API call per message on top of
+            # the send. The 5-minute idle timer already bounds staleness, and the
+            # NotFound handler in send_hood_message drops a deleted webhook so
+            # the next call rebuilds it.
+            _reset_hood_webhook_timer(channel_id, webhook)
+            return webhook
 
     webhook = await channel.create_webhook(
         name=HOOD_WEBHOOK_NAME,
@@ -2021,6 +2088,7 @@ async def set_hood_target(
                     "targets has been reached."
                 )
             channel_targets.add(target.id)
+            _set_transform_target_expiry("hood", channel.id, target.id)
 
     _reset_hood_webhook_timer(channel.id, webhook)
     return webhook
@@ -2075,26 +2143,36 @@ async def send_hood_message(
         for index in range(0, len(hood_text), 2000)
     ] or ["yo"]
 
-    for chunk in chunks:
-        sent_messages.append(
-            await webhook.send(
-                chunk,
-                # Never borrow the target's real identity: posting with their
-                # exact name AND avatar made bot output indistinguishable from
-                # the member (including the server owner).
-                username=f"{target.display_name[:70]} (relay)",
-                avatar_url=None,
-                allowed_mentions=discord.AllowedMentions(
-                    everyone=False,
-                    roles=False,
-                    users=False,
-                    replied_user=False,
-                ),
-                wait=True,
-            )
-        )
-
+    # Reset BEFORE sending, not after. The reaper's deadline can pass during the
+    # send's await; with the reset afterwards it would fire in that window and
+    # delete the webhook plus every target in the channel, silently.
     _reset_hood_webhook_timer(channel.id, webhook)
+
+    try:
+        for chunk in chunks:
+            sent_messages.append(
+                await webhook.send(
+                    chunk,
+                    # Never borrow the target's real identity: posting with their
+                    # exact name AND avatar made bot output indistinguishable
+                    # from the member (including the server owner).
+                    username=f"{target.display_name[:70]} (relay)",
+                    avatar_url=None,
+                    allowed_mentions=discord.AllowedMentions(
+                        everyone=False,
+                        roles=False,
+                        users=False,
+                        replied_user=False,
+                    ),
+                    wait=True,
+                )
+            )
+    except discord.NotFound:
+        # Webhook was deleted out of band; drop it so the next call rebuilds.
+        if hood_webhooks.get(channel.id, {}).get("webhook") is webhook:
+            hood_webhooks.pop(channel.id, None)
+        raise
+
     return sent_messages
 
 async def cleanup_stale_hood_webhooks() -> None:
@@ -2154,13 +2232,14 @@ def uwu_user_is_whitelisted(member: discord.Member | discord.User) -> bool:
     )
 
 
-def get_active_uwu_target_ids(exclude_channel_id: int | None = None) -> set[int]:
+def get_active_uwu_target_ids() -> set[int]:
     """Return the unique member IDs currently using UWU mode."""
+    # See get_active_hood_target_ids: dead exclude_channel_id parameter removed,
+    # union remains global across channels.
+    _sweep_expired_transform_targets()
     active: set[int] = set()
 
-    for channel_id, target_ids in uwu_targets.items():
-        if channel_id == exclude_channel_id:
-            continue
+    for target_ids in uwu_targets.values():
         active.update(target_ids)
 
     return active
@@ -2243,12 +2322,9 @@ async def get_uwu_webhook(channel: discord.TextChannel) -> discord.Webhook:
     if entry is not None:
         webhook = entry.get("webhook")
         if webhook is not None:
-            try:
-                await webhook.fetch()
-                _reset_uwu_webhook_timer(channel_id, webhook)
-                return webhook
-            except (discord.NotFound, discord.HTTPException):
-                uwu_webhooks.pop(channel_id, None)
+            # See get_hood_webhook: one API call per message instead of two.
+            _reset_uwu_webhook_timer(channel_id, webhook)
+            return webhook
 
     webhook = await channel.create_webhook(
         name=UWU_WEBHOOK_NAME,
@@ -2314,6 +2390,7 @@ async def set_uwu_target(
                 )
 
             channel_targets.add(target.id)
+            _set_transform_target_expiry("uwu", channel.id, target.id)
 
     _reset_uwu_webhook_timer(channel.id, webhook)
     return webhook
@@ -2409,28 +2486,34 @@ async def send_uwu_message(
         for index in range(0, len(uwu_text), 2000)
     ] or ["uwu"]
 
-    for chunk in chunks:
-        sent_messages.append(
-            await webhook.send(
-                chunk,
-                # Never borrow the target's real identity: posting with their
-                # exact name AND avatar made bot output indistinguishable from
-                # the member (including the server owner).
-                username=f"{target.display_name[:70]} (relay)",
-                avatar_url=None,
-                # Never allow the UWU webhook to ping roles, @everyone, or @here.
-                # Normal @user mentions are still allowed.
-                allowed_mentions=discord.AllowedMentions(
-                    everyone=False,
-                    roles=False,
-                    users=False,
-                    replied_user=False,
-                ),
-                wait=True,
-            )
-        )
-
+    # Reset BEFORE sending: see send_hood_message for why.
     _reset_uwu_webhook_timer(channel.id, webhook)
+
+    try:
+        for chunk in chunks:
+            sent_messages.append(
+                await webhook.send(
+                    chunk,
+                    # Never borrow the target's real identity: posting with their
+                    # exact name AND avatar made bot output indistinguishable
+                    # from the member (including the server owner).
+                    username=f"{target.display_name[:70]} (relay)",
+                    avatar_url=None,
+                    allowed_mentions=discord.AllowedMentions(
+                        everyone=False,
+                        roles=False,
+                        users=False,
+                        replied_user=False,
+                    ),
+                    wait=True,
+                )
+            )
+    except discord.NotFound:
+        # Webhook was deleted out of band; drop it so the next call rebuilds.
+        if uwu_webhooks.get(channel.id, {}).get("webhook") is webhook:
+            uwu_webhooks.pop(channel.id, None)
+        raise
+
     return sent_messages
 
 
@@ -2508,6 +2591,7 @@ async def disable_uwu_for_user(user_id: int) -> int:
             continue
 
         target_ids.discard(user_id)
+        _clear_transform_target_expiry("uwu", channel_id, user_id)
         removed += 1
 
         if not target_ids:
@@ -2531,6 +2615,7 @@ async def disable_hood_for_user(user_id: int) -> int:
             continue
 
         target_ids.discard(user_id)
+        _clear_transform_target_expiry("hood", channel_id, user_id)
         removed += 1
 
         if not target_ids:
@@ -4026,6 +4111,27 @@ def prefix_blacklist_allowed(message: discord.Message) -> bool:
     )
 
 
+def review_blacklist_prefix_allowed(message: discord.Message) -> bool:
+    """Prefix twin of review_blacklist_command_check.
+
+    This previously delegated to prefix_blacklist_allowed (the single-role
+    BLACKLIST_ALLOWED_ROLE_ID gate), which is STRICTER than the slash command's
+    3-role set. That was not an escalation, but it meant a Director or Co-Owner
+    without 1306082718060384399 could use /reviewblacklist and not
+    ,reviewblacklist. Both now use the same set.
+    """
+    if message.guild is None or message.guild.id != MAIN_SERVER:
+        return False
+
+    if not isinstance(message.author, discord.Member):
+        return False
+
+    return any(
+        role.id in REVIEW_BLACKLIST_ALLOWED_ROLE_IDS
+        for role in message.author.roles
+    )
+
+
 @bot.event
 async def on_message(message: discord.Message):
     """Handle comma-prefix commands and automatic UWU replacement.
@@ -4047,6 +4153,10 @@ async def on_message(message: discord.Message):
         return
 
     content = message.content.strip()
+
+    # Release any transform slot whose TTL has elapsed before deciding whether
+    # this author is still an active target.
+    _sweep_expired_transform_targets()
 
     # Enforce active transformations BEFORE parsing any prefix command.
     # This prevents an active target from bypassing UWU/HOODIFY by sending
@@ -4267,6 +4377,23 @@ async def on_message(message: discord.Message):
             await message.reply(f"❌ {denial}", mention_author=False)
             return
 
+        remaining = staff_strike_cooldown_active(message.author.id)
+        if remaining > 0:
+            await message.reply(
+                f"❌ Please wait {remaining:.0f}s between strikes.", mention_author=False
+            )
+            return
+
+        if staff_strike_cap_reached(target.id):
+            await message.reply(
+                f"❌ {target.mention} already has the maximum of "
+                f"{MAX_ACTIVE_STRIKES_PER_USER} active strikes.",
+                mention_author=False,
+            )
+            return
+
+        staff_strike_mark_issued(message.author.id)
+
         days = parse_staff_strike_duration(strike_parts[2])
         if days is None:
             await message.reply(
@@ -4475,7 +4602,7 @@ async def on_message(message: discord.Message):
         return
 
     if len(spaced_parts) >= 2 and spaced_parts[0].lower() == ",reviewblacklist" and spaced_parts[1].lower() in {"add", "remove", "status"}:
-        if not prefix_blacklist_allowed(message):
+        if not review_blacklist_prefix_allowed(message):
             await message.reply("❌ You do not have permission to use this review blacklist command.", mention_author=False)
             return
         if not message.mentions:
@@ -4496,7 +4623,7 @@ async def on_message(message: discord.Message):
                 synced = await save_review_blacklist()
                 response = f"✅ {target.mention} can no longer submit or update reviews."
                 if not synced:
-                    response += f"\n⚠️ GitHub sync failed: {github_blacklist_sync_error}"
+                    response += _github_sync_notice(False)
                 await log_review_event(
                     "Review Blacklist Updated",
                     f"{message.author.mention} blacklisted {target.mention} from the review system.",
@@ -4514,7 +4641,7 @@ async def on_message(message: discord.Message):
                 synced = await save_review_blacklist()
                 response = f"✅ {target.mention} can submit and update reviews again."
                 if not synced:
-                    response += f"\n⚠️ GitHub sync failed: {github_blacklist_sync_error}"
+                    response += _github_sync_notice(False)
                 await log_review_event(
                     "Review Blacklist Updated",
                     f"{message.author.mention} removed {target.mention} from the review blacklist.",
@@ -5040,6 +5167,18 @@ async def send_webhook(
 # SLASH COMMAND PERMISSION
 # =========================
 
+def main_server_only(interaction: discord.Interaction) -> bool:
+    """Deny the command outside the main server.
+
+    Latent rather than currently exploitable: commands are only synced to
+    MAIN_SERVER and snowflakes are globally unique, so a user cannot hold a
+    main-server role in another guild. This becomes live the moment anyone runs
+    a global tree.sync() -- the code already calls copy_global_to, so that has
+    clearly happened before.
+    """
+    return interaction.guild_id == MAIN_SERVER
+
+
 async def blacklist_command_check(interaction: discord.Interaction) -> bool:
     """Only allow the configured role to use blacklist commands in the main server."""
     if interaction.guild_id != MAIN_SERVER:
@@ -5088,7 +5227,14 @@ async def save_review_blacklist() -> bool:
     return await save_user_blacklist(REVIEW_BLACKLIST_FILE, review_blacklist)
 
 
-async def review_blacklist_command_check(interaction: discord.Interaction) -> bool:
+REVIEW_BLACKLIST_ALLOWED_ROLE_IDS = {
+    1397677852056354948,
+    1518416402141417472,
+    1306082718060384399,
+}
+
+
+def review_blacklist_command_check(interaction: discord.Interaction) -> bool:
     if interaction.guild_id != MAIN_SERVER:
         raise app_commands.CheckFailure("This command can only be used in the main server.")
 
@@ -5150,7 +5296,7 @@ async def review_blacklist_add_command(
 
     message = f"✅ {member.mention} can no longer submit or update reviews."
     if not synced:
-        message += f"\n⚠️ GitHub sync failed: {github_blacklist_sync_error}"
+        message += _github_sync_notice(False)
     await interaction.followup.send(message, ephemeral=True)
 
 
@@ -5188,7 +5334,7 @@ async def review_blacklist_remove_command(
 
     message = f"✅ {member.mention} can submit and update reviews again."
     if not synced:
-        message += f"\n⚠️ GitHub sync failed: {github_blacklist_sync_error}"
+        message += _github_sync_notice(False)
     await interaction.followup.send(message, ephemeral=True)
 
 
@@ -5282,6 +5428,7 @@ async def ping_command(interaction: discord.Interaction):
     description="Disable UWU mode for a selected member.",
 )
 @app_commands.describe(member="The member to stop UWUIFYING")
+@app_commands.check(main_server_only)
 async def unuwuify_command(interaction: discord.Interaction, member: discord.Member):
     """Disable UWU mode for one selected member across all active channels."""
     if uwu_hoodify_user_is_banned(interaction.user):
@@ -5331,6 +5478,7 @@ async def uwucount_command(interaction: discord.Interaction):
     description="Disable HOODIFY for a selected member.",
 )
 @app_commands.describe(member="The member to stop HOODIFYING")
+@app_commands.check(main_server_only)
 async def unhoodify_command(interaction: discord.Interaction, member: discord.Member):
     if uwu_hoodify_user_is_banned(interaction.user):
         await interaction.response.send_message(
@@ -5379,6 +5527,7 @@ async def hoodcount_command(interaction: discord.Interaction):
     member="The member whose messages should be automatically hoodified",
     message="Optional one-time message to send through the hoodify webhook",
 )
+@app_commands.check(main_server_only)
 async def hoodify_command(
     interaction: discord.Interaction,
     member: discord.Member,
@@ -5594,10 +5743,7 @@ async def textify_blacklist_command(interaction: discord.Interaction, member: di
         + (f" Removed them from **{removed}** active mode(s)." if removed else "")
     )
     if not uwu_synced or not hood_synced:
-        response += (
-            "\n⚠️ GitHub sync FAILED."
-            f"\n`{github_blacklist_sync_error}`"
-        )
+        response += _github_sync_notice(False)
 
     await interaction.followup.send(response, ephemeral=False)
 
@@ -5626,10 +5772,7 @@ async def textify_unblacklist_command(interaction: discord.Interaction, member: 
 
     response = f"✅ {member.mention} can use UWUIFY and HOODIFY again."
     if not uwu_synced or not hood_synced:
-        response += (
-            "\n⚠️ GitHub sync FAILED."
-            f"\n`{github_blacklist_sync_error}`"
-        )
+        response += _github_sync_notice(False)
 
     await interaction.followup.send(response, ephemeral=False)
 
@@ -5683,10 +5826,7 @@ async def uwu_blacklist_command(
         + (f" Removed them from **{removed}** active channel(s)." if removed else "")
     )
     if not github_synced:
-        response += (
-            "\n⚠️ GitHub sync FAILED."
-            f"\n`{github_blacklist_sync_error}`"
-        )
+        response += _github_sync_notice(False)
 
     await interaction.followup.send(
         response,
@@ -5721,10 +5861,7 @@ async def uwu_unblacklist_command(
 
     response = f"✅ {member.mention} can use UWUIFY again."
     if not github_synced:
-        response += (
-            "\n⚠️ GitHub sync FAILED."
-            f"\n`{github_blacklist_sync_error}`"
-        )
+        response += _github_sync_notice(False)
 
     await interaction.followup.send(
         response,
@@ -5756,10 +5893,7 @@ async def hood_blacklist_command(
         + (f" Removed them from **{removed}** active channel(s)." if removed else "")
     )
     if not github_synced:
-        response += (
-            "\n⚠️ GitHub sync FAILED."
-            f"\n`{github_blacklist_sync_error}`"
-        )
+        response += _github_sync_notice(False)
 
     await interaction.followup.send(
         response,
@@ -5794,10 +5928,7 @@ async def hood_unblacklist_command(
 
     response = f"✅ {member.mention} can use HOODIFY again."
     if not github_synced:
-        response += (
-            "\n⚠️ GitHub sync FAILED."
-            f"\n`{github_blacklist_sync_error}`"
-        )
+        response += _github_sync_notice(False)
 
     await interaction.followup.send(
         response,
@@ -5960,6 +6091,23 @@ async def strike_command(
     if not allowed:
         await interaction.followup.send(f"❌ {denial}", ephemeral=True)
         return
+
+    remaining = staff_strike_cooldown_active(interaction.user.id)
+    if remaining > 0:
+        await interaction.followup.send(
+            f"❌ Please wait {remaining:.0f}s between strikes.", ephemeral=True
+        )
+        return
+
+    if staff_strike_cap_reached(member.id):
+        await interaction.followup.send(
+            f"❌ {member.mention} already has the maximum of "
+            f"{MAX_ACTIVE_STRIKES_PER_USER} active strikes.",
+            ephemeral=True,
+        )
+        return
+
+    staff_strike_mark_issued(interaction.user.id)
 
     reason = reason.strip()
     if not reason:
@@ -6222,6 +6370,13 @@ async def removestrike_command(
 
 
 # Register grouped slash-command roots.
+#
+# NOTE: uwuify_group (name="legacy_uwuify") is intentionally NOT added, which
+# makes its children DEAD CODE: /legacy_uwuify count, /legacy_hood count,
+# /uwu_blacklist, /uwu_unblacklist, /hood_blacklist, /hood_unblacklist.
+# They are gated correctly, so there is no vulnerability -- but do not assume a
+# second, weaker gate exists on those actions. If you ever add the group back,
+# re-audit those six first.
 uwuify_group.add_command(uwuify_hoodify_group)
 tree.add_command(textify_group)
 tree.add_command(blacklist_group)
@@ -6544,7 +6699,7 @@ class ReviewModal(discord.ui.Modal):
             )
             await interaction.followup.send(
                 "❌ I couldn't save that review to the database.\n"
-                f"`{type(error).__name__}: {error}`",
+                "Please try again in a moment.",
                 ephemeral=True
             )
             return
@@ -6675,6 +6830,7 @@ class StarView(discord.ui.View):
 @app_commands.describe(
     user="The member you want to review."
 )
+@app_commands.check(main_server_only)
 async def review(
     interaction: discord.Interaction,
     user: discord.Member
@@ -7070,6 +7226,7 @@ class UpdateReviewModal(discord.ui.Modal):
     description='Submit an updated vote for a member for moderator approval.'
 )
 @app_commands.describe(user='The member whose review you want to update.')
+@app_commands.check(main_server_only)
 async def updatereview(interaction: discord.Interaction, user: discord.Member):
     # Defer first: the refresh below is a network round trip.
     await interaction.response.defer(ephemeral=True)
@@ -7180,10 +7337,17 @@ async def register_pending_review_update_views():
 
     for request in requests:
         try:
-            bot.add_view(
-                ReviewUpdateApprovalView(request['id']),
-                message_id=request['approval_message_id'],
-            )
+            # NOTE: deliberately NOT message_id=...
+            # bot.add_view(view, message_id=X) registers the view under a
+            # message key, which does not let an incoming interaction resolve
+            # its custom_id. Registering without it puts the custom_ids in the
+            # global persistent-view store, so pressing Approve on a message
+            # posted before a restart still routes to the callback.
+            # Authorization does not depend on this working: the channel, role,
+            # pending-state and self-approval checks all live in
+            # handle_review_update_decision. Worst case before this fix was
+            # fail-closed (pending requests became unapprovable), never open.
+            bot.add_view(ReviewUpdateApprovalView(request['id']))
         except Exception:
             log.exception(
                 "register_pending_review_update_views: view registration failed "
@@ -7202,6 +7366,7 @@ async def register_pending_review_update_views():
 @app_commands.describe(
     user="The member whose reviews you want to see."
 )
+@app_commands.check(main_server_only)
 async def reviews(
     interaction: discord.Interaction,
     user: discord.Member
@@ -7241,6 +7406,7 @@ async def reviews(
     name="leaderboard",
     description="View the reputation leaderboard."
 )
+@app_commands.check(main_server_only)
 async def leaderboard(interaction: discord.Interaction):
     if interaction.guild_id != MAIN_SERVER:
         await interaction.response.send_message(
@@ -7337,6 +7503,7 @@ def deletereview_role_allowed(interaction: discord.Interaction) -> bool:
     review_id="The review ID to delete."
 )
 @app_commands.check(deletereview_role_allowed)
+@app_commands.check(main_server_only)
 async def deletereview(
     interaction: discord.Interaction,
     review_id: int
@@ -7464,6 +7631,7 @@ async def review_db_auto_sync_worker():
     name="savedb",
     description="Immediately save the review database to GitHub."
 )
+@app_commands.check(main_server_only)
 async def savedb_command(interaction: discord.Interaction):
     if not isinstance(interaction.user, discord.Member):
         await interaction.response.send_message(
