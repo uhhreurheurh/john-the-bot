@@ -5030,6 +5030,20 @@ async def deletereview(
     delete_review(review_id)
     asyncio.create_task(sync_review_db_to_github_locked())
 
+    await log_review_event(
+        "Review Removed",
+        f"{interaction.user.mention} removed review #{review_id}.",
+        fields=[
+            ("Review ID", f"Review #{review_id}", True),
+            ("Removed By", f"{interaction.user.mention} / {interaction.user.id}", False),
+            ("Reviewer", f"<@{review['reviewer_id']}> / {review['reviewer_id']}", False),
+            ("Target", f"<@{review['target_id']}> / {review['target_id']}", False),
+            ("Rating", review_stars(int(review["rating"])), True),
+            ("Comment", str(review.get("comment") or "No comment")[:1024], False),
+        ],
+        color=discord.Color.red(),
+    )
+
     await interaction.response.send_message(
         f"✅ Review `{review_id}` deleted.",
         ephemeral=True
