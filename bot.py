@@ -2188,208 +2188,34 @@ async def restore_review_db_from_github() -> bool:
     except Exception:
         return False
 
-def _merge_remote_review_db_into_local() -> None:
-    """Merge the latest GitHub review DB into the local DB before uploading.
-
-    This protects against Railway restarts/overlapping instances where each
-    instance can otherwise start from its own copy of reviews.db and overwrite
-    the other instance's newer reviews.
-    """
-    if not GITHUB_TOKEN:
-        raise RuntimeError("GITHUB_TOKEN is not configured.")
-
-    remote = _github_download_db(GITHUB_DB_PATH)
-    if not remote:
-        # No remote database exists yet. It is safe to create it from local.
-        return
-
-    temp = REVIEW_DB_FILE.with_name("reviews.db.merge.tmp")
-    try:
-        temp.write_bytes(remote)
-        if not _sqlite_file_is_valid(temp):
-            raise RuntimeError("GitHub returned an invalid reviews.db.")
-
-        _ensure_review_db_file_ready_sync()
-
-        local = sqlite3.connect(
-            REVIEW_DB_FILE,
-            check_same_thread=False,
-            timeout=30,
-        )
-        remote_db = sqlite3.connect(
-            temp,
-            check_same_thread=False,
-            timeout=30,
-        )
-        local.row_factory = sqlite3.Row
-        remote_db.row_factory = sqlite3.Row
-        local.execute("PRAGMA busy_timeout = 30000")
-        remote_db.execute("PRAGMA busy_timeout = 30000")
-
-        try:
-            local.execute("BEGIN IMMEDIATE")
-
-            local_reviews = local.execute(
-                "SELECT id, target_id, reviewer_id, rating, comment, created_at FROM reviews"
-            ).fetchall()
-
-            local_by_key = {
-                (row["target_id"], row["reviewer_id"]): row
-                for row in local_reviews
-            }
-            local_ids = {int(row["id"]) for row in local_reviews}
-            next_id = max(local_ids, default=0) + 1
-            review_id_map = {}
-
-            remote_reviews = remote_db.execute(
-                "SELECT id, target_id, reviewer_id, rating, comment, created_at FROM reviews ORDER BY id"
-            ).fetchall()
-
-            for row in remote_reviews:
-                key = (row["target_id"], row["reviewer_id"])
-                existing = local_by_key.get(key)
-
-                if existing is not None:
-                    # The same reviewer/target already exists locally. Keep the
-                    # local row because it may contain a newer local update.
-                    review_id_map[int(row["id"])] = int(existing["id"])
-                    continue
-
-                remote_id = int(row["id"])
-                if remote_id in local_ids:
-                    while next_id in local_ids:
-                        next_id += 1
-                    new_id = next_id
-                    next_id += 1
-                else:
-                    new_id = remote_id
-
-                local.execute(
-                    """
-                    INSERT INTO reviews
-                    (id, target_id, reviewer_id, rating, comment, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        new_id,
-                        row["target_id"],
-                        row["reviewer_id"],
-                        row["rating"],
-                        row["comment"],
-                        row["created_at"],
-                    ),
-                )
-                local_ids.add(new_id)
-                local_by_key[key] = {
-                    "id": new_id,
-                    "target_id": row["target_id"],
-                    "reviewer_id": row["reviewer_id"],
-                }
-                review_id_map[remote_id] = new_id
-
-            # Merge pending/recent update requests too, remapping review IDs
-            # whenever a review ID collision had to be resolved.
-            local_requests = {
-                int(row["id"])
-                for row in local.execute(
-                    "SELECT id FROM review_update_requests"
-                ).fetchall()
-            }
-            next_request_id = (
-                max(local_requests, default=0) + 1
-            )
-
-            remote_requests = remote_db.execute(
-                "SELECT * FROM review_update_requests ORDER BY id"
-            ).fetchall()
-
-            request_columns = [
-                "review_id",
-                "target_id",
-                "reviewer_id",
-                "old_rating",
-                "old_comment",
-                "new_rating",
-                "new_comment",
-                "status",
-                "approval_message_id",
-                "approval_channel_id",
-                "reviewed_by",
-                "created_at",
-                "reviewed_at",
-            ]
-
-            for request in remote_requests:
-                remote_request_id = int(request["id"])
-                target_review_id = review_id_map.get(
-                    int(request["review_id"]),
-                    int(request["review_id"]),
-                )
-
-                # Do not duplicate a request that already exists.
-                if remote_request_id in local_requests:
-                    continue
-
-                request_id = remote_request_id
-                if request_id in local_requests:
-                    while next_request_id in local_requests:
-                        next_request_id += 1
-                    request_id = next_request_id
-                    next_request_id += 1
-
-                values = [request[column] for column in request_columns]
-                values[0] = target_review_id
-
-                request_column_sql = ", ".join(request_columns)
-                request_placeholders = ", ".join(["?"] * len(request_columns))
-                local.execute(
-                    f"""
-                    INSERT INTO review_update_requests
-                    (id, {request_column_sql})
-                    VALUES (?, {request_placeholders})
-                    """,
-                    [request_id, *values],
-                )
-                local_requests.add(request_id)
-
-            local.commit()
-        except Exception:
-            local.rollback()
-            raise
-        finally:
-            local.close()
-            remote_db.close()
-    finally:
-        temp.unlink(missing_ok=True)
-
-
 async def sync_review_db_to_github() -> tuple[bool, str]:
+    """Back up the current local SQLite database to GitHub.
+
+    The Railway instance's local database is the source of truth while the bot
+    is running. We intentionally do NOT replace/merge it with the GitHub copy
+    during normal saves, because doing so can make one live instance overwrite
+    another instance's current review set.
+    """
     if not GITHUB_TOKEN:
         return False, "GITHUB_TOKEN is not configured."
     if not REVIEW_DB_FILE.exists():
         return False, "reviews.db does not exist."
 
-    # Retry GitHub compare-and-update conflicts. This matters if Railway has
-    # overlapping instances during a deployment or restart.
-    for attempt in range(3):
-        try:
-            await asyncio.to_thread(_merge_remote_review_db_into_local)
-            snapshot = await asyncio.to_thread(_review_db_snapshot)
-            await asyncio.to_thread(
-                _github_upload_db,
-                GITHUB_DB_PATH,
-                snapshot,
-                "Sync review database",
-            )
-            return True, ""
-        except Exception as error:
-            message = str(error)
-            if ("409" not in message and "Conflict" not in message) or attempt == 2:
-                return False, message
-            await asyncio.sleep(1)
+    try:
+        # Make sure the local DB is valid and current before taking the snapshot.
+        await asyncio.to_thread(_ensure_review_db_file_ready_sync)
+        snapshot = await asyncio.to_thread(_review_db_snapshot)
 
-    return False, "Review database sync failed."
-    
+        await asyncio.to_thread(
+            _github_upload_db,
+            GITHUB_DB_PATH,
+            snapshot,
+            "Sync review database",
+        )
+        return True, ""
+    except Exception as error:
+        return False, str(error)
+
 
 review_db_lock = asyncio.Lock()
 
