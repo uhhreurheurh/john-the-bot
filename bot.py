@@ -3512,7 +3512,11 @@ async def review_blacklist_command_check(interaction: discord.Interaction) -> bo
         raise app_commands.CheckFailure("Could not verify your server roles.")
 
     if not any(
-        role.id in DELETE_REVIEW_ALLOWED_ROLE_IDS
+        role.id in {
+            1397677852056354948,
+            1518416402141417472,
+            1306082718060384399,
+        }
         for role in interaction.user.roles
     ):
         raise app_commands.CheckFailure(
