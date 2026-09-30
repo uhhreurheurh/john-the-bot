@@ -1490,6 +1490,31 @@ review_db.commit()
 review_db_thread_lock = threading.RLock()
 
 
+def _ensure_review_db_schema() -> None:
+    """Make sure the review table exists, even after a GitHub DB restore."""
+    with review_db_thread_lock:
+        connection = sqlite3.connect(
+            REVIEW_DB_FILE,
+            check_same_thread=False,
+            timeout=30,
+        )
+        try:
+            connection.execute("PRAGMA busy_timeout = 30000")
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS reviews (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    target_id INTEGER NOT NULL,
+                    reviewer_id INTEGER NOT NULL,
+                    rating INTEGER NOT NULL,
+                    comment TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            connection.commit()
+        finally:
+            connection.close()
+
+
 def _reopen_review_db() -> None:
     global review_db
     try:
@@ -1503,6 +1528,17 @@ def _reopen_review_db() -> None:
     )
     review_db.row_factory = sqlite3.Row
     review_db.execute("PRAGMA busy_timeout = 15000")
+    review_db.execute("""
+        CREATE TABLE IF NOT EXISTS reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            target_id INTEGER NOT NULL,
+            reviewer_id INTEGER NOT NULL,
+            rating INTEGER NOT NULL,
+            comment TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    review_db.commit()
 
 
 def _sqlite_file_is_valid(path: Path) -> bool:
@@ -1571,8 +1607,9 @@ def _ensure_review_db_file_ready_sync() -> None:
 
 
 def add_review(target_id: int, reviewer_id: int, rating: int, comment: str):
-    """Insert a review after validating/repairing the local database."""
+    """Insert a review after ensuring the reviews table exists."""
     with review_db_thread_lock:
+        _ensure_review_db_schema()
         _ensure_review_db_file_ready_sync()
         connection = sqlite3.connect(
             REVIEW_DB_FILE,
@@ -4201,6 +4238,9 @@ async def on_ready():
             pass
 
     await restore_review_db_from_github()
+
+    # Always ensure the restored database has the review schema.
+    _ensure_review_db_schema()
 
     if not review_db_sync_loop.is_running():
         review_db_sync_loop.start()
