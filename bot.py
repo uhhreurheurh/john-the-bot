@@ -75,6 +75,7 @@ DELETE_REVIEW_ALLOWED_ROLE_IDS = {
 REVIEW_DB_FILE = Path(__file__).with_name("reviews.db")
 REVIEW_APPROVAL_RATINGS = (4, 5)
 REVIEW_UPDATE_APPROVAL_CHANNEL_ID = 1554700806220161164
+REVIEW_LOG_CHANNEL_ID = 1554863194885988362
 
 # Tag server ids
 # Keep this list in the same order as tag_server_role_ids below.
@@ -1974,10 +1975,14 @@ def _ensure_shared_review_store():
 
 
 def _generate_shared_id(existing_ids):
-    while True:
-        value = (int(time.time() * 1000) * 1000) + random.randrange(1000)
-        if value not in existing_ids:
-            return value
+    """Return the next sequential ID in the shared review store.
+    
+    GitHub's compare-and-swap update is used by the shared-store writer, so
+    concurrent Railway instances cannot both commit the same next ID.
+    Deleted IDs are not reused.
+    """
+    numeric_ids = {int(value) for value in existing_ids}
+    return max(numeric_ids, default=0) + 1
 
 
 def add_review(target_id: int, reviewer_id: int, rating: int, comment: str):
@@ -4277,6 +4282,33 @@ async def get_review_member_or_user(
 
 
 # ============================================================
+# REVIEW LOGGING
+# ============================================================
+
+async def log_review_event(title, description, fields=None, color=None):
+    """Send review activity to the configured log channel."""
+    try:
+        channel = bot.get_channel(REVIEW_LOG_CHANNEL_ID)
+        if channel is None:
+            channel = await bot.fetch_channel(REVIEW_LOG_CHANNEL_ID)
+
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color or discord.Color.blurple(),
+            timestamp=discord.utils.utcnow(),
+        )
+
+        for name, value, inline in fields or []:
+            embed.add_field(name=name, value=value, inline=inline)
+
+        await channel.send(embed=embed)
+    except Exception:
+        # Logging must never break the review system.
+        pass
+
+
+# ============================================================
 # REVIEW COMMENT MODAL
 # ============================================================
 
@@ -4358,6 +4390,19 @@ class ReviewModal(discord.ui.Modal):
         )
         if not sync_success:
             print(f"Review database save after /review failed: {sync_error}")
+
+        await log_review_event(
+            "Review Added",
+            f"{interaction.user.mention} submitted a review for {self.target.mention}.",
+            fields=[
+                ("Review ID", f"Review #{review_id}", True),
+                ("Rating", review_stars(self.rating), True),
+                ("Reviewer", f"{interaction.user.mention} / {interaction.user.id}", False),
+                ("Target", f"{self.target.mention} / {self.target.id}", False),
+                ("Comment", str(self.comment.value)[:1024], False),
+            ],
+            color=discord.Color.green(),
+        )
 
     async def on_error(
         self,
