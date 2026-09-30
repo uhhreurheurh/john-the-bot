@@ -1491,25 +1491,45 @@ def _reopen_review_db() -> None:
     review_db = sqlite3.connect(REVIEW_DB_FILE)
     review_db.row_factory = sqlite3.Row
 
+def _open_review_write_connection() -> sqlite3.Connection:
+    """Open a short-lived SQLite connection for a review write."""
+    connection = sqlite3.connect(REVIEW_DB_FILE, timeout=15)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA busy_timeout = 15000")
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            target_id INTEGER NOT NULL,
+            reviewer_id INTEGER NOT NULL,
+            rating INTEGER NOT NULL,
+            comment TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    connection.commit()
+    return connection
+
+
 def add_review(
     target_id: int,
     reviewer_id: int,
     rating: int,
     comment: str
 ):
-    cursor = review_db.execute(
-        """
-        INSERT INTO reviews
-        (target_id, reviewer_id, rating, comment)
-        VALUES (?, ?, ?, ?)
-        """,
-        (target_id, reviewer_id, rating, comment)
-    )
-
-    review_db.commit()
-    return cursor.lastrowid
-
-
+    connection = _open_review_write_connection()
+    try:
+        cursor = connection.execute(
+            """
+            INSERT INTO reviews
+            (target_id, reviewer_id, rating, comment)
+            VALUES (?, ?, ?, ?)
+            """,
+            (target_id, reviewer_id, rating, comment)
+        )
+        connection.commit()
+        return cursor.lastrowid
+    finally:
+        connection.close()
 def get_reviews(target_id: int):
     return review_db.execute(
         """
@@ -4698,31 +4718,3 @@ async def tag_role_loop_error(error):
     await asyncio.sleep(5)
 
     if not bot.is_closed() and not tag_role_loop.is_running():
-        tag_role_loop.restart()
-
-
-# =========================
-# LOOP STARTUP
-# =========================
-
-@tag_role_loop.before_loop
-async def before_tag_role():
-    await bot.wait_until_ready()
-
-
-@kick_loop.before_loop
-async def before_kick():
-    await bot.wait_until_ready()
-
-
-# =========================
-# START BOT
-# =========================
-
-if not BOT_TOKEN:
-    raise RuntimeError(
-        "BOT_TOKEN is not configured. "
-        "Set the BOT_TOKEN environment variable before starting the bot."
-    )
-
-bot.run(BOT_TOKEN)
