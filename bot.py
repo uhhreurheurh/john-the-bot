@@ -2292,11 +2292,13 @@ def _merge_remote_review_db_into_local() -> None:
                 values = [request[column] for column in request_columns]
                 values[0] = target_review_id
 
+                request_column_sql = ", ".join(request_columns)
+                request_placeholders = ", ".join(["?"] * len(request_columns))
                 local.execute(
                     f"""
                     INSERT INTO review_update_requests
-                    (id, {", ".join(request_columns)})
-                    VALUES (?, {", ".join(["?"] * len(request_columns))})
+                    (id, {request_column_sql})
+                    VALUES (?, {request_placeholders})
                     """,
                     [request_id, *values],
                 )
