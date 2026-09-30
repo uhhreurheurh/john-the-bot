@@ -55,11 +55,15 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "uhhreurheurh/john-the-bot")
 GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
 GITHUB_API_BASE = "https://api.github.com"
-# Review database persistence on GitHub. The bot keeps a local SQLite copy
-# while running and mirrors it to GitHub every 30 minutes.
+
+# =========================
+# REVIEW DATABASE CONFIG
+# =========================
 GITHUB_DB_PATH = os.getenv("GITHUB_DB_PATH", "reviews.db")
 REVIEW_DB_SYNC_MINUTES = 30
 REVIEW_DB_SAVE_ROLE_ID = 1306082718060384399
+REVIEW_DB_FILE = Path(__file__).with_name("reviews.db")
+REVIEW_APPROVAL_RATINGS = (4, 5)
 
 # Tag server ids
 # Keep this list in the same order as tag_server_role_ids below.
@@ -993,11 +997,11 @@ async def send_hood_message(
     channel: discord.TextChannel,
     target: discord.Member,
     content: str,
-) -> list[discord.WebhookMessage]:
-    if target.id in hood_user_blacklist:
+) -> list[discord.WebhookMessage]:    if target.id in hood_user_blacklist:
         raise HoodUserBlacklisted
 
     ensure_hood_message_is_allowed(content)
+
     webhook = await get_hood_webhook(channel)
     hood_text = hoodify_text(content)
 
@@ -1457,138 +1461,11 @@ async def disable_hood_for_user(user_id: int) -> int:
 
 
 # =========================
-# REVIEW DATABASE GITHUB PERSISTENCE
-# =========================
-
-def _github_download_binary_file(path: str) -> bytes | None:
-    """Download a binary/text repository file from GitHub, returning None if absent."""
-    if not GITHUB_TOKEN:
-        return None
-
-    encoded_path = "/".join(urllib.parse.quote(part, safe="") for part in path.split("/"))
-    encoded_branch = urllib.parse.quote(GITHUB_BRANCH, safe="")
-    url = f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/contents/{encoded_path}?ref={encoded_branch}"
-
-    try:
-        request = urllib.request.Request(url, headers=_github_headers(), method="GET")
-        with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-
-        if payload.get("encoding") != "base64" or not payload.get("content"):
-            raise RuntimeError("GitHub did not return base64 file content.")
-
-        return base64.b64decode(payload["content"].replace("\n", ""))
-    except urllib.error.HTTPError as error:
-        if error.code == 404:
-            return None
-        message = error.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"GitHub DB download failed ({error.code}): {message}") from error
-    except Exception as error:
-        raise RuntimeError(f"GitHub DB download failed: {error}") from error
-
-
-def _github_save_binary_file(path: str, content: bytes, message: str) -> None:
-    """Create or update a binary repository file through GitHub's Contents API."""
-    encoded_path = "/".join(urllib.parse.quote(part, safe="") for part in path.split("/"))
-    encoded_branch = urllib.parse.quote(GITHUB_BRANCH, safe="")
-    url = f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/contents/{encoded_path}"
-
-    sha = None
-    try:
-        get_url = f"{url}?ref={encoded_branch}"
-        request = urllib.request.Request(get_url, headers=_github_headers(), method="GET")
-        with urllib.request.urlopen(request, timeout=30) as response:
-            existing = json.loads(response.read().decode("utf-8"))
-        sha = existing.get("sha")
-    except urllib.error.HTTPError as error:
-        if error.code != 404:
-            message_text = error.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"GitHub DB lookup failed ({error.code}): {message_text}") from error
-
-    body = {
-        "message": message,
-        "content": base64.b64encode(content).decode("ascii"),
-        "branch": GITHUB_BRANCH,
-    }
-    if sha:
-        body["sha"] = sha
-
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        headers={**_github_headers(), "Content-Type": "application/json"},
-        method="PUT",
-    )
-
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            if response.status not in (200, 201):
-                raise RuntimeError(f"GitHub DB upload returned HTTP {response.status}.")
-    except urllib.error.HTTPError as error:
-        message_text = error.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"GitHub DB upload failed ({error.code}): {message_text}") from error
-
-
-async def restore_review_db_from_github() -> bool:
-    """Restore the GitHub copy when the local database does not exist."""
-    if REVIEW_DB_FILE.exists() or not GITHUB_TOKEN:
-        return False
-
-    try:
-        content = await asyncio.to_thread(_github_download_binary_file, GITHUB_DB_PATH)
-        if content is None:
-            return False
-        REVIEW_DB_FILE.write_bytes(content)
-        return True
-    except Exception:
-        return False
-
-
-async def sync_review_db_to_github() -> tuple[bool, str]:
-    """Upload the current SQLite review database to GitHub."""
-    if not GITHUB_TOKEN:
-        return False, "GITHUB_TOKEN is not configured."
-    if not REVIEW_DB_FILE.exists():
-        return False, "reviews.db does not exist yet."
-
-    try:
-        content = await asyncio.to_thread(REVIEW_DB_FILE.read_bytes)
-        await asyncio.to_thread(
-            _github_save_binary_file,
-            GITHUB_DB_PATH,
-            content,
-            "Sync review database",
-        )
-        return True, ""
-    except Exception as error:
-        return False, str(error)
-
-
-# =========================
 # REVIEW DATABASE
 # =========================
 
-# Keep the review database beside the bot file so the path is stable
-# regardless of the process working directory.
-REVIEW_DB_FILE = Path(__file__).with_name("reviews.db")
-
-# Ratings considered approved for leaderboard/statistics purposes.
-REVIEW_APPROVAL_RATINGS = (4, 5)
-
 review_db = sqlite3.connect(REVIEW_DB_FILE)
 review_db.row_factory = sqlite3.Row
-
-
-def reload_review_db_connection() -> None:
-    """Reopen the SQLite connection after restoring a database file."""
-    global review_db
-    try:
-        review_db.close()
-    except Exception:
-        pass
-    review_db = sqlite3.connect(REVIEW_DB_FILE)
-    review_db.row_factory = sqlite3.Row
-
 review_db.execute("""
 CREATE TABLE IF NOT EXISTS reviews (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1599,19 +1476,32 @@ CREATE TABLE IF NOT EXISTS reviews (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """)
-
 review_db.commit()
 
+def _reopen_review_db() -> None:
+    global review_db
+    try:
+        review_db.close()
+    except Exception:
+        pass
+    review_db = sqlite3.connect(REVIEW_DB_FILE)
+    review_db.row_factory = sqlite3.Row
 
-def add_review(target_id: int, reviewer_id: int, rating: int, comment: str):
+def add_review(
+    target_id: int,
+    reviewer_id: int,
+    rating: int,
+    comment: str
+):
     cursor = review_db.execute(
         """
         INSERT INTO reviews
         (target_id, reviewer_id, rating, comment)
         VALUES (?, ?, ?, ?)
         """,
-        (target_id, reviewer_id, rating, comment),
+        (target_id, reviewer_id, rating, comment)
     )
+
     review_db.commit()
     return cursor.lastrowid
 
@@ -1624,7 +1514,7 @@ def get_reviews(target_id: int):
         WHERE target_id = ?
         ORDER BY id DESC
         """,
-        (target_id,),
+        (target_id,)
     ).fetchall()
 
 
@@ -1635,20 +1525,22 @@ def get_review(review_id: int):
         FROM reviews
         WHERE id = ?
         """,
-        (review_id,),
+        (review_id,)
     ).fetchone()
 
 
 def delete_review(review_id: int):
     review_db.execute(
         "DELETE FROM reviews WHERE id = ?",
-        (review_id,),
+        (review_id,)
     )
     review_db.commit()
 
 
-def get_leaderboard_liked(limit: int = 5):
-    """Most liked = most 4/5-star reviews."""
+def get_leaderboard_liked(limit=5):
+    """
+    Most liked = most 4/5-star reviews.
+    """
     return review_db.execute(
         """
         SELECT
@@ -1660,12 +1552,14 @@ def get_leaderboard_liked(limit: int = 5):
         ORDER BY approved DESC, target_id
         LIMIT ?
         """,
-        (limit,),
+        (limit,)
     ).fetchall()
 
 
-def get_leaderboard_reviewed(limit: int = 5):
-    """Most reviewed = highest number of total reviews."""
+def get_leaderboard_reviewed(limit=5):
+    """
+    Most reviewed = highest number of total reviews.
+    """
     return review_db.execute(
         """
         SELECT
@@ -1677,12 +1571,14 @@ def get_leaderboard_reviewed(limit: int = 5):
         ORDER BY review_count DESC, average_rating DESC, target_id
         LIMIT ?
         """,
-        (limit,),
+        (limit,)
     ).fetchall()
 
 
-def get_leaderboard_disliked(limit: int = 5):
-    """Most disliked = most 1/2/3-star reviews."""
+def get_leaderboard_disliked(limit=5):
+    """
+    Most disliked = most 1/2/3-star reviews.
+    """
     return review_db.execute(
         """
         SELECT
@@ -1694,7 +1590,7 @@ def get_leaderboard_disliked(limit: int = 5):
         ORDER BY disliked DESC, target_id
         LIMIT ?
         """,
-        (limit,),
+        (limit,)
     ).fetchall()
 
 
@@ -1704,21 +1600,29 @@ def get_user_stats(user_id: int):
         SELECT
             COUNT(*) AS total,
             AVG(rating) AS average,
+
             SUM(
                 CASE
-                    WHEN rating IN (4, 5) THEN 1
+                    WHEN rating IN (4, 5)
+                    THEN 1
                     ELSE 0
                 END
             ) AS approved
+
         FROM reviews
         WHERE target_id = ?
         """,
-        (user_id,),
+        (user_id,)
     ).fetchone()
 
     total = row["total"] or 0
     approved = row["approved"] or 0
-    approval = (approved / total) * 100 if total else 0
+
+    approval = (
+        (approved / total) * 100
+        if total
+        else 0
+    )
 
     return {
         "total": total,
@@ -1727,26 +1631,145 @@ def get_user_stats(user_id: int):
         "approval": approval,
     }
 
-
 # =========================
-# REVIEW HELPERS
+# REVIEW DATABASE GITHUB PERSISTENCE
 # =========================
 
-def review_stars(rating: int) -> str:
-    return "⭐" * rating + "☆" * (5 - rating)
+def _github_db_contents_url(path: str) -> str:
+    encoded_path = "/".join(
+        urllib.parse.quote(part, safe="")
+        for part in path.split("/")
+    )
+    return f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/contents/{encoded_path}"
 
-
-async def get_review_member_or_user(guild: discord.Guild | None, user_id: int):
-    if guild is not None:
-        member = guild.get_member(user_id)
-        if member:
-            return member
-
-    try:
-        return await bot.fetch_user(user_id)
-    except Exception:
+def _github_download_db(path: str) -> bytes | None:
+    if not GITHUB_TOKEN:
         return None
+    encoded_branch = urllib.parse.quote(GITHUB_BRANCH, safe="")
+    url = f"{_github_db_contents_url(path)}?ref={encoded_branch}"
+    request = urllib.request.Request(url, headers=_github_headers(), method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return None
+        body = error.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"GitHub database download failed ({error.code}): {body}") from error
+    except Exception as error:
+        raise RuntimeError(f"GitHub database download failed: {error}") from error
+    encoded_content = payload.get("content")
+    if not encoded_content:
+        raise RuntimeError("GitHub returned an empty database file.")
+    try:
+        return base64.b64decode("".join(encoded_content.split()))
+    except Exception as error:
+        raise RuntimeError("GitHub database content was not valid base64.") from error
 
+def _github_upload_db(path: str, content: bytes, message: str) -> None:
+    if not GITHUB_TOKEN:
+        raise RuntimeError("GITHUB_TOKEN is not configured.")
+    encoded_branch = urllib.parse.quote(GITHUB_BRANCH, safe="")
+    url = _github_db_contents_url(path)
+    existing_sha = None
+    get_url = f"{url}?ref={encoded_branch}"
+    get_request = urllib.request.Request(get_url, headers=_github_headers(), method="GET")
+    try:
+        with urllib.request.urlopen(get_request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            existing_sha = payload.get("sha")
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            body = error.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"GitHub database lookup failed ({error.code}): {body}") from error
+    body = {
+        "message": message,
+        "content": base64.b64encode(content).decode("ascii"),
+        "branch": GITHUB_BRANCH,
+    }
+    if existing_sha:
+        body["sha"] = existing_sha
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={**_github_headers(), "Content-Type": "application/json"},
+        method="PUT",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            if response.status not in (200, 201):
+                raise RuntimeError(f"GitHub database upload returned HTTP {response.status}.")
+    except urllib.error.HTTPError as error:
+        body = error.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"GitHub database upload failed ({error.code}): {body}") from error
+
+def _make_review_db_snapshot() -> bytes:
+    temporary_path = REVIEW_DB_FILE.with_name("reviews.db.sync.tmp")
+    if temporary_path.exists():
+        temporary_path.unlink()
+    source = sqlite3.connect(REVIEW_DB_FILE)
+    snapshot = sqlite3.connect(temporary_path)
+    try:
+        source.backup(snapshot)
+        snapshot.commit()
+    finally:
+        snapshot.close()
+        source.close()
+    try:
+        return temporary_path.read_bytes()
+    finally:
+        try:
+            temporary_path.unlink()
+        except OSError:
+            pass
+
+def _review_db_has_reviews() -> bool:
+    try:
+        return review_db.execute("SELECT 1 FROM reviews LIMIT 1").fetchone() is not None
+    except Exception:
+        return False
+
+async def restore_review_db_from_github() -> bool:
+    if not GITHUB_TOKEN or _review_db_has_reviews():
+        return False
+    try:
+        remote_content = await asyncio.to_thread(_github_download_db, GITHUB_DB_PATH)
+        if remote_content is None:
+            return False
+        temporary_path = REVIEW_DB_FILE.with_name("reviews.db.restore.tmp")
+        if temporary_path.exists():
+            temporary_path.unlink()
+        temporary_path.write_bytes(remote_content)
+        _reopen_review_db()
+        REVIEW_DB_FILE.unlink(missing_ok=True)
+        temporary_path.replace(REVIEW_DB_FILE)
+        _reopen_review_db()
+        return True
+    except Exception:
+        return False
+
+async def sync_review_db_to_github() -> tuple[bool, str]:
+    if not GITHUB_TOKEN:
+        return False, "GITHUB_TOKEN is not configured."
+    if not REVIEW_DB_FILE.exists():
+        return False, "reviews.db does not exist."
+    try:
+        content = await asyncio.to_thread(_make_review_db_snapshot)
+        await asyncio.to_thread(
+            _github_upload_db,
+            GITHUB_DB_PATH,
+            content,
+            "Sync review database",
+        )
+        return True, ""
+    except Exception as error:
+        return False, str(error)
+
+review_db_sync_lock = asyncio.Lock()
+
+async def sync_review_db_to_github_locked() -> tuple[bool, str]:
+    async with review_db_sync_lock:
+        return await sync_review_db_to_github()
 
 # =========================
 # BOT SETUP
@@ -1761,6 +1784,559 @@ bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 commands_synced = False
 user_blacklists_synced = False
+
+
+# ============================================================
+# REVIEW HELPERS
+# ============================================================
+
+def review_stars(rating: int) -> str:
+    return "⭐" * rating + "☆" * (5 - rating)
+
+
+def review_approval_emoji(rating: int) -> str:
+    return "🟢" if rating in REVIEW_APPROVAL_RATINGS else "🔴"
+
+
+async def get_review_member_or_user(
+    guild: discord.Guild | None,
+    user_id: int
+):
+    if guild is not None:
+        member = guild.get_member(user_id)
+        if member:
+            return member
+
+    try:
+        return await bot.fetch_user(user_id)
+    except Exception:
+        return None
+
+
+# ============================================================
+# REVIEW COMMENT MODAL
+# ============================================================
+
+class ReviewModal(discord.ui.Modal):
+
+    def __init__(
+        self,
+        target: discord.Member,
+        rating: int
+    ):
+        super().__init__(
+            title=f"Leave a {rating}-star review"
+        )
+
+        self.target = target
+        self.rating = rating
+
+        self.comment = discord.ui.TextInput(
+            label="Review",
+            placeholder="Write your review...",
+            style=discord.TextStyle.paragraph,
+            required=True,
+            min_length=1,
+            max_length=1000
+        )
+
+        self.add_item(self.comment)
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        # Don't allow reviewing yourself.
+        if interaction.user.id == self.target.id:
+            await interaction.response.send_message(
+                "❌ You can't review yourself.",
+                ephemeral=True
+            )
+            return
+
+        review_id = add_review(
+            target_id=self.target.id,
+            reviewer_id=interaction.user.id,
+            rating=self.rating,
+            comment=self.comment.value
+        )
+
+        await interaction.response.send_message(
+            f"✅ Your review for {self.target.mention} was added.\n"
+            f"**Rating:** {review_stars(self.rating)}\n"
+            f"**Review ID:** `{review_id}`",
+            ephemeral=True
+        )
+
+
+# ============================================================
+# STAR DROPDOWN
+# ============================================================
+
+class StarSelect(discord.ui.Select):
+
+    def __init__(self, target: discord.Member):
+
+        self.target = target
+
+        options = [
+            discord.SelectOption(
+                label="1 Star",
+                value="1",
+                emoji="⭐"
+            ),
+            discord.SelectOption(
+                label="2 Stars",
+                value="2",
+                emoji="⭐"
+            ),
+            discord.SelectOption(
+                label="3 Stars",
+                value="3",
+                emoji="⭐"
+            ),
+            discord.SelectOption(
+                label="4 Stars",
+                value="4",
+                emoji="⭐"
+            ),
+            discord.SelectOption(
+                label="5 Stars",
+                value="5",
+                emoji="⭐"
+            )
+        ]
+
+        super().__init__(
+            placeholder="select a star rating...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        rating = int(self.values[0])
+
+        await interaction.response.send_modal(
+            ReviewModal(
+                target=self.target,
+                rating=rating
+            )
+        )
+
+
+class StarView(discord.ui.View):
+
+    def __init__(
+        self,
+        target: discord.Member
+    ):
+        super().__init__(timeout=120)
+
+        self.add_item(
+            StarSelect(target)
+        )
+
+
+# ============================================================
+# /review
+# ============================================================
+
+@tree.command(
+    name="review",
+    description="Leave a review for a member."
+)
+@app_commands.describe(
+    user="The member you want to review."
+)
+async def review(
+    interaction: discord.Interaction,
+    user: discord.Member
+):
+
+    if user.id == interaction.user.id:
+        await interaction.response.send_message(
+            "❌ You can't review yourself.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.send_message(
+        "**select your star rating:**",
+        view=StarView(user),
+        ephemeral=True
+    )
+
+
+# ============================================================
+# REVIEW PAGINATION
+# ============================================================
+
+class ReviewPagination(discord.ui.View):
+
+    def __init__(
+        self,
+        target: discord.Member,
+        reviews: list
+    ):
+        super().__init__(timeout=180)
+
+        self.target = target
+        self.reviews = reviews
+        self.page = 0
+
+        self.per_page = 5
+
+        self.previous.disabled = True
+
+        if len(reviews) <= self.per_page:
+            self.next.disabled = True
+    def make_embed(self):
+
+        start = self.page * self.per_page
+        end = start + self.per_page
+
+        page_reviews = self.reviews[start:end]
+
+        stats = get_user_stats(self.target.id)
+
+        embed = discord.Embed(
+            title=f"reviews for {self.target.display_name}",
+            color=discord.Color.dark_grey()
+        )
+
+        embed.set_thumbnail(
+            url=self.target.display_avatar.url
+        )
+
+        embed.description = (
+            f"🟢 **{stats['approved']}**  "
+            f"🔴 **{stats['total'] - stats['approved']}**\n"
+        )
+
+        for review in page_reviews:
+
+            reviewer = self.target.guild.get_member(
+                review["reviewer_id"]
+            )
+
+            if reviewer:
+                reviewer_name = reviewer.display_name
+                reviewer_mention = reviewer.mention
+            else:
+                reviewer_name = "Unknown User"
+                reviewer_mention = f"<@{review['reviewer_id']}>"
+
+            embed.add_field(
+                name=(
+                    f"{review_stars(review['rating'])} — "
+                    f"by {reviewer_name} · ID {review['id']}"
+                ),
+                value=(
+                    f"{reviewer_mention}\n"
+                    f"> {review['comment']}"
+                ),
+                inline=False
+            )
+
+        total_pages = max(
+            1,
+            (len(self.reviews) + self.per_page - 1)
+            // self.per_page
+        )
+
+        embed.set_footer(
+            text=f"Page {self.page + 1}/{total_pages}"
+        )
+
+        return embed
+
+    @discord.ui.button(
+        emoji="◀",
+        style=discord.ButtonStyle.secondary
+    )
+    async def previous(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        if self.page > 0:
+            self.page -= 1
+
+        self.next.disabled = False
+        self.previous.disabled = self.page == 0
+
+        await interaction.response.edit_message(
+            embed=self.make_embed(),
+            view=self
+        )
+
+    @discord.ui.button(
+        emoji="▶",
+        style=discord.ButtonStyle.secondary
+    )
+    async def next(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        max_page = (
+            len(self.reviews) - 1
+        ) // self.per_page
+
+        if self.page < max_page:
+            self.page += 1
+
+        self.previous.disabled = False
+        self.next.disabled = self.page >= max_page
+
+        await interaction.response.edit_message(
+            embed=self.make_embed(),
+            view=self
+        )
+
+
+# ============================================================
+# /reviews
+# ============================================================
+
+@tree.command(
+    name="reviews",
+    description="View a member's reviews."
+)
+@app_commands.describe(
+    user="The member whose reviews you want to see."
+)
+async def reviews(
+    interaction: discord.Interaction,
+    user: discord.Member
+):
+
+    review_list = get_reviews(user.id)
+
+    if not review_list:
+        await interaction.response.send_message(
+            f"**{user.display_name}** has no reviews yet.",
+            ephemeral=True
+        )
+        return
+
+    view = ReviewPagination(
+        target=user,
+        reviews=review_list
+    )
+
+    await interaction.response.send_message(
+        embed=view.make_embed(),
+        view=view
+    )
+
+
+# ============================================================
+# LEADERBOARD
+# ============================================================
+
+@tree.command(
+    name="leaderboard",
+    description="View the reputation leaderboard."
+)
+async def leaderboard(
+    interaction: discord.Interaction
+):
+
+    liked = get_leaderboard_liked(5)
+    reviewed = get_leaderboard_reviewed(5)
+    disliked = get_leaderboard_disliked(5)
+
+    embed = discord.Embed(
+        title="leaderboard",
+        color=discord.Color.dark_grey()
+    )
+
+    # --------------------------------------------------------
+    # TOP 5 MOST LIKED
+    # --------------------------------------------------------
+
+    liked_text = "**top 5 most liked users**\n\n"
+
+    if not liked:
+        liked_text += "No reviews yet."
+
+    else:
+
+        for index, row in enumerate(liked, start=1):
+
+            member = await get_review_member_or_user(
+                interaction.guild,
+                row["target_id"]
+            )
+
+            if member:
+                name = member.mention
+            else:
+                name = f"<@{row['target_id']}>"
+
+            stats = get_user_stats(
+                row["target_id"]
+            )
+
+            liked_text += (
+                f"**{index}**  "
+                f"{name} "
+                f"🟢 **{row['approved']}** "
+                f"({stats['approval']:.2f}% approval)\n"
+            )
+
+    embed.add_field(
+        name="",
+        value=liked_text,
+        inline=False
+    )
+
+    # --------------------------------------------------------
+    # TOP 5 MOST REVIEWED
+    # --------------------------------------------------------
+
+    reviewed_text = "**top 5 most reviewed**\n\n"
+
+    if not reviewed:
+        reviewed_text += "No reviews yet."
+
+    else:
+
+        for index, row in enumerate(reviewed, start=1):
+
+            member = await get_review_member_or_user(
+                interaction.guild,
+                row["target_id"]
+            )
+
+            if member:
+                name = member.mention
+            else:
+                name = f"<@{row['target_id']}>"
+
+            reviewed_text += (
+                f"**{index}**  "
+                f"{name} "
+                f"📝 **{row['review_count']} reviews** "
+                f"(⭐ {row['average_rating']:.1f} avg)\n"
+            )
+
+    embed.add_field(
+        name="",
+        value=reviewed_text,
+        inline=False
+    )
+
+    # --------------------------------------------------------
+    # TOP 5 MOST DISLIKED
+    # --------------------------------------------------------
+
+    disliked_text = "**top 5 most disliked users**\n\n"
+
+    if not disliked:
+        disliked_text += "No negative reviews yet."
+
+    else:
+
+        for index, row in enumerate(disliked, start=1):
+
+            member = await get_review_member_or_user(
+                interaction.guild,
+                row["target_id"]
+            )
+
+            if member:
+                name = member.mention
+            else:
+                name = f"<@{row['target_id']}>"
+
+            stats = get_user_stats(
+                row["target_id"]
+            )
+
+            disliked_text += (
+                f"**{index}**  "
+                f"{name} "
+                f"🔴 **{row['disliked']}** negative reviews "
+                f"({stats['approval']:.2f}% approval)\n"
+            )
+
+    embed.add_field(
+        name="",
+        value=disliked_text,
+        inline=False
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+# ============================================================
+# MODERATOR DELETE COMMAND
+# ============================================================
+
+@tree.command(
+    name="deletereview",
+    description="Delete a review by ID."
+)
+@app_commands.describe(
+    review_id="The review ID to delete."
+)
+@app_commands.checks.has_permissions(
+    manage_messages=True
+)
+async def deletereview(
+    interaction: discord.Interaction,
+    review_id: int
+):
+
+    review = get_review(review_id)
+
+    if not review:
+        await interaction.response.send_message(
+            "❌ Review not found.",
+            ephemeral=True
+        )
+        return
+
+    delete_review(review_id)
+
+    await interaction.response.send_message(
+        f"✅ Review `{review_id}` deleted.",
+        ephemeral=True
+    )
+
+
+# ============================================================
+# ERROR HANDLER
+# ============================================================
+
+@deletereview.error
+async def deletereview_error(
+    interaction: discord.Interaction,
+    error
+):
+
+    if isinstance(
+        error,
+        app_commands.errors.MissingPermissions
+    ):
+        await interaction.response.send_message(
+            "❌ You need **Manage Messages** to do that.",
+            ephemeral=True
+        )
+    else:
+        raise error
 
 
 # =========================
@@ -1997,8 +2573,11 @@ async def on_message(message: discord.Message):
 
     # Parse the readable spaced prefix syntax once so all handlers can use it.
     spaced_parts = content.split(maxsplit=2)
-    prefix_command = content.lower().split(maxsplit=1)[0]    if prefix_command in {
-        ",uwuify", ",unuwuify", ",hoodify", ",unhoodify", ",uwu", ",hood"    } and uwu_hoodify_user_is_banned(message.author):
+
+    prefix_command = content.lower().split(maxsplit=1)[0]
+    if prefix_command in {
+        ",uwuify", ",unuwuify", ",hoodify", ",unhoodify", ",uwu", ",hood"
+    } and uwu_hoodify_user_is_banned(message.author):
         await message.reply(
             "❌ You are banned from using UWUIFY and HOODIFY.",
             mention_author=False,
@@ -2416,8 +2995,7 @@ async def on_message(message: discord.Message):
 
     # ,unhoodify @user disables HOODIFY for only that member.
     if content.lower().startswith(",unhoodify") and message.mentions:
-        if not hood_user_is_whitelisted(message.author):
-            await message.reply(
+        if not hood_user_is_whitelisted(message.author):            await message.reply(
                 "❌ You need one of the allowed HOODIFY roles to use this command.",
                 mention_author=False,
             )
@@ -2993,11 +3571,14 @@ async def uwu_command(
             ephemeral=False,
         )
     except UwuUserBlacklisted:
-        await interaction.response.send_message(            f"❌ {member.mention} is blacklisted from using UWUIFY.",
-            ephemeral=False,
-        )    except UserBlacklistStorageUnavailable as error:
         await interaction.response.send_message(
-            "❌ I could not verify the UWUIFY blacklist from GitHub, "            f"so I will not activate this target. Error: `{error}`",
+            f"❌ {member.mention} is blacklisted from using UWUIFY.",
+            ephemeral=False,
+        )
+    except UserBlacklistStorageUnavailable as error:
+        await interaction.response.send_message(
+            "❌ I could not verify the UWUIFY blacklist from GitHub, "
+            f"so I will not activate this target. Error: `{error}`",
             ephemeral=False,
         )
     except UwuTargetLimitReached:
@@ -3413,7 +3994,6 @@ async def on_app_command_error(
             ephemeral=False,
         )
 
-
 # =========================
 # AUTOMATIC ROLE REMOVAL HELPER
 # =========================
@@ -3505,576 +4085,37 @@ async def ensure_guild_members_loaded(guild: discord.Guild) -> bool:
 
 
 # =========================
-# REVIEW SYSTEM
-# =========================
-
-def review_approval_emoji(rating: int) -> str:
-    return "🟢" if rating in REVIEW_APPROVAL_RATINGS else "🔴"
-
-
-# ============================================================
-# REVIEW COMMENT MODAL
-# ============================================================
-
-class ReviewModal(discord.ui.Modal):
-
-    def __init__(
-        self,
-        target: discord.Member,
-        rating: int
-    ):
-        super().__init__(
-            title=f"Leave a {rating}-star review"
-        )
-
-        self.target = target
-        self.rating = rating
-
-        self.comment = discord.ui.TextInput(
-            label="Review",
-            placeholder="Write your review...",
-            style=discord.TextStyle.paragraph,
-            required=True,
-            min_length=1,
-            max_length=1000
-        )
-
-        self.add_item(self.comment)
-
-    async def on_submit(
-        self,
-        interaction: discord.Interaction
-    ):
-
-        # Don't allow reviewing yourself.
-        if interaction.user.id == self.target.id:
-            await interaction.response.send_message(
-                "❌ You can't review yourself.",
-                ephemeral=True
-            )
-            return
-
-        review_id = add_review(
-            target_id=self.target.id,
-            reviewer_id=interaction.user.id,
-            rating=self.rating,
-            comment=self.comment.value
-        )
-
-        await interaction.response.send_message(
-            f"✅ Your review for {self.target.mention} was added.\n"
-            f"**Rating:** {review_stars(self.rating)}\n"
-            f"**Review ID:** `{review_id}`",
-            ephemeral=True
-        )
-
-
-# ============================================================
-# STAR DROPDOWN
-# ============================================================
-
-class StarSelect(discord.ui.Select):
-
-    def __init__(self, target: discord.Member):
-
-        self.target = target
-
-        options = [
-            discord.SelectOption(
-                label="1 Star",
-                value="1",
-                emoji="⭐"
-            ),
-            discord.SelectOption(
-                label="2 Stars",
-                value="2",
-                emoji="⭐"
-            ),
-            discord.SelectOption(
-                label="3 Stars",
-                value="3",
-                emoji="⭐"
-            ),
-            discord.SelectOption(
-                label="4 Stars",
-                value="4",
-                emoji="⭐"
-            ),
-            discord.SelectOption(
-                label="5 Stars",
-                value="5",
-                emoji="⭐"
-            )
-        ]
-
-        super().__init__(
-            placeholder="select a star rating...",
-            min_values=1,
-            max_values=1,
-            options=options
-        )
-
-    async def callback(
-        self,
-        interaction: discord.Interaction
-    ):
-
-        rating = int(self.values[0])
-
-        await interaction.response.send_modal(
-            ReviewModal(
-                target=self.target,
-                rating=rating
-            )
-        )
-
-
-class StarView(discord.ui.View):
-
-    def __init__(
-        self,
-        target: discord.Member
-    ):
-        super().__init__(timeout=120)
-
-        self.add_item(
-            StarSelect(target)
-        )
-
-
-# ============================================================
-# /review
-# ============================================================
-
-@tree.command(
-    name="review",
-    description="Leave a review for a member."
-)
-@app_commands.describe(
-    user="The member you want to review."
-)
-async def review(
-    interaction: discord.Interaction,
-    user: discord.Member
-):
-
-    if user.id == interaction.user.id:
-        await interaction.response.send_message(
-            "❌ You can't review yourself.",
-            ephemeral=True
-        )
-        return
-
-    await interaction.response.send_message(
-        "**select your star rating:**",
-        view=StarView(user),
-        ephemeral=True
-    )
-
-
-# ============================================================
-# REVIEW PAGINATION
-# ============================================================
-
-class ReviewPagination(discord.ui.View):
-
-    def __init__(
-        self,
-        target: discord.Member,
-        reviews: list
-    ):
-        super().__init__(timeout=180)
-
-        self.target = target
-        self.reviews = reviews
-        self.page = 0
-
-        self.per_page = 5
-
-        self.previous.disabled = True
-
-        if len(reviews) <= self.per_page:
-            self.next.disabled = True
-
-    def make_embed(self):
-
-        start = self.page * self.per_page
-        end = start + self.per_page
-
-        page_reviews = self.reviews[start:end]
-
-        stats = get_user_stats(self.target.id)
-
-        embed = discord.Embed(
-            title=f"reviews for {self.target.display_name}",
-            color=discord.Color.dark_grey()
-        )
-
-        embed.set_thumbnail(
-            url=self.target.display_avatar.url
-        )
-
-        embed.description = (
-            f"🟢 **{stats['approved']}**  "
-            f"🔴 **{stats['total'] - stats['approved']}**\n"
-        )
-
-        for review in page_reviews:
-
-            reviewer = self.target.guild.get_member(
-                review["reviewer_id"]
-            )
-
-            if reviewer:
-                reviewer_name = reviewer.display_name
-                reviewer_mention = reviewer.mention
-            else:
-                reviewer_name = "Unknown User"
-                reviewer_mention = f"<@{review['reviewer_id']}>"
-
-            embed.add_field(
-                name=(
-                    f"{review_stars(review['rating'])} — "
-                    f"by {reviewer_name} · ID {review['id']}"
-                ),
-                value=(
-                    f"{reviewer_mention}\n"
-                    f"> {review['comment']}"
-                ),
-                inline=False
-            )
-
-        total_pages = max(
-            1,
-            (len(self.reviews) + self.per_page - 1)
-            // self.per_page
-        )
-
-        embed.set_footer(
-            text=f"Page {self.page + 1}/{total_pages}"
-        )
-
-        return embed
-
-    @discord.ui.button(
-        emoji="◀",
-        style=discord.ButtonStyle.secondary
-    )
-    async def previous(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-
-        if self.page > 0:
-            self.page -= 1
-
-        self.next.disabled = False
-        self.previous.disabled = self.page == 0
-
-        await interaction.response.edit_message(
-            embed=self.make_embed(),
-            view=self
-        )
-
-    @discord.ui.button(
-        emoji="▶",
-        style=discord.ButtonStyle.secondary
-    )
-    async def next(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-
-        max_page = (
-            len(self.reviews) - 1
-        ) // self.per_page
-
-        if self.page < max_page:
-            self.page += 1
-
-        self.previous.disabled = False
-        self.next.disabled = self.page >= max_page
-
-        await interaction.response.edit_message(
-            embed=self.make_embed(),
-            view=self
-        )
-
-
-# ============================================================
-# /reviews
-# ============================================================
-
-@tree.command(
-    name="reviews",
-    description="View a member's reviews."
-)
-@app_commands.describe(
-    user="The member whose reviews you want to see."
-)
-async def reviews(
-    interaction: discord.Interaction,
-    user: discord.Member
-):
-
-    review_list = get_reviews(user.id)
-
-    if not review_list:
-        await interaction.response.send_message(
-            f"**{user.display_name}** has no reviews yet.",
-            ephemeral=True
-        )
-        return
-
-    view = ReviewPagination(
-        target=user,
-        reviews=review_list
-    )
-
-    await interaction.response.send_message(
-        embed=view.make_embed(),
-        view=view
-    )
-
-
-# ============================================================
-# LEADERBOARD
-# ============================================================
-
-@tree.command(
-    name="leaderboard",
-    description="View the reputation leaderboard."
-)
-async def leaderboard(
-    interaction: discord.Interaction
-):
-
-    liked = get_leaderboard_liked(5)
-    reviewed = get_leaderboard_reviewed(5)
-    disliked = get_leaderboard_disliked(5)
-
-    embed = discord.Embed(
-        title="leaderboard",
-        color=discord.Color.dark_grey()
-    )
-
-    # --------------------------------------------------------
-    # TOP 5 MOST LIKED
-    # --------------------------------------------------------
-
-    liked_text = "**top 5 most liked users**\n\n"
-
-    if not liked:
-        liked_text += "No reviews yet."
-
-    else:
-
-        for index, row in enumerate(liked, start=1):
-
-            member = await get_review_member_or_user(
-                interaction.guild,
-                row["target_id"]
-            )
-
-            if member:
-                name = member.mention
-            else:
-                name = f"<@{row['target_id']}>"
-
-            stats = get_user_stats(
-                row["target_id"]
-            )
-
-            liked_text += (
-                f"**{index}**  "
-                f"{name} "
-                f"🟢 **{row['approved']}** "
-                f"({stats['approval']:.2f}% approval)\n"
-            )
-
-    embed.add_field(
-        name="Most Liked",
-        value=liked_text,
-        inline=False
-    )
-
-    # --------------------------------------------------------
-    # TOP 5 MOST REVIEWED
-    # --------------------------------------------------------
-
-    reviewed_text = "**top 5 most reviewed**\n\n"
-
-    if not reviewed:
-        reviewed_text += "No reviews yet."
-
-    else:
-
-        for index, row in enumerate(reviewed, start=1):
-
-            member = await get_review_member_or_user(
-                interaction.guild,
-                row["target_id"]
-            )
-
-            if member:
-                name = member.mention
-            else:
-                name = f"<@{row['target_id']}>"
-
-            reviewed_text += (
-                f"**{index}**  "
-                f"{name} "
-                f"📝 **{row['review_count']} reviews** "
-                f"(⭐ {row['average_rating']:.1f} avg)\n"
-            )
-
-    embed.add_field(
-        name="Most Reviewed",
-        value=reviewed_text,
-        inline=False
-    )
-
-    # --------------------------------------------------------
-    # TOP 5 MOST DISLIKED
-    # --------------------------------------------------------
-
-    disliked_text = "**top 5 most disliked users**\n\n"
-
-    if not disliked:
-        disliked_text += "No negative reviews yet."
-
-    else:
-
-        for index, row in enumerate(disliked, start=1):
-
-            member = await get_review_member_or_user(
-                interaction.guild,
-                row["target_id"]
-            )
-
-            if member:
-                name = member.mention
-            else:
-                name = f"<@{row['target_id']}>"
-
-            stats = get_user_stats(
-                row["target_id"]
-            )
-
-            disliked_text += (
-                f"**{index}**  "
-                f"{name} "
-                f"🔴 **{row['disliked']}** negative reviews "
-                f"({stats['approval']:.2f}% approval)\n"
-            )
-
-    embed.add_field(
-        name="Most Disliked",
-        value=disliked_text,
-        inline=False
-    )
-
-    await interaction.response.send_message(
-        embed=embed
-    )
-
-
-# ============================================================
-# MODERATOR DELETE COMMAND
-# ============================================================
-
-@tree.command(
-    name="deletereview",
-    description="Delete a review by ID."
-)
-@app_commands.describe(
-    review_id="The review ID to delete.")
-@app_commands.checks.has_permissions(
-    manage_messages=True
-)async def deletereview(
-    interaction: discord.Interaction,
-    review_id: int
-):
-    review = get_review(review_id)
-
-    if not review:
-        await interaction.response.send_message(
-            "❌ Review not found.",
-            ephemeral=True
-        )
-        return
-
-    delete_review(review_id)
-
-    await interaction.response.send_message(
-        f"✅ Review `{review_id}` deleted.",
-        ephemeral=True
-    )
-
-
-# ============================================================
-# ERROR HANDLER
-# ============================================================
-
-@deletereview.error
-async def deletereview_error(
-    interaction: discord.Interaction,
-    error
-):
-
-    if isinstance(
-        error,
-        app_commands.errors.MissingPermissions
-    ):
-        await interaction.response.send_message(
-            "❌ You need **Manage Messages** to do that.",
-            ephemeral=True
-        )
-    else:
-        raise error
-
-
-# =========================
-# REVIEW DATABASE SYNC
+# REVIEW DATABASE SYNC LOOP + MANUAL SAVE
 # =========================
 
 @tasks.loop(minutes=REVIEW_DB_SYNC_MINUTES)
 async def review_db_sync_loop():
-    success, error = await sync_review_db_to_github()
-    if not success:
-        return
-
+    await sync_review_db_to_github_locked()
 
 @review_db_sync_loop.before_loop
 async def before_review_db_sync():
     await bot.wait_until_ready()
-
 
 @tree.command(
     name="savedb",
     description="Immediately save the review database to GitHub."
 )
 async def savedb_command(interaction: discord.Interaction):
-    """Manually sync reviews.db to GitHub for members with the save role."""
+    """Immediately sync reviews.db to GitHub for members with the save role."""
     if not isinstance(interaction.user, discord.Member):
         await interaction.response.send_message(
-            "❌ This command can only be used inside the server.",
+            "❌ This command can only be used inside a server.",
             ephemeral=True,
         )
         return
-
     if not any(role.id == REVIEW_DB_SAVE_ROLE_ID for role in interaction.user.roles):
         await interaction.response.send_message(
             "❌ You do not have permission to use `/savedb`.",
             ephemeral=True,
         )
         return
-
     await interaction.response.defer(ephemeral=True)
-    success, error = await sync_review_db_to_github()
-
+    success, error = await sync_review_db_to_github_locked()
     if success:
         await interaction.followup.send(
             "✅ The review database was saved to GitHub successfully.",
@@ -4085,7 +4126,6 @@ async def savedb_command(interaction: discord.Interaction):
             f"❌ I could not save the review database to GitHub.\n`{error}`",
             ephemeral=True,
         )
-
 
 # =========================
 # BOT READY
@@ -4113,29 +4153,15 @@ async def on_ready():
         except Exception as e:
             pass
 
+    await restore_review_db_from_github()
+
+    if not review_db_sync_loop.is_running():
+        review_db_sync_loop.start()
+
     global user_blacklists_synced
     if not user_blacklists_synced:
         if await sync_user_blacklists_from_github():
             user_blacklists_synced = True
-
-    # On a fresh Railway filesystem, the module creates an empty reviews.db.
-    # If it has no reviews, restore the latest GitHub copy when one exists.
-    try:
-        review_count = review_db.execute("SELECT COUNT(*) FROM reviews").fetchone()[0]
-    except Exception:
-        review_count = 0
-
-    if review_count == 0:
-        try:
-            content = await asyncio.to_thread(_github_download_binary_file, GITHUB_DB_PATH)
-            if content:
-                await asyncio.to_thread(REVIEW_DB_FILE.write_bytes, content)
-                reload_review_db_connection()
-        except Exception:
-            pass
-
-    if not review_db_sync_loop.is_running():
-        review_db_sync_loop.start()
 
     if not kick_loop.is_running():
         kick_loop.start()
@@ -4636,29 +4662,3 @@ async def tag_role_loop_error(error):
 
     if not bot.is_closed() and not tag_role_loop.is_running():
         tag_role_loop.restart()
-
-
-# =========================
-# LOOP STARTUP
-# =========================
-
-@tag_role_loop.before_loop
-async def before_tag_role():
-    await bot.wait_until_ready()
-
-
-@kick_loop.before_loop
-async def before_kick():
-    await bot.wait_until_ready()
-
-# =========================
-# START BOT
-# =========================
-
-if not BOT_TOKEN:
-    raise RuntimeError(
-        "BOT_TOKEN is not configured. "
-        "Set the BOT_TOKEN environment variable before starting the bot."
-    )
-
-bot.run(BOT_TOKEN)
