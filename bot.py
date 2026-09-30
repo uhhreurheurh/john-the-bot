@@ -3624,9 +3624,16 @@ class ReviewModal(discord.ui.Modal):
                 rating=self.rating,
                 comment=self.comment.value
             )
-        except Exception:
+        except Exception as error:
+            # Return the real database error instead of hiding it behind the
+            # generic Discord modal failure message. This also makes Railway
+            # logs useful if the database itself is unavailable.
+            print(
+                f"Review database error: {type(error).__name__}: {error}"
+            )
             await interaction.followup.send(
-                "❌ I couldn't save that review to the database. Please try again.",
+                "❌ I couldn't save that review to the database.\n"
+                f"`{type(error).__name__}: {error}`",
                 ephemeral=True
             )
             return
