@@ -4136,7 +4136,6 @@ class StarView(discord.ui.View):
     name="review",
     description="Leave a review for a member."
 )
-@app_commands.default_permissions()
 @app_commands.describe(
     user="The member you want to review."
 )
