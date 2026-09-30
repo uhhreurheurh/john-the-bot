@@ -76,6 +76,9 @@ REVIEW_DB_FILE = Path(__file__).with_name("reviews.db")
 REVIEW_APPROVAL_RATINGS = (4, 5)
 REVIEW_UPDATE_APPROVAL_CHANNEL_ID = 1554700806220161164
 REVIEW_LOG_CHANNEL_ID = 1554863194885988362
+# User-ID blacklist for the review system. Blacklisted reviewers cannot submit
+# new reviews or update existing reviews. Persisted locally and synced to GitHub.
+REVIEW_BLACKLIST_FILE = Path(__file__).with_name("review_blacklist.json")
 
 # Tag server ids
 # Keep this list in the same order as tag_server_role_ids below.
@@ -216,6 +219,7 @@ textify_blacklist = load_user_blacklist(TEXTIFY_BLACKLIST_FILE)
 uwu_user_blacklist = textify_blacklist
 hood_user_blacklist = textify_blacklist
 uwu_hoodify_ban = load_user_blacklist(TEXTIFY_BAN_FILE)
+review_blacklist = load_user_blacklist(REVIEW_BLACKLIST_FILE)
 
 
 def _github_headers() -> dict[str, str]:
@@ -394,7 +398,7 @@ async def save_user_blacklist(
 
 async def sync_user_blacklists_from_github() -> bool:
     """Load the Textify blacklist and command-ban list from GitHub."""
-    global textify_blacklist, uwu_user_blacklist, hood_user_blacklist, uwu_hoodify_ban, github_blacklist_sync_error
+    global textify_blacklist, uwu_user_blacklist, hood_user_blacklist, uwu_hoodify_ban, review_blacklist, github_blacklist_sync_error
 
     if not GITHUB_TOKEN:
         github_blacklist_sync_error = (
@@ -407,6 +411,7 @@ async def sync_user_blacklists_from_github() -> bool:
             for path, name in (
                 (TEXTIFY_BLACKLIST_FILE, "textify"),
                 (TEXTIFY_BAN_FILE, "ban"),
+                (REVIEW_BLACKLIST_FILE, "review"),
             ):
                 exists, github_ids, _ = await asyncio.to_thread(
                     _github_get_user_blacklist,
@@ -418,6 +423,8 @@ async def sync_user_blacklists_from_github() -> bool:
                         textify_blacklist
                         if name == "textify"
                         else uwu_hoodify_ban
+                        if name == "ban"
+                        else review_blacklist
                     )
                     target.clear()
                     target.update(github_ids)
@@ -428,6 +435,8 @@ async def sync_user_blacklists_from_github() -> bool:
                         textify_blacklist
                         if name == "textify"
                         else uwu_hoodify_ban
+                        if name == "ban"
+                        else review_blacklist
                     )
                     await asyncio.to_thread(
                         _github_save_user_blacklist,
@@ -1850,6 +1859,8 @@ def _github_read_review_store():
     store.setdefault("version", 1)
     store.setdefault("reviews", [])
     store.setdefault("review_update_requests", [])
+    for request in store["review_update_requests"]:
+        request.setdefault("update_reason", "")
     return store, payload.get("sha")
 
 
@@ -2038,6 +2049,7 @@ def create_review_update_request(
     old_comment,
     new_rating,
     new_comment,
+    update_reason,
 ):
     def mutator(store):
         for request in store["review_update_requests"]:
@@ -2064,6 +2076,7 @@ def create_review_update_request(
                 "old_comment": old_comment,
                 "new_rating": new_rating,
                 "new_comment": new_comment,
+                "update_reason": update_reason,
                 "status": "pending",
                 "approval_message_id": None,
                 "approval_channel_id": None,
@@ -2852,6 +2865,63 @@ async def on_message(message: discord.Message):
             await message.reply(response, mention_author=False)
             return
 
+    if len(spaced_parts) >= 2 and spaced_parts[0].lower() == ",reviewblacklist" and spaced_parts[1].lower() in {"add", "remove", "status"}:
+        if not prefix_blacklist_allowed(message):
+            await message.reply("❌ You do not have permission to use this review blacklist command.", mention_author=False)
+            return
+        if not message.mentions:
+            await message.reply(
+                "Usage: ,reviewblacklist add @user | ,reviewblacklist remove @user | ,reviewblacklist status @user",
+                mention_author=False,
+            )
+            return
+
+        target = message.mentions[0]
+        action = spaced_parts[1].lower()
+
+        if action == "add":
+            if target.id in review_blacklist:
+                response = f"ℹ️ {target.mention} is already blacklisted from reviews."
+            else:
+                review_blacklist.add(target.id)
+                synced = await save_review_blacklist()
+                response = f"✅ {target.mention} can no longer submit or update reviews."
+                if not synced:
+                    response += f"\n⚠️ GitHub sync failed: {github_blacklist_sync_error}"
+                await log_review_event(
+                    "Review Blacklist Updated",
+                    f"{message.author.mention} blacklisted {target.mention} from the review system.",
+                    fields=[
+                        ("Member", f"{target.mention} / {target.id}", True),
+                        ("Changed By", f"{message.author.mention} / {message.author.id}", True),
+                    ],
+                    color=discord.Color.red(),
+                )
+        elif action == "remove":
+            if target.id not in review_blacklist:
+                response = f"ℹ️ {target.mention} is not currently blacklisted from reviews."
+            else:
+                review_blacklist.remove(target.id)
+                synced = await save_review_blacklist()
+                response = f"✅ {target.mention} can submit and update reviews again."
+                if not synced:
+                    response += f"\n⚠️ GitHub sync failed: {github_blacklist_sync_error}"
+                await log_review_event(
+                    "Review Blacklist Updated",
+                    f"{message.author.mention} removed {target.mention} from the review blacklist.",
+                    fields=[
+                        ("Member", f"{target.mention} / {target.id}", True),
+                        ("Changed By", f"{message.author.mention} / {message.author.id}", True),
+                    ],
+                    color=discord.Color.green(),
+                )
+        else:
+            status = target.id in review_blacklist
+            response = f"ℹ️ {target.mention} is **{'blacklisted' if status else 'not blacklisted'}** from the review system."
+
+        await message.reply(response, mention_author=False)
+        return
+
     if len(spaced_parts) >= 2 and spaced_parts[0].lower() == ",blacklist" and spaced_parts[1].lower() in {"add", "remove", "status"}:
         if not prefix_blacklist_allowed(message):
             await message.reply("❌ You do not have permission to use this blacklist command.", mention_author=False)
@@ -3422,6 +3492,103 @@ uwu_group = app_commands.Group(name="legacy_uwu", description="Legacy")
 hood_group = app_commands.Group(name="legacy_hood", description="Legacy")
 blacklist_group = app_commands.Group(name="blacklist", description="Manage the second-role blacklist")
 textify_group = app_commands.Group(name="textify", description="Manage UWUIFY and HOODIFY controls")
+review_blacklist_group = app_commands.Group(
+    name="reviewblacklist",
+    description="Manage the review user blacklist",
+)
+
+@review_blacklist_group.command(
+    name="add",
+    description="Blacklist a member from submitting or updating reviews.",
+)
+@app_commands.describe(member="The member to blacklist from reviews.")
+@app_commands.check(review_blacklist_command_check)
+async def review_blacklist_add_command(
+    interaction: discord.Interaction,
+    member: discord.Member,
+):
+    await interaction.response.defer(ephemeral=True)
+
+    if member.id in review_blacklist:
+        await interaction.followup.send(
+            f"ℹ️ {member.mention} is already blacklisted from reviews.",
+            ephemeral=True,
+        )
+        return
+
+    review_blacklist.add(member.id)
+    synced = await save_review_blacklist()
+    await log_review_event(
+        "Review Blacklist Updated",
+        f"{interaction.user.mention} blacklisted {member.mention} from the review system.",
+        fields=[
+            ("Member", f"{member.mention} / {member.id}", True),
+            ("Changed By", f"{interaction.user.mention} / {interaction.user.id}", True),
+            ("GitHub Sync", "Success" if synced else "Failed", True),
+        ],
+        color=discord.Color.red(),
+    )
+
+    message = f"✅ {member.mention} can no longer submit or update reviews."
+    if not synced:
+        message += f"\n⚠️ GitHub sync failed: {github_blacklist_sync_error}"
+    await interaction.followup.send(message, ephemeral=True)
+
+
+@review_blacklist_group.command(
+    name="remove",
+    description="Remove a member from the review blacklist.",
+)
+@app_commands.describe(member="The member to remove from the review blacklist.")
+@app_commands.check(review_blacklist_command_check)
+async def review_blacklist_remove_command(
+    interaction: discord.Interaction,
+    member: discord.Member,
+):
+    await interaction.response.defer(ephemeral=True)
+
+    if member.id not in review_blacklist:
+        await interaction.followup.send(
+            f"ℹ️ {member.mention} is not currently blacklisted from reviews.",
+            ephemeral=True,
+        )
+        return
+
+    review_blacklist.remove(member.id)
+    synced = await save_review_blacklist()
+    await log_review_event(
+        "Review Blacklist Updated",
+        f"{interaction.user.mention} removed {member.mention} from the review blacklist.",
+        fields=[
+            ("Member", f"{member.mention} / {member.id}", True),
+            ("Changed By", f"{interaction.user.mention} / {interaction.user.id}", True),
+            ("GitHub Sync", "Success" if synced else "Failed", True),
+        ],
+        color=discord.Color.green(),
+    )
+
+    message = f"✅ {member.mention} can submit and update reviews again."
+    if not synced:
+        message += f"\n⚠️ GitHub sync failed: {github_blacklist_sync_error}"
+    await interaction.followup.send(message, ephemeral=True)
+
+
+@review_blacklist_group.command(
+    name="status",
+    description="Check whether a member is blacklisted from reviews.",
+)
+@app_commands.describe(member="The member to check.")
+@app_commands.check(review_blacklist_command_check)
+async def review_blacklist_status_command(
+    interaction: discord.Interaction,
+    member: discord.Member,
+):
+    status = member.id in review_blacklist
+    await interaction.response.send_message(
+        f"ℹ️ {member.mention} is **{'blacklisted' if status else 'not blacklisted'}** from the review system.",
+        ephemeral=True,
+    )
+
 
 @textify_group.command(
     name="ban",
@@ -4136,6 +4303,7 @@ async def blacklist_status_command(
 uwuify_group.add_command(uwuify_hoodify_group)
 tree.add_command(textify_group)
 tree.add_command(blacklist_group)
+tree.add_command(review_blacklist_group)
 
 @tree.error
 async def on_app_command_error(
@@ -4282,6 +4450,36 @@ async def get_review_member_or_user(
 
 
 # ============================================================
+# REVIEW BLACKLIST HELPERS
+# ============================================================
+
+def review_user_is_blacklisted(user_id: int) -> bool:
+    return user_id in review_blacklist
+
+
+async def save_review_blacklist() -> bool:
+    return await save_user_blacklist(REVIEW_BLACKLIST_FILE, review_blacklist)
+
+
+async def review_blacklist_command_check(interaction: discord.Interaction) -> bool:
+    if interaction.guild_id != MAIN_SERVER:
+        raise app_commands.CheckFailure("This command can only be used in the main server.")
+
+    if not isinstance(interaction.user, discord.Member):
+        raise app_commands.CheckFailure("Could not verify your server roles.")
+
+    if not any(
+        role.id in DELETE_REVIEW_ALLOWED_ROLE_IDS
+        for role in interaction.user.roles
+    ):
+        raise app_commands.CheckFailure(
+            "You do not have permission to manage the review blacklist."
+        )
+
+    return True
+
+
+# ============================================================
 # REVIEW LOGGING
 # ============================================================
 
@@ -4344,6 +4542,13 @@ class ReviewModal(discord.ui.Modal):
 
         # Acknowledge the modal immediately so Discord does not time out.
         await interaction.response.defer(ephemeral=True)
+
+        if review_user_is_blacklisted(interaction.user.id):
+            await interaction.followup.send(
+                "❌ You are blacklisted from using the review system.",
+                ephemeral=True
+            )
+            return
 
         if interaction.user.id == self.target.id:
             await interaction.followup.send(
@@ -4512,6 +4717,13 @@ async def review(
     interaction: discord.Interaction,
     user: discord.Member
 ):
+
+    if review_user_is_blacklisted(interaction.user.id):
+        await interaction.response.send_message(
+            "❌ You are blacklisted from using the review system.",
+            ephemeral=True
+        )
+        return
 
     if user.id == interaction.user.id:
         await interaction.response.send_message(
@@ -4689,6 +4901,11 @@ def review_update_embed(request, status=None, moderator_id=None):
         value=f'{review_stars(request["new_rating"])}\n> {request["new_comment"]}',
         inline=False,
     )
+    embed.add_field(
+        name='Reason for Update',
+        value=str(request.get("update_reason") or "No reason provided."),
+        inline=False,
+    )
     if status:
         embed.add_field(
             name='Decision',
@@ -4764,8 +4981,17 @@ class UpdateReviewModal(discord.ui.Modal):
             max_length=1000,
             default=current_review['comment'],
         )
+        self.update_reason = discord.ui.TextInput(
+            label='Reason for updating this review',
+            placeholder='Explain why you are changing your review...',
+            style=discord.TextStyle.paragraph,
+            required=True,
+            min_length=10,
+            max_length=500,
+        )
         self.add_item(self.rating)
         self.add_item(self.comment)
+        self.add_item(self.update_reason)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -4778,6 +5004,15 @@ class UpdateReviewModal(discord.ui.Modal):
             return
 
         new_comment = self.comment.value.strip() or self.current_review['comment']
+        update_reason = self.update_reason.value.strip()
+
+        if len(update_reason) < 10:
+            await interaction.followup.send(
+                '❌ You must provide at least 10 characters explaining why you are updating the review.',
+                ephemeral=True,
+            )
+            return
+
         try:
             request_id = create_review_update_request(
                 self.current_review['id'],
@@ -4787,6 +5022,7 @@ class UpdateReviewModal(discord.ui.Modal):
                 self.current_review['comment'],
                 new_rating,
                 new_comment,
+                update_reason,
             )
         except PendingReviewUpdateError:
             await interaction.followup.send('❌ You already have an update waiting for approval for this vote.', ephemeral=True)
@@ -4820,6 +5056,13 @@ class UpdateReviewModal(discord.ui.Modal):
 )
 @app_commands.describe(user='The member whose review you want to update.')
 async def updatereview(interaction: discord.Interaction, user: discord.Member):
+    if review_user_is_blacklisted(interaction.user.id):
+        await interaction.response.send_message(
+            "❌ You are blacklisted from using the review system.",
+            ephemeral=True,
+        )
+        return
+
     await refresh_local_review_db_from_github()
     if user.id == interaction.user.id:
         await interaction.response.send_message('❌ You cannot update a review for yourself.', ephemeral=True)
