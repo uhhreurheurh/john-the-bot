@@ -2188,6 +2188,41 @@ async def restore_review_db_from_github() -> bool:
     except Exception:
         return False
 
+async def refresh_local_review_db_from_github() -> bool:
+    """Load the latest shared review database before review operations."""
+    if not GITHUB_TOKEN:
+        return False
+
+    temp = REVIEW_DB_FILE.with_name("reviews.db.latest.tmp")
+    try:
+        remote = await asyncio.to_thread(_github_download_db, GITHUB_DB_PATH)
+        if not remote:
+            return False
+
+        await asyncio.to_thread(temp.write_bytes, remote)
+        if not await asyncio.to_thread(_sqlite_file_is_valid, temp):
+            return False
+
+        with review_db_thread_lock:
+            try:
+                review_db.close()
+            except Exception:
+                pass
+            temp.replace(REVIEW_DB_FILE)
+            _reopen_review_db()
+
+        return True
+    except Exception as error:
+        print(f"Review database refresh failed: {type(error).__name__}: {error}")
+        return False
+    finally:
+        if temp.exists():
+            try:
+                temp.unlink()
+            except Exception:
+                pass
+
+
 async def sync_review_db_to_github() -> tuple[bool, str]:
     """Back up the current local SQLite database to GitHub.
 
@@ -4060,12 +4095,15 @@ class ReviewModal(discord.ui.Modal):
             return
 
         try:
-            review_id = add_review(
-                target_id=self.target.id,
-                reviewer_id=interaction.user.id,
-                rating=self.rating,
-                comment=self.comment.value
-            )
+            async with review_db_lock:
+                await refresh_local_review_db_from_github()
+                review_id = add_review(
+                    target_id=self.target.id,
+                    reviewer_id=interaction.user.id,
+                    rating=self.rating,
+                    comment=self.comment.value
+                )
+                sync_success, sync_error = await sync_review_db_to_github()
         except DuplicateReviewError:
             await interaction.followup.send(
                 '❌ You already reviewed this user. Use `/updatereview` to change your vote.',
@@ -4092,8 +4130,7 @@ class ReviewModal(discord.ui.Modal):
             f"**Review ID:** `{review_id}`",
             ephemeral=True
         )
-        success, sync_error = await sync_review_db_to_github_locked()
-        if not success:
+        if not sync_success:
             print(f"Review database save after /review failed: {sync_error}")
 
     async def on_error(
@@ -4512,6 +4549,7 @@ class UpdateReviewModal(discord.ui.Modal):
 )
 @app_commands.describe(user='The member whose review you want to update.')
 async def updatereview(interaction: discord.Interaction, user: discord.Member):
+    await refresh_local_review_db_from_github()
     if user.id == interaction.user.id:
         await interaction.response.send_message('❌ You cannot update a review for yourself.', ephemeral=True)
         return
@@ -4593,6 +4631,7 @@ async def reviews(
     user: discord.Member
 ):
 
+    await refresh_local_review_db_from_github()
     review_list = get_reviews(user.id)
 
     if not review_list:
@@ -4623,6 +4662,7 @@ async def reviews(
     description="View the reputation leaderboard."
 )
 async def leaderboard(interaction: discord.Interaction):
+    await refresh_local_review_db_from_github()
     liked = get_leaderboard_liked(5)
     reviewed = get_leaderboard_reviewed(5)
     disliked = get_leaderboard_disliked(5)
@@ -4703,6 +4743,7 @@ async def deletereview(
     review_id: int
 ):
 
+    await refresh_local_review_db_from_github()
     review = get_review(review_id)
 
     if not review:
