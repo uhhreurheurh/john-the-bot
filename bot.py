@@ -1505,9 +1505,75 @@ def _reopen_review_db() -> None:
     review_db.execute("PRAGMA busy_timeout = 15000")
 
 
-def add_review(target_id: int, reviewer_id: int, rating: int, comment: str):
-    """Insert a review using its own SQLite connection."""
+def _sqlite_file_is_valid(path: Path) -> bool:
+    """Return True when the file has a valid SQLite header and integrity check."""
+    try:
+        if not path.exists() or path.stat().st_size < 16:
+            return False
+        with path.open("rb") as file:
+            if file.read(16) != b"SQLite format 3\\x00":
+                return False
+        connection = sqlite3.connect(path, timeout=10)
+        try:
+            result = connection.execute("PRAGMA integrity_check").fetchone()
+            return bool(result and result[0] == "ok")
+        finally:
+            connection.close()
+    except Exception:
+        return False
+
+
+def _ensure_review_db_file_ready_sync() -> None:
+    """Repair/restore the local review DB before a write if it is invalid."""
+    global review_db
+
+    if _sqlite_file_is_valid(REVIEW_DB_FILE):
+        return
+
     with review_db_thread_lock:
+        if _sqlite_file_is_valid(REVIEW_DB_FILE):
+            return
+
+        # First try the known-good GitHub database branch.
+        if GITHUB_TOKEN:
+            try:
+                remote = _github_download_db(GITHUB_DB_PATH)
+                if remote:
+                    temp = REVIEW_DB_FILE.with_name("reviews.db.repair.tmp")
+                    temp.write_bytes(remote)
+                    if _sqlite_file_is_valid(temp):
+                        try:
+                            review_db.close()
+                        except Exception:
+                            pass
+                        temp.replace(REVIEW_DB_FILE)
+                        _reopen_review_db()
+                        return
+                    temp.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        # Never leave an invalid file blocking new reviews.
+        # Keep the bad file as a backup and create a clean database.
+        if REVIEW_DB_FILE.exists():
+            backup = REVIEW_DB_FILE.with_name("reviews.db.corrupt")
+            try:
+                backup.unlink(missing_ok=True)
+            except Exception:
+                pass
+            REVIEW_DB_FILE.replace(backup)
+
+        try:
+            review_db.close()
+        except Exception:
+            pass
+        _reopen_review_db()
+
+
+def add_review(target_id: int, reviewer_id: int, rating: int, comment: str):
+    """Insert a review after validating/repairing the local database."""
+    with review_db_thread_lock:
+        _ensure_review_db_file_ready_sync()
         connection = sqlite3.connect(
             REVIEW_DB_FILE,
             check_same_thread=False,
