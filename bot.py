@@ -54,6 +54,9 @@ TEXTIFY_BAN_FILE = Path(__file__).with_name("textify_ban.json")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "uhhreurheurh/john-the-bot")
 GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
+# Keep review-database commits off Railway's watched branch.
+# Railway watches main for bot deployments; review data is stored on a separate branch.
+GITHUB_DB_BRANCH = os.getenv("GITHUB_DB_BRANCH", "database")
 GITHUB_API_BASE = "https://api.github.com"
 
 # =========================
@@ -1646,7 +1649,7 @@ def _github_db_contents_url(path: str) -> str:
 def _github_download_db(path: str) -> bytes | None:
     if not GITHUB_TOKEN:
         return None
-    encoded_branch = urllib.parse.quote(GITHUB_BRANCH, safe="")
+    encoded_branch = urllib.parse.quote(GITHUB_DB_BRANCH, safe="")
     url = f"{_github_db_contents_url(path)}?ref={encoded_branch}"
     request = urllib.request.Request(url, headers=_github_headers(), method="GET")
     try:
@@ -1670,7 +1673,7 @@ def _github_download_db(path: str) -> bytes | None:
 def _github_upload_db(path: str, content: bytes, message: str) -> None:
     if not GITHUB_TOKEN:
         raise RuntimeError("GITHUB_TOKEN is not configured.")
-    encoded_branch = urllib.parse.quote(GITHUB_BRANCH, safe="")
+    encoded_branch = urllib.parse.quote(GITHUB_DB_BRANCH, safe="")
     url = _github_db_contents_url(path)
     existing_sha = None
     get_url = f"{url}?ref={encoded_branch}"
@@ -1686,7 +1689,7 @@ def _github_upload_db(path: str, content: bytes, message: str) -> None:
     body = {
         "message": message,
         "content": base64.b64encode(content).decode("ascii"),
-        "branch": GITHUB_BRANCH,
+        "branch": GITHUB_DB_BRANCH,
     }
     if existing_sha:
         body["sha"] = existing_sha
@@ -4099,6 +4102,8 @@ async def review_db_sync_loop():
 @review_db_sync_loop.before_loop
 async def before_review_db_sync():
     await bot.wait_until_ready()
+    # The first automatic save happens after 30 minutes, not on startup.
+    await asyncio.sleep(REVIEW_DB_SYNC_MINUTES * 60)
 
 @tree.command(
     name="savedb",
