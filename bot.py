@@ -1553,6 +1553,27 @@ def _ensure_review_db_schema() -> None:
                     reviewed_at TIMESTAMP
                 )
             ''')
+            connection.execute('''
+                CREATE TABLE IF NOT EXISTS review_update_approval_context (
+                    request_id INTEGER PRIMARY KEY,
+                    approved INTEGER NOT NULL DEFAULT 1
+                )
+            ''')
+            connection.execute('''
+                CREATE TRIGGER IF NOT EXISTS prevent_unapproved_review_updates
+                BEFORE UPDATE OF rating, comment ON reviews
+                WHEN NOT EXISTS (
+                    SELECT 1
+                    FROM review_update_approval_context c
+                    JOIN review_update_requests r ON r.id = c.request_id
+                    WHERE c.approved = 1
+                      AND r.review_id = OLD.id
+                      AND r.status = 'pending'
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'Review updates require moderator approval.');
+                END
+            ''')
             connection.commit()
         finally:
             connection.close()
@@ -1598,6 +1619,27 @@ def _reopen_review_db() -> None:
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             reviewed_at TIMESTAMP
         )
+    ''')
+    review_db.execute('''
+        CREATE TABLE IF NOT EXISTS review_update_approval_context (
+            request_id INTEGER PRIMARY KEY,
+            approved INTEGER NOT NULL DEFAULT 1
+        )
+    ''')
+    review_db.execute('''
+        CREATE TRIGGER IF NOT EXISTS prevent_unapproved_review_updates
+        BEFORE UPDATE OF rating, comment ON reviews
+        WHEN NOT EXISTS (
+            SELECT 1
+            FROM review_update_approval_context c
+            JOIN review_update_requests r ON r.id = c.request_id
+            WHERE c.approved = 1
+              AND r.review_id = OLD.id
+              AND r.status = 'pending'
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'Review updates require moderator approval.');
+        END
     ''')
     review_db.commit()
 
@@ -1794,14 +1836,36 @@ def complete_review_update(request_id, moderator_id, approve):
                 return request, 'cancelled'
             status = 'approved' if approve else 'rejected'
             if approve:
+                # The database trigger blocks every review edit unless this
+                # approval context exists for a pending request.
                 connection.execute(
-                    'UPDATE reviews SET rating = ?, comment = ? WHERE id = ?',
-                    (request['new_rating'], request['new_comment'], request['review_id']),
+                    'INSERT OR REPLACE INTO review_update_approval_context (request_id, approved) VALUES (?, 1)',
+                    (request_id,),
                 )
-            connection.execute(
-                "UPDATE review_update_requests SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (status, moderator_id, request_id),
-            )
+                try:
+                    connection.execute(
+                        'UPDATE reviews SET rating = ?, comment = ? WHERE id = ?',
+                        (request['new_rating'], request['new_comment'], request['review_id']),
+                    )
+                    connection.execute(
+                        "UPDATE review_update_requests SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (status, moderator_id, request_id),
+                    )
+                    connection.execute(
+                        'DELETE FROM review_update_approval_context WHERE request_id = ?',
+                        (request_id,),
+                    )
+                except Exception:
+                    connection.execute(
+                        'DELETE FROM review_update_approval_context WHERE request_id = ?',
+                        (request_id,),
+                    )
+                    raise
+            else:
+                connection.execute(
+                    "UPDATE review_update_requests SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (status, moderator_id, request_id),
+                )
             connection.commit()
             return request, status
         except Exception:
