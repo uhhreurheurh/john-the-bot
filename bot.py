@@ -426,6 +426,7 @@ async def apply_staff_strike_consequences(
     member: discord.Member,
     *,
     active_count: int | None = None,
+    original_role_id_override: int | None = None,
     log_two_strikes: bool = False,
     log_three_strikes: bool = False,
 ) -> tuple[str, str] | None:
@@ -441,7 +442,11 @@ async def apply_staff_strike_consequences(
     )
     active_count = len(active_strikes)
 
-    original_role_id = get_original_staff_role_id(member.id)
+    original_role_id = (
+        original_role_id_override
+        if original_role_id_override is not None
+        else get_original_staff_role_id(member.id)
+    )
     current_info = get_staff_role_for_member(member)
 
     if original_role_id is None and current_info is not None and active_count > 0:
@@ -5183,6 +5188,90 @@ async def strikes_command(
         f"{member.mention} / {member.id}\n\n" + "\n\n".join(blocks),
         ephemeral=False,
     )
+
+
+@tree.command(
+    name="removestrike",
+    description="Remove a specific active staff strike from a member.",
+)
+@app_commands.describe(
+    member="The staff member whose strike you want to remove",
+    strike_number="The strike number to remove",
+)
+@app_commands.check(staff_strike_command_check)
+async def removestrike_command(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    strike_number: app_commands.Range[int, 1, 9999],
+):
+    """Remove one active strike and immediately recalculate staff rank."""
+    await interaction.response.defer(ephemeral=False)
+
+    expired = prune_expired_staff_strikes()
+    if expired:
+        await handle_expired_staff_strikes(expired)
+        await save_staff_strikes()
+
+    matching = next(
+        (
+            strike
+            for strike in staff_strikes
+            if int(strike.get("user_id", 0)) == member.id
+            and int(strike.get("strike_number", 0)) == int(strike_number)
+        ),
+        None,
+    )
+
+    if matching is None:
+        await interaction.followup.send(
+            f"❌ {member.mention} does not have an active strike #{int(strike_number)}.",
+            ephemeral=False,
+        )
+        return
+
+    original_role_id = (
+        int(matching["original_staff_role_id"])
+        if matching.get("original_staff_role_id") is not None
+        else get_original_staff_role_id(member.id)
+    )
+
+    before_info = get_staff_role_for_member(member)
+    before_role_name = before_info[0] if before_info is not None else (
+        "Suspended" if len(get_user_staff_strikes(member.id)) >= 3 else "No Staff Role"
+    )
+
+    staff_strikes.remove(matching)
+
+    active_count = len(get_user_staff_strikes(member.id))
+    consequence = await apply_staff_strike_consequences(
+        member,
+        active_count=active_count,
+        original_role_id_override=original_role_id,
+    )
+    synced = await save_staff_strikes()
+
+    response = (
+        f"✅ Removed strike #{int(strike_number)} from "
+        f"{member.mention} / {member.id}.\n\n"
+        f"Active strikes: **{active_count}**"
+    )
+
+    if consequence is not None:
+        old_role, new_role = consequence
+        response += f"\nRole action: **{old_role} → {new_role}**"
+    elif original_role_id is not None:
+        refreshed = await resolve_main_guild_member(member.id) or member
+        after_info = get_staff_role_for_member(refreshed)
+        after_role_name = after_info[0] if after_info is not None else (
+            "Suspended" if active_count >= 3 else "No Staff Role"
+        )
+        if before_role_name != after_role_name:
+            response += f"\nRole action: **{before_role_name} → {after_role_name}**"
+
+    if not synced:
+        response += "\n⚠️ GitHub sync failed; the strike removal was saved locally."
+
+    await interaction.followup.send(response, ephemeral=False)
 
 
 # Register grouped slash-command roots.
