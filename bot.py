@@ -9,6 +9,7 @@ import random
 import logging
 import time
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -79,6 +80,17 @@ REVIEW_LOG_CHANNEL_ID = 1554863194885988362
 # User-ID blacklist for the review system. Blacklisted reviewers cannot submit
 # new reviews or update existing reviews. Persisted locally and synced to GitHub.
 REVIEW_BLACKLIST_FILE = Path(__file__).with_name("review_blacklist.json")
+
+# Staff strike system.
+# Only members with one of these roles may create or manage staff strikes.
+STAFF_STRIKE_ALLOWED_ROLE_IDS = {
+    1306082718060384399,
+    1518416402141417472,
+    1397677852056354948,
+    1371738883401711656,
+}
+STAFF_STRIKES_FILE = Path(__file__).with_name("staff_strikes.json")
+STAFF_STRIKE_EXPIRY_CHECK_SECONDS = 60
 
 # Tag server ids
 # Keep this list in the same order as tag_server_role_ids below.
@@ -222,7 +234,335 @@ uwu_hoodify_ban = load_user_blacklist(TEXTIFY_BAN_FILE)
 review_blacklist = load_user_blacklist(REVIEW_BLACKLIST_FILE)
 
 
-def _github_headers() -> dict[str, str]:
+def load_staff_strikes() -> list[dict]:
+    """Load all staff strikes from local disk."""
+    if not STAFF_STRIKES_FILE.exists():
+        return []
+
+    try:
+        with STAFF_STRIKES_FILE.open("r", encoding="utf-8") as file:
+            data = json.load(file)
+    except (json.JSONDecodeError, OSError, TypeError):
+        return []
+
+    if not isinstance(data, list):
+        return []
+
+    cleaned = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+
+        try:
+            user_id = int(item["user_id"])
+            strike_number = int(item["strike_number"])
+            issued_by = int(item["issued_by"])
+            reason = str(item["reason"]).strip()
+            issued_at = str(item["issued_at"])
+            expires_at = str(item["expires_at"])
+        except (KeyError, TypeError, ValueError):
+            continue
+
+        if not reason or strike_number < 1:
+            continue
+
+        cleaned.append({
+            "user_id": user_id,
+            "strike_number": strike_number,
+            "reason": reason,
+            "issued_by": issued_by,
+            "issued_at": issued_at,
+            "expires_at": expires_at,
+        })
+
+    return cleaned
+
+
+def _save_staff_strikes_local(strikes: list[dict]) -> None:
+    """Persist staff strikes to the local filesystem."""
+    try:
+        with STAFF_STRIKES_FILE.open("w", encoding="utf-8") as file:
+            json.dump(strikes, file, indent=2)
+            file.write("\n")
+    except OSError:
+        pass
+
+
+staff_strikes = load_staff_strikes()
+
+
+def _staff_strike_datetime(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return parsed.astimezone(timezone.utc)
+
+
+def prune_expired_staff_strikes() -> bool:
+    """Remove expired strikes. Returns True when anything was removed."""
+    global staff_strikes
+
+    now = datetime.now(timezone.utc)
+    before = len(staff_strikes)
+    staff_strikes = [
+        strike
+        for strike in staff_strikes
+        if (
+            (expires_at := _staff_strike_datetime(strike.get("expires_at", "")))
+            is not None
+            and expires_at > now
+        )
+    ]
+    return len(staff_strikes) != before
+
+
+def get_user_staff_strikes(user_id: int) -> list[dict]:
+    """Return currently active strikes for one user, sorted by strike number."""
+    prune_expired_staff_strikes()
+    return sorted(
+        (
+            strike
+            for strike in staff_strikes
+            if int(strike.get("user_id", 0)) == int(user_id)
+        ),
+        key=lambda strike: int(strike["strike_number"]),
+    )
+
+
+def next_staff_strike_number(user_id: int) -> int:
+    """Get the next sequential strike number for a user."""
+    highest = 0
+    for strike in staff_strikes:
+        if int(strike.get("user_id", 0)) != int(user_id):
+            continue
+        try:
+            highest = max(highest, int(strike["strike_number"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return highest + 1
+
+
+def create_staff_strike(
+    *,
+    user_id: int,
+    reason: str,
+    days: int,
+    issued_by: int,
+) -> dict:
+    """Create a new time-limited staff strike."""
+    reason = reason.strip()
+    number = next_staff_strike_number(user_id)
+    now = datetime.now(timezone.utc)
+
+    strike = {
+        "user_id": int(user_id),
+        "strike_number": number,
+        "reason": reason,
+        "issued_by": int(issued_by),
+        "issued_at": now.isoformat(),
+        "expires_at": (now + timedelta(days=int(days))).isoformat(),
+    }
+    staff_strikes.append(strike)
+    return strike
+
+
+STAFF_STRIKE_SYNC_LOCK = asyncio.Lock()
+staff_strike_github_sync_error: str | None = None
+
+
+def _github_get_staff_strikes() -> tuple[bool, list[dict], str | None]:
+    """Fetch the staff strike file from GitHub.
+
+    Returns (exists, strikes, blob_sha).
+    """
+    encoded_branch = urllib.parse.quote(GITHUB_BRANCH, safe="")
+    url = f"{_github_contents_url(STAFF_STRIKES_FILE)}?ref={encoded_branch}"
+
+    try:
+        payload = _github_request_json(url)
+    except RuntimeError as error:
+        if str(error).startswith("GitHub API HTTP 404:"):
+            return False, [], None
+        raise
+
+    encoded_content = payload.get("content", "")
+    if not encoded_content:
+        return True, [], payload.get("sha")
+
+    try:
+        decoded = base64.b64decode(
+            "".join(str(encoded_content).split())
+        ).decode("utf-8")
+        data = json.loads(decoded)
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError(
+            f"GitHub strike file {STAFF_STRIKES_FILE.name!r} has invalid JSON."
+        ) from error
+
+    if not isinstance(data, list):
+        raise RuntimeError(
+            f"GitHub strike file {STAFF_STRIKES_FILE.name!r} must contain a JSON list."
+        )
+
+    cleaned = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        try:
+            cleaned.append({
+                "user_id": int(item["user_id"]),
+                "strike_number": int(item["strike_number"]),
+                "reason": str(item["reason"]).strip(),
+                "issued_by": int(item["issued_by"]),
+                "issued_at": str(item["issued_at"]),
+                "expires_at": str(item["expires_at"]),
+            })
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    return True, cleaned, payload.get("sha")
+
+
+def _github_save_staff_strikes(strikes: list[dict]) -> None:
+    """Create or update the staff strike file in GitHub."""
+    exists, _, blob_sha = _github_get_staff_strikes()
+    serialized = json.dumps(strikes, indent=2) + "\n"
+
+    payload = {
+        "message": f"Update {STAFF_STRIKES_FILE.name}",
+        "content": base64.b64encode(
+            serialized.encode("utf-8")
+        ).decode("ascii"),
+        "branch": GITHUB_BRANCH,
+    }
+
+    if exists and blob_sha:
+        payload["sha"] = blob_sha
+
+    _github_request_json(
+        _github_contents_url(STAFF_STRIKES_FILE),
+        method="PUT",
+        payload=payload,
+    )
+
+
+async def save_staff_strikes() -> bool:
+    """Save locally and sync staff strikes to GitHub when configured."""
+    global staff_strike_github_sync_error
+
+    _save_staff_strikes_local(staff_strikes)
+
+    if not GITHUB_TOKEN:
+        staff_strike_github_sync_error = "GITHUB_TOKEN is not configured."
+        return False
+
+    async with STAFF_STRIKE_SYNC_LOCK:
+        try:
+            await asyncio.to_thread(
+                _github_save_staff_strikes,
+                list(staff_strikes),
+            )
+            staff_strike_github_sync_error = None
+            return True
+        except Exception as error:
+            staff_strike_github_sync_error = str(error)
+            return False
+
+
+async def sync_staff_strikes_from_github() -> bool:
+    """Load staff strike records from GitHub."""
+    global staff_strikes, staff_strike_github_sync_error
+
+    if not GITHUB_TOKEN:
+        staff_strike_github_sync_error = "GITHUB_TOKEN is not configured."
+        return False
+
+    async with STAFF_STRIKE_SYNC_LOCK:
+        try:
+            exists, remote_strikes, _ = await asyncio.to_thread(
+                _github_get_staff_strikes
+            )
+
+            if exists:
+                staff_strikes = remote_strikes
+                _save_staff_strikes_local(staff_strikes)
+            else:
+                await asyncio.to_thread(
+                    _github_save_staff_strikes,
+                    list(staff_strikes),
+                )
+
+            if prune_expired_staff_strikes():
+                _save_staff_strikes_local(staff_strikes)
+                await asyncio.to_thread(
+                    _github_save_staff_strikes,
+                    list(staff_strikes),
+                )
+
+            staff_strike_github_sync_error = None
+            return True
+        except Exception as error:
+            staff_strike_github_sync_error = str(error)
+            return False
+
+
+def staff_strike_command_allowed(member: discord.Member) -> bool:
+    return any(role.id in STAFF_STRIKE_ALLOWED_ROLE_IDS for role in member.roles)
+
+
+async def staff_strike_command_check(interaction: discord.Interaction) -> bool:
+    if interaction.guild_id != MAIN_SERVER:
+        raise app_commands.CheckFailure(
+            "This command can only be used in the main server."
+        )
+
+    if not isinstance(interaction.user, discord.Member):
+        raise app_commands.CheckFailure(
+            "Could not verify your server roles."
+        )
+
+    if not staff_strike_command_allowed(interaction.user):
+        raise app_commands.CheckFailure(
+            "You do not have permission to use the staff strike system."
+        )
+
+    return True
+
+
+def format_staff_strike(target: discord.Member, strike: dict) -> str:
+    return (
+        f"{target.mention} / {target.id}\n\n"
+        f"strike #{int(strike['strike_number'])}: {strike['reason']}\n\n"
+        f"{int(round((
+            _staff_strike_datetime(strike['expires_at'])
+            - _staff_strike_datetime(strike['issued_at'])
+        ).total_seconds() / 86400))}d"
+    )
+
+
+def parse_staff_strike_duration(
+    value: str,
+) -> int | None:
+    value = value.strip().lower()
+    if value.endswith("d"):
+        value = value[:-1].strip()
+    try:
+        days = int(value)
+    except ValueError:
+        return None
+
+    if not 7 <= days <= 40:
+        return None
+
+    return days
+
+
+ -> dict[str, str]:
     """Build headers for GitHub's REST API."""
     if not GITHUB_TOKEN:
         raise RuntimeError("GITHUB_TOKEN is not configured in Railway.")
@@ -2865,6 +3205,83 @@ async def on_message(message: discord.Message):
             await message.reply(response, mention_author=False)
             return
 
+    if spaced_parts and spaced_parts[0].lower() == ",strike":
+        if not (
+            message.guild is not None
+            and message.guild.id == MAIN_SERVER
+            and isinstance(message.author, discord.Member)
+            and staff_strike_command_allowed(message.author)
+        ):
+            await message.reply(
+                "❌ You do not have permission to use the staff strike system.",
+                mention_author=False,
+            )
+            return
+
+        strike_parts = content.split(maxsplit=3)
+        if len(strike_parts) < 4:
+            await message.reply(
+                "Usage: ,strike @user 7 false mute",
+                mention_author=False,
+            )
+            return
+
+        target = message.mentions[0] if message.mentions else None
+        target_token = strike_parts[1].strip("<@!>")
+
+        if target is None:
+            try:
+                target_id = int(target_token)
+            except ValueError:
+                target_id = 0
+
+            if target_id:
+                target = message.guild.get_member(target_id)
+                if target is None:
+                    try:
+                        target = await message.guild.fetch_member(target_id)
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                        target = None
+
+        if target is None:
+            await message.reply(
+                "❌ Mention a valid member or provide their user ID.",
+                mention_author=False,
+            )
+            return
+
+        days = parse_staff_strike_duration(strike_parts[2])
+        if days is None:
+            await message.reply(
+                "❌ Strike duration must be between **7d and 40d**.",
+                mention_author=False,
+            )
+            return
+
+        reason = strike_parts[3].strip()
+        if not reason:
+            await message.reply(
+                "❌ You must provide a reason for the strike.",
+                mention_author=False,
+            )
+            return
+
+        prune_expired_staff_strikes()
+        strike = create_staff_strike(
+            user_id=target.id,
+            reason=reason,
+            days=days,
+            issued_by=message.author.id,
+        )
+        synced = await save_staff_strikes()
+
+        response = format_staff_strike(target, strike)
+        if not synced:
+            response += "\n⚠️ GitHub sync failed; the strike was saved locally."
+
+        await message.reply(response, mention_author=False)
+        return
+
     if len(spaced_parts) >= 2 and spaced_parts[0].lower() == ",reviewblacklist" and spaced_parts[1].lower() in {"add", "remove", "status"}:
         if not prefix_blacklist_allowed(message):
             await message.reply("❌ You do not have permission to use this review blacklist command.", mention_author=False)
@@ -4334,6 +4751,86 @@ async def blacklist_status_command(
     )
 
 
+@tree.command(
+    name="strike",
+    description="Give a staff strike that expires after 7 to 40 days.",
+)
+@app_commands.describe(
+    member="The staff member receiving the strike",
+    reason="Reason for the strike",
+    days="How many days the strike should last (7-40)",
+)
+@app_commands.check(staff_strike_command_check)
+async def strike_command(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    reason: str,
+    days: app_commands.Range[int, 7, 40],
+):
+    """Issue a time-limited staff strike."""
+    reason = reason.strip()
+    if not reason:
+        await interaction.response.send_message(
+            "❌ You must provide a reason for the strike.",
+            ephemeral=True,
+        )
+        return
+
+    prune_expired_staff_strikes()
+    strike = create_staff_strike(
+        user_id=member.id,
+        reason=reason,
+        days=int(days),
+        issued_by=interaction.user.id,
+    )
+    synced = await save_staff_strikes()
+
+    await interaction.response.send_message(
+        format_staff_strike(member, strike)
+        + (
+            ""
+            if synced
+            else "\n⚠️ GitHub sync failed; the strike was saved locally."
+        ),
+        ephemeral=False,
+    )
+
+
+@tree.command(
+    name="strikes",
+    description="View a member's active staff strikes.",
+)
+@app_commands.describe(member="The member whose active strikes you want to view")
+@app_commands.check(staff_strike_command_check)
+async def strikes_command(
+    interaction: discord.Interaction,
+    member: discord.Member,
+):
+    """Show a member's active staff strikes."""
+    changed = prune_expired_staff_strikes()
+    if changed:
+        await save_staff_strikes()
+
+    strikes = get_user_staff_strikes(member.id)
+    if not strikes:
+        await interaction.response.send_message(
+            f"{member.mention} / {member.id}\n\nNo active strikes.",
+            ephemeral=False,
+        )
+        return
+
+    blocks = []
+    for strike in strikes:
+        blocks.append(
+            f"strike #{int(strike['strike_number'])}: {strike['reason']}"
+        )
+
+    await interaction.response.send_message(
+        f"{member.mention} / {member.id}\n\n" + "\n\n".join(blocks),
+        ephemeral=False,
+    )
+
+
 # Register grouped slash-command roots.
 uwuify_group.add_command(uwuify_hoodify_group)
 tree.add_command(textify_group)
@@ -5322,6 +5819,23 @@ async def deletereview_error(
 # =========================
 
 review_db_auto_sync_task: asyncio.Task | None = None
+staff_strike_expiry_task: asyncio.Task | None = None
+
+
+async def staff_strike_expiry_worker():
+    """Expire staff strikes automatically and keep persistent storage current."""
+    await bot.wait_until_ready()
+
+    while not bot.is_closed():
+        try:
+            if prune_expired_staff_strikes():
+                await save_staff_strikes()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+
+        await asyncio.sleep(STAFF_STRIKE_EXPIRY_CHECK_SECONDS)
 
 
 async def review_db_auto_sync_worker():
@@ -5386,7 +5900,7 @@ terminal_status_printed = False
 
 @bot.event
 async def on_ready():
-    global commands_synced, terminal_status_printed, review_db_restore_checked
+    global commands_synced, terminal_status_printed, review_db_restore_checked, staff_strike_expiry_task
 
     if not terminal_status_printed:
         print("Bot is alive")
@@ -5433,6 +5947,20 @@ async def on_ready():
 
         review_db_auto_sync_task = asyncio.create_task(
             review_db_auto_sync_worker()
+        )
+
+    if GITHUB_TOKEN and staff_strike_github_sync_error is None:
+        try:
+            await sync_staff_strikes_from_github()
+        except Exception:
+            pass
+    else:
+        if prune_expired_staff_strikes():
+            await save_staff_strikes()
+
+    if staff_strike_expiry_task is None or staff_strike_expiry_task.done():
+        staff_strike_expiry_task = asyncio.create_task(
+            staff_strike_expiry_worker()
         )
 
     global user_blacklists_synced
