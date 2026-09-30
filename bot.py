@@ -5088,9 +5088,11 @@ async def strike_command(
     days: app_commands.Range[int, 7, 40],
 ):
     """Issue a time-limited staff strike."""
+    await interaction.response.defer(ephemeral=False)
+
     reason = reason.strip()
     if not reason:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "❌ You must provide a reason for the strike.",
             ephemeral=True,
         )
@@ -5103,7 +5105,7 @@ async def strike_command(
 
     current_staff_info = get_staff_role_for_member(member)
     if current_staff_info is None:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "❌ The selected member does not have a configured staff role.",
             ephemeral=True,
         )
@@ -5139,7 +5141,7 @@ async def strike_command(
         old_role, new_role = consequence
         extra = f"\nRole action: **{old_role} → {new_role}**"
 
-    await interaction.response.send_message(
+    await interaction.followup.send(
         format_staff_strike(member, strike)
         + f"\n\nActive strikes: **{active_count}**"
         + extra,
