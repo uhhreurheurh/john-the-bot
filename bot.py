@@ -65,6 +65,12 @@ GITHUB_DB_PATH = os.getenv("GITHUB_DB_PATH", "reviews.db")
 GITHUB_DB_BRANCH = os.getenv("GITHUB_DB_BRANCH", "database")
 REVIEW_DB_SYNC_MINUTES = 30
 REVIEW_DB_SAVE_ROLE_ID = 1306082718060384399
+# Roles allowed to actually use /deletereview. The command remains visible to everyone.
+DELETE_REVIEW_ALLOWED_ROLE_IDS = {
+    1306082718060384399,
+    1518416402141417472,
+    1397677852056354948,
+}
 REVIEW_DB_FILE = Path(__file__).with_name("reviews.db")
 REVIEW_APPROVAL_RATINGS = (4, 5)
 
@@ -4106,17 +4112,24 @@ async def leaderboard(interaction: discord.Interaction):
 # MODERATOR DELETE COMMAND
 # ============================================================
 
+def deletereview_role_allowed(interaction: discord.Interaction) -> bool:
+    """Allow /deletereview only to members with one of the configured roles."""
+    if not isinstance(interaction.user, discord.Member):
+        return False
+    return any(
+        role.id in DELETE_REVIEW_ALLOWED_ROLE_IDS
+        for role in interaction.user.roles
+    )
+
+
 @tree.command(
     name="deletereview",
     description="Delete a review by ID."
 )
-@app_commands.default_permissions(manage_messages=True)
 @app_commands.describe(
     review_id="The review ID to delete."
 )
-@app_commands.checks.has_permissions(
-    manage_messages=True
-)
+@app_commands.check(deletereview_role_allowed)
 async def deletereview(
     interaction: discord.Interaction,
     review_id: int
@@ -4149,12 +4162,9 @@ async def deletereview_error(
     error
 ):
 
-    if isinstance(
-        error,
-        app_commands.errors.MissingPermissions
-    ):
+    if isinstance(error, app_commands.errors.CheckFailure):
         await interaction.response.send_message(
-            "❌ You need **Manage Messages** to do that.",
+            "❌ You do not have one of the required roles to use `/deletereview`.",
             ephemeral=True
         )
     else:
