@@ -997,7 +997,8 @@ async def send_hood_message(
     channel: discord.TextChannel,
     target: discord.Member,
     content: str,
-) -> list[discord.WebhookMessage]:    if target.id in hood_user_blacklist:
+) -> list[discord.WebhookMessage]:
+    if target.id in hood_user_blacklist:
         raise HoodUserBlacklisted
 
     ensure_hood_message_is_allowed(content)
@@ -1996,6 +1997,7 @@ class ReviewPagination(discord.ui.View):
 
         if len(reviews) <= self.per_page:
             self.next.disabled = True
+
     def make_embed(self):
 
         start = self.page * self.per_page
@@ -2995,7 +2997,8 @@ async def on_message(message: discord.Message):
 
     # ,unhoodify @user disables HOODIFY for only that member.
     if content.lower().startswith(",unhoodify") and message.mentions:
-        if not hood_user_is_whitelisted(message.author):            await message.reply(
+        if not hood_user_is_whitelisted(message.author):
+            await message.reply(
                 "❌ You need one of the allowed HOODIFY roles to use this command.",
                 mention_author=False,
             )
@@ -3994,6 +3997,7 @@ async def on_app_command_error(
             ephemeral=False,
         )
 
+
 # =========================
 # AUTOMATIC ROLE REMOVAL HELPER
 # =========================
@@ -4662,3 +4666,30 @@ async def tag_role_loop_error(error):
 
     if not bot.is_closed() and not tag_role_loop.is_running():
         tag_role_loop.restart()
+
+
+# =========================
+# LOOP STARTUP
+# =========================
+
+@tag_role_loop.before_loop
+async def before_tag_role():
+    await bot.wait_until_ready()
+
+
+@kick_loop.before_loop
+async def before_kick():
+    await bot.wait_until_ready()
+
+
+# =========================
+# START BOT
+# =========================
+
+if not BOT_TOKEN:
+    raise RuntimeError(
+        "BOT_TOKEN is not configured. "
+        "Set the BOT_TOKEN environment variable before starting the bot."
+    )
+
+bot.run(BOT_TOKEN)
