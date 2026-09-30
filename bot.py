@@ -1,6 +1,7 @@
 import os
 import asyncio
 import sqlite3
+import threading
 import base64
 import json
 import re
@@ -1486,6 +1487,8 @@ CREATE TABLE IF NOT EXISTS reviews (
 """)
 review_db.commit()
 
+review_db_thread_lock = threading.RLock()
+
 
 def _reopen_review_db() -> None:
     global review_db
@@ -1503,7 +1506,7 @@ def _reopen_review_db() -> None:
 
 
 def add_review(target_id: int, reviewer_id: int, rating: int, comment: str):
-    with review_db_lock:
+    with review_db_thread_lock:
         cursor = review_db.execute(
             """
             INSERT INTO reviews
@@ -1540,7 +1543,7 @@ def get_review(review_id: int):
 
 
 def delete_review(review_id: int):
-    with review_db_lock:
+    with review_db_thread_lock:
         review_db.execute("DELETE FROM reviews WHERE id = ?", (review_id,))
         review_db.commit()
 
@@ -3994,7 +3997,8 @@ async def review_db_sync_loop():
 
 
 @review_db_sync_loop.before_loop
-async def before_review_db_sync():    await bot.wait_until_ready()
+async def before_review_db_sync():
+    await bot.wait_until_ready()
     # Wait the full 30 minutes after startup before the first automatic commit.
     await asyncio.sleep(REVIEW_DB_SYNC_MINUTES * 60)
 
