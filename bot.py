@@ -1742,318 +1742,553 @@ class PendingReviewUpdateError(Exception):
     '''Raised when a review already has a pending update request.'''
 
 
-def _generate_review_id(connection: sqlite3.Connection) -> int:
-    """Generate a globally unique numeric review ID."""
-    while True:
-        # Time-derived IDs prevent separate Railway processes from both
-        # starting their own AUTOINCREMENT counter at 1.
-        review_id = (int(time.time() * 1000) * 1000) + random.randrange(1000)
-        if connection.execute(
-            'SELECT 1 FROM reviews WHERE id = ? LIMIT 1',
-            (review_id,),
-        ).fetchone() is None:
-            return review_id
+class ReviewStoreConflict(Exception):
+    """Raised when another bot instance changed the shared GitHub store."""
 
 
-def add_review(target_id: int, reviewer_id: int, rating: int, comment: str):
-    '''Insert one review per reviewer and target.'''
+GITHUB_REVIEW_STORE_PATH = "review_store.json"
+review_store_thread_lock = threading.RLock()
+
+
+def _new_review_store():
+    return {
+        "version": 1,
+        "reviews": [],
+        "review_update_requests": [],
+    }
+
+
+def _row_to_dict(row):
+    return dict(row) if row is not None else None
+
+
+def _seed_review_store_from_sqlite():
+    store = _new_review_store()
     with review_db_thread_lock:
-        _ensure_review_db_file_ready_sync()
-        connection = sqlite3.connect(REVIEW_DB_FILE, check_same_thread=False, timeout=30)
+        connection = sqlite3.connect(REVIEW_DB_FILE, timeout=30)
         connection.row_factory = sqlite3.Row
-        connection.execute('PRAGMA busy_timeout = 30000')
         try:
-            existing = connection.execute(
-                'SELECT id FROM reviews WHERE target_id = ? AND reviewer_id = ? LIMIT 1',
-                (target_id, reviewer_id),
-            ).fetchone()
-            if existing:
-                raise DuplicateReviewError
-
-            review_id = _generate_review_id(connection)
-            try:
-                connection.execute(
-                    '''
-                    INSERT INTO reviews
-                    (id, target_id, reviewer_id, rating, comment)
-                    VALUES (?, ?, ?, ?, ?)
-                    ''',
-                    (review_id, target_id, reviewer_id, rating, comment),
-                )
-                connection.commit()
-                return review_id
-            except sqlite3.IntegrityError as error:
-                connection.rollback()
-                if 'UNIQUE' in str(error).upper():
-                    raise DuplicateReviewError from error
-                raise
+            store["reviews"] = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT id, target_id, reviewer_id, rating, comment, created_at "
+                    "FROM reviews ORDER BY id"
+                ).fetchall()
+            ]
+            store["review_update_requests"] = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT * FROM review_update_requests ORDER BY id"
+                ).fetchall()
+            ]
         finally:
             connection.close()
-
-def _review_db_fetchone(sql: str, params=()):
-    """Read from a fresh SQLite connection so reads always see the latest file."""
-    with review_db_thread_lock:
-        connection = sqlite3.connect(
-            REVIEW_DB_FILE,
-            check_same_thread=False,
-            timeout=30,
-        )
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = 30000")
-        try:
-            return connection.execute(sql, params).fetchone()
-        finally:
-            connection.close()
+    return store
 
 
-def _review_db_fetchall(sql: str, params=()):
-    """Read multiple rows from a fresh SQLite connection."""
-    with review_db_thread_lock:
-        connection = sqlite3.connect(
-            REVIEW_DB_FILE,
-            check_same_thread=False,
-            timeout=30,
-        )
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = 30000")
-        try:
-            return connection.execute(sql, params).fetchall()
-        finally:
-            connection.close()
+def _github_review_store_request(method="GET", content=None, sha=None):
+    url = _github_db_url(GITHUB_REVIEW_STORE_PATH)
+    branch = urllib.parse.quote(GITHUB_DB_BRANCH, safe="")
+    if method == "GET":
+        url = f"{url}?ref={branch}"
 
+    body = None
+    headers = _github_headers()
 
-def get_user_review(target_id: int, reviewer_id: int):
-    return _review_db_fetchone(
-        'SELECT * FROM reviews WHERE target_id = ? AND reviewer_id = ? ORDER BY id DESC LIMIT 1',
-        (target_id, reviewer_id),
+    if method == "PUT":
+        body = {
+            "message": "Sync review store",
+            "content": base64.b64encode(
+                json.dumps(content, ensure_ascii=False, indent=2).encode("utf-8")
+            ).decode("ascii"),
+            "branch": GITHUB_DB_BRANCH,
+            "sha": sha,
+        }
+        headers = {**headers, "Content-Type": "application/json"}
+
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8") if body is not None else None,
+        headers=headers,
+        method=method,
     )
 
+    try:
+        with urllib.request.urlopen(request, timeout=45) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return None
+        if error.code == 409:
+            raise ReviewStoreConflict from error
+        body_text = error.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"GitHub review store request failed ({error.code}): {body_text}"
+        ) from error
 
-def create_review_update_request(review_id, target_id, reviewer_id, old_rating, old_comment, new_rating, new_comment):
+
+def _github_read_review_store():
+    if not GITHUB_TOKEN:
+        return _new_review_store(), None
+
+    payload = _github_review_store_request("GET")
+    if payload is None:
+        store = _seed_review_store_from_sqlite()
+        return store, None
+
+    encoded = payload.get("content")
+    if not encoded:
+        raise RuntimeError("GitHub review store is empty.")
+
+    raw = base64.b64decode("".join(str(encoded).split())).decode("utf-8")
+    store = json.loads(raw)
+
+    if not isinstance(store, dict):
+        raise RuntimeError("GitHub review store has invalid JSON.")
+
+    store.setdefault("version", 1)
+    store.setdefault("reviews", [])
+    store.setdefault("review_update_requests", [])
+    return store, payload.get("sha")
+
+
+def _github_write_review_store(store, sha=None):
+    payload = _github_review_store_request(
+        "PUT",
+        content=store,
+        sha=sha,
+    )
+    if payload is None:
+        raise RuntimeError("GitHub did not return the saved review store.")
+    return payload.get("content", {}).get("sha")
+
+
+def _github_update_review_store(mutator):
+    """Atomically update the shared review store with conflict retries."""
+    with review_store_thread_lock:
+        last_error = None
+
+        for _ in range(6):
+            store, sha = _github_read_review_store()
+
+            result = mutator(store)
+
+            try:
+                _github_write_review_store(store, sha)
+                return result, store
+            except ReviewStoreConflict as error:
+                last_error = error
+                time.sleep(0.5)
+
+        raise RuntimeError(
+            "The shared review store was changed by another bot instance. "
+            "Please try again."
+        ) from last_error
+
+
+def _load_shared_review_store():
+    with review_store_thread_lock:
+        store, sha = _github_read_review_store()
+
+        # Create the shared store when this is the first deployment using it.
+        if sha is None and GITHUB_TOKEN:
+            try:
+                _github_write_review_store(store, None)
+            except ReviewStoreConflict:
+                store, _ = _github_read_review_store()
+
+        return store
+
+
+def _mirror_review_store_to_sqlite(store):
+    """Keep reviews.db as a local/exported mirror of the shared store."""
     with review_db_thread_lock:
         connection = sqlite3.connect(REVIEW_DB_FILE, timeout=30)
         connection.row_factory = sqlite3.Row
-        connection.execute('PRAGMA busy_timeout = 30000')
+        connection.execute("PRAGMA busy_timeout = 30000")
         try:
-            pending = connection.execute(
-                'SELECT id FROM review_update_requests WHERE review_id = ? AND status = ? LIMIT 1',
-                (review_id, 'pending'),
-            ).fetchone()
-            if pending:
-                raise PendingReviewUpdateError
-            cursor = connection.execute(
-                '''
-                INSERT INTO review_update_requests
-                (review_id, target_id, reviewer_id, old_rating, old_comment, new_rating, new_comment)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''',
-                (review_id, target_id, reviewer_id, old_rating, old_comment, new_rating, new_comment),
-            )
-            connection.commit()
-            return cursor.lastrowid
-        finally:
-            connection.close()
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("DELETE FROM review_update_approval_context")
+            connection.execute("DELETE FROM review_update_requests")
+            connection.execute("DELETE FROM reviews")
 
-
-def get_review_update_request(request_id):
-    return review_db.execute(
-        'SELECT * FROM review_update_requests WHERE id = ? LIMIT 1',
-        (request_id,),
-    ).fetchone()
-
-
-def get_pending_review_update_requests():
-    return review_db.execute(
-        """
-        SELECT * FROM review_update_requests
-        WHERE status = 'pending'
-          AND approval_message_id IS NOT NULL
-          AND approval_channel_id = ?
-        ORDER BY id
-        """,
-        (REVIEW_UPDATE_APPROVAL_CHANNEL_ID,),
-    ).fetchall()
-
-
-def set_review_update_message(request_id, channel_id, message_id):
-    with review_db_thread_lock:
-        connection = sqlite3.connect(REVIEW_DB_FILE, timeout=30)
-        try:
-            connection.execute(
-                'UPDATE review_update_requests SET approval_channel_id = ?, approval_message_id = ? WHERE id = ?',
-                (channel_id, message_id, request_id),
-            )
-            connection.commit()
-        finally:
-            connection.close()
-
-
-def complete_review_update(request_id, moderator_id, approve):
-    with review_db_thread_lock:
-        connection = sqlite3.connect(REVIEW_DB_FILE, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute('PRAGMA busy_timeout = 30000')
-        try:
-            connection.execute('BEGIN IMMEDIATE')
-            request = connection.execute(
-                'SELECT * FROM review_update_requests WHERE id = ? AND status = ? LIMIT 1',
-                (request_id, 'pending'),
-            ).fetchone()
-            if not request:
-                return None, 'already_handled'
-            review = connection.execute(
-                'SELECT id FROM reviews WHERE id = ? AND target_id = ? AND reviewer_id = ?',
-                (request['review_id'], request['target_id'], request['reviewer_id']),
-            ).fetchone()
-            if not review:
+            for review in store.get("reviews", []):
                 connection.execute(
-                    "UPDATE review_update_requests SET status = 'cancelled', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (moderator_id, request_id),
+                    """
+                    INSERT INTO reviews
+                    (id, target_id, reviewer_id, rating, comment, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        review["id"],
+                        review["target_id"],
+                        review["reviewer_id"],
+                        review["rating"],
+                        review["comment"],
+                        review.get("created_at"),
+                    ),
                 )
-                connection.commit()
-                return request, 'cancelled'
-            status = 'approved' if approve else 'rejected'
-            if approve:
-                # The database trigger blocks every review edit unless this
-                # approval context exists for a pending request.
+
+            request_columns = [
+                "id",
+                "review_id",
+                "target_id",
+                "reviewer_id",
+                "old_rating",
+                "old_comment",
+                "new_rating",
+                "new_comment",
+                "status",
+                "approval_message_id",
+                "approval_channel_id",
+                "reviewed_by",
+                "created_at",
+                "reviewed_at",
+            ]
+
+            placeholders = ", ".join(["?"] * len(request_columns))
+            column_sql = ", ".join(request_columns)
+
+            for request in store.get("review_update_requests", []):
                 connection.execute(
-                    'INSERT OR REPLACE INTO review_update_approval_context (request_id, approved) VALUES (?, 1)',
-                    (request_id,),
+                    f"""
+                    INSERT INTO review_update_requests
+                    ({column_sql})
+                    VALUES ({placeholders})
+                    """,
+                    [request.get(column) for column in request_columns],
                 )
-                try:
-                    connection.execute(
-                        'UPDATE reviews SET rating = ?, comment = ? WHERE id = ?',
-                        (request['new_rating'], request['new_comment'], request['review_id']),
-                    )
-                    connection.execute(
-                        "UPDATE review_update_requests SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?",
-                        (status, moderator_id, request_id),
-                    )
-                    connection.execute(
-                        'DELETE FROM review_update_approval_context WHERE request_id = ?',
-                        (request_id,),
-                    )
-                except Exception:
-                    connection.execute(
-                        'DELETE FROM review_update_approval_context WHERE request_id = ?',
-                        (request_id,),
-                    )
-                    raise
-            else:
-                connection.execute(
-                    "UPDATE review_update_requests SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (status, moderator_id, request_id),
-                )
+
             connection.commit()
-            return request, status
         except Exception:
             connection.rollback()
             raise
         finally:
             connection.close()
 
+
+def _ensure_shared_review_store():
+    store = _load_shared_review_store()
+    _mirror_review_store_to_sqlite(store)
+    return store
+
+
+def _generate_shared_id(existing_ids):
+    while True:
+        value = (int(time.time() * 1000) * 1000) + random.randrange(1000)
+        if value not in existing_ids:
+            return value
+
+
+def add_review(target_id: int, reviewer_id: int, rating: int, comment: str):
+    '''Insert one review per reviewer and target into the shared store.'''
+    def mutator(store):
+        for review in store["reviews"]:
+            if (
+                int(review["target_id"]) == int(target_id)
+                and int(review["reviewer_id"]) == int(reviewer_id)
+            ):
+                raise DuplicateReviewError
+
+        review_id = _generate_shared_id(
+            {int(review["id"]) for review in store["reviews"]}
+        )
+        store["reviews"].append(
+            {
+                "id": review_id,
+                "target_id": target_id,
+                "reviewer_id": reviewer_id,
+                "rating": rating,
+                "comment": comment,
+                "created_at": time.strftime(
+                    "%Y-%m-%d %H:%M:%S",
+                    time.gmtime(),
+                ),
+            }
+        )
+        return review_id
+
+    review_id, store = _github_update_review_store(mutator)
+    _mirror_review_store_to_sqlite(store)
+    return review_id
+
+
+def get_user_review(target_id: int, reviewer_id: int):
+    store = _load_shared_review_store()
+    matches = [
+        review for review in store["reviews"]
+        if int(review["target_id"]) == int(target_id)
+        and int(review["reviewer_id"]) == int(reviewer_id)
+    ]
+    if not matches:
+        return None
+    return max(matches, key=lambda review: int(review["id"]))
+
+
+def create_review_update_request(
+    review_id,
+    target_id,
+    reviewer_id,
+    old_rating,
+    old_comment,
+    new_rating,
+    new_comment,
+):
+    def mutator(store):
+        for request in store["review_update_requests"]:
+            if (
+                int(request["review_id"]) == int(review_id)
+                and request["status"] == "pending"
+            ):
+                raise PendingReviewUpdateError
+
+        request_id = _generate_shared_id(
+            {
+                int(request["id"])
+                for request in store["review_update_requests"]
+            }
+        )
+
+        store["review_update_requests"].append(
+            {
+                "id": request_id,
+                "review_id": review_id,
+                "target_id": target_id,
+                "reviewer_id": reviewer_id,
+                "old_rating": old_rating,
+                "old_comment": old_comment,
+                "new_rating": new_rating,
+                "new_comment": new_comment,
+                "status": "pending",
+                "approval_message_id": None,
+                "approval_channel_id": None,
+                "reviewed_by": None,
+                "created_at": time.strftime(
+                    "%Y-%m-%d %H:%M:%S",
+                    time.gmtime(),
+                ),
+                "reviewed_at": None,
+            }
+        )
+        return request_id
+
+    request_id, store = _github_update_review_store(mutator)
+    _mirror_review_store_to_sqlite(store)
+    return request_id
+
+
+def get_review_update_request(request_id):
+    store = _load_shared_review_store()
+    for request in store["review_update_requests"]:
+        if int(request["id"]) == int(request_id):
+            return request
+    return None
+
+
+def get_pending_review_update_requests():
+    store = _load_shared_review_store()
+    return [
+        request
+        for request in store["review_update_requests"]
+        if request["status"] == "pending"
+        and request.get("approval_message_id") is not None
+        and int(request.get("approval_channel_id") or 0)
+        == REVIEW_UPDATE_APPROVAL_CHANNEL_ID
+    ]
+
+
+def set_review_update_message(request_id, channel_id, message_id):
+    def mutator(store):
+        for request in store["review_update_requests"]:
+            if int(request["id"]) == int(request_id):
+                request["approval_channel_id"] = channel_id
+                request["approval_message_id"] = message_id
+                return True
+        raise RuntimeError("Review update request was not found.")
+
+    _, store = _github_update_review_store(mutator)
+    _mirror_review_store_to_sqlite(store)
+
+
+def complete_review_update(request_id, moderator_id, approve):
+    def mutator(store):
+        request = next(
+            (
+                item for item in store["review_update_requests"]
+                if int(item["id"]) == int(request_id)
+                and item["status"] == "pending"
+            ),
+            None,
+        )
+
+        if request is None:
+            return None, "already_handled"
+
+        review = next(
+            (
+                item for item in store["reviews"]
+                if int(item["id"]) == int(request["review_id"])
+                and int(item["target_id"]) == int(request["target_id"])
+                and int(item["reviewer_id"]) == int(request["reviewer_id"])
+            ),
+            None,
+        )
+
+        if review is None:
+            request["status"] = "cancelled"
+            request["reviewed_by"] = moderator_id
+            request["reviewed_at"] = time.strftime(
+                "%Y-%m-%d %H:%M:%S",
+                time.gmtime(),
+            )
+            return request, "cancelled"
+
+        status = "approved" if approve else "rejected"
+
+        if approve:
+            review["rating"] = request["new_rating"]
+            review["comment"] = request["new_comment"]
+
+        request["status"] = status
+        request["reviewed_by"] = moderator_id
+        request["reviewed_at"] = time.strftime(
+            "%Y-%m-%d %H:%M:%S",
+            time.gmtime(),
+        )
+        return request, status
+
+    result, store = _github_update_review_store(mutator)
+    _mirror_review_store_to_sqlite(store)
+    return result
+
+
 def get_reviews(target_id: int):
-    return _review_db_fetchall(
-        """
-        SELECT *
-        FROM reviews
-        WHERE target_id = ?
-        ORDER BY id DESC
-        """,
-        (target_id,),
+    store = _load_shared_review_store()
+    return sorted(
+        [
+            review
+            for review in store["reviews"]
+            if int(review["target_id"]) == int(target_id)
+        ],
+        key=lambda review: int(review["id"]),
+        reverse=True,
     )
 
 
 def get_review(review_id: int):
-    return _review_db_fetchone(
-        """
-        SELECT *
-        FROM reviews
-        WHERE id = ?
-        """,
-        (review_id,),
-    )
+    store = _load_shared_review_store()
+    for review in store["reviews"]:
+        if int(review["id"]) == int(review_id):
+            return review
+    return None
 
 
 def delete_review(review_id: int):
-    """Delete a review using its own SQLite connection."""
-    with review_db_thread_lock:
-        connection = sqlite3.connect(
-            REVIEW_DB_FILE,
-            check_same_thread=False,
-            timeout=30,
-        )
-        connection.execute("PRAGMA busy_timeout = 30000")
-        try:
-            connection.execute("DELETE FROM reviews WHERE id = ?", (review_id,))
-            connection.commit()
-        finally:
-            connection.close()
+    def mutator(store):
+        original_count = len(store["reviews"])
+        store["reviews"] = [
+            review
+            for review in store["reviews"]
+            if int(review["id"]) != int(review_id)
+        ]
+        if len(store["reviews"]) == original_count:
+            raise RuntimeError("Review not found.")
+        return True
 
-def get_leaderboard_liked(limit: int = 5):
-    return _review_db_fetchall(
-        """
-        SELECT target_id, COUNT(*) AS approved
-        FROM reviews
-        WHERE rating IN (4, 5)
-        GROUP BY target_id
-        ORDER BY approved DESC, target_id
-        LIMIT ?
-        """,
-        (limit,),
+    _, store = _github_update_review_store(mutator)
+    _mirror_review_store_to_sqlite(store)
+
+
+def _aggregate_target_stats(store, target_id):
+    reviews = [
+        review for review in store["reviews"]
+        if int(review["target_id"]) == int(target_id)
+    ]
+    total = len(reviews)
+    approved = sum(
+        1 for review in reviews
+        if int(review["rating"]) in (4, 5)
     )
-
-
-def get_leaderboard_reviewed(limit: int = 5):
-    return _review_db_fetchall(
-        """
-        SELECT target_id,
-               COUNT(*) AS review_count,
-               AVG(rating) AS average_rating
-        FROM reviews
-        GROUP BY target_id
-        ORDER BY review_count DESC, average_rating DESC, target_id
-        LIMIT ?
-        """,
-        (limit,),
+    average = (
+        sum(int(review["rating"]) for review in reviews) / total
+        if total else 0
     )
-
-
-def get_leaderboard_disliked(limit: int = 5):
-    return _review_db_fetchall(
-        """
-        SELECT target_id, COUNT(*) AS disliked
-        FROM reviews
-        WHERE rating IN (1, 2, 3)
-        GROUP BY target_id
-        ORDER BY disliked DESC, target_id
-        LIMIT ?
-        """,
-        (limit,),
-    )
-
-
-def get_user_stats(user_id: int):
-    row = _review_db_fetchone(
-        """
-        SELECT
-            COUNT(*) AS total,
-            AVG(rating) AS average,
-            SUM(CASE WHEN rating IN (4, 5) THEN 1 ELSE 0 END) AS approved
-        FROM reviews
-        WHERE target_id = ?
-        """,
-        (user_id,),
-    )
-    total = row["total"] or 0
-    approved = row["approved"] or 0
     return {
         "total": total,
-        "average": row["average"] or 0,
+        "average": average,
         "approved": approved,
         "approval": ((approved / total) * 100) if total else 0,
     }
 
+
+def get_leaderboard_liked(limit: int = 5):
+    store = _load_shared_review_store()
+    counts = {}
+    for review in store["reviews"]:
+        if int(review["rating"]) in (4, 5):
+            target_id = int(review["target_id"])
+            counts[target_id] = counts.get(target_id, 0) + 1
+
+    return [
+        {"target_id": target_id, "approved": count}
+        for target_id, count in sorted(
+            counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )[:limit]
+    ]
+
+
+def get_leaderboard_reviewed(limit: int = 5):
+    store = _load_shared_review_store()
+    counts = {}
+    ratings = {}
+
+    for review in store["reviews"]:
+        target_id = int(review["target_id"])
+        counts[target_id] = counts.get(target_id, 0) + 1
+        ratings.setdefault(target_id, []).append(int(review["rating"]))
+
+    rows = [
+        {
+            "target_id": target_id,
+            "review_count": counts[target_id],
+            "average_rating": sum(ratings[target_id]) / counts[target_id],
+        }
+        for target_id in counts
+    ]
+
+    return sorted(
+        rows,
+        key=lambda row: (
+            -row["review_count"],
+            -row["average_rating"],
+            row["target_id"],
+        ),
+    )[:limit]
+
+
+def get_leaderboard_disliked(limit: int = 5):
+    store = _load_shared_review_store()
+    counts = {}
+    for review in store["reviews"]:
+        if int(review["rating"]) in (1, 2, 3):
+            target_id = int(review["target_id"])
+            counts[target_id] = counts.get(target_id, 0) + 1
+
+    return [
+        {"target_id": target_id, "disliked": count}
+        for target_id, count in sorted(
+            counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )[:limit]
+    ]
+
+
+def get_user_stats(user_id: int):
+    return _aggregate_target_stats(
+        _load_shared_review_store(),
+        user_id,
+    )
 
 def _review_db_snapshot() -> bytes:
     """Create a consistent SQLite snapshot while review writes are paused."""
@@ -2224,23 +2459,14 @@ async def refresh_local_review_db_from_github() -> bool:
 
 
 async def sync_review_db_to_github() -> tuple[bool, str]:
-    """Back up the current local SQLite database to GitHub.
-
-    The Railway instance's local database is the source of truth while the bot
-    is running. We intentionally do NOT replace/merge it with the GitHub copy
-    during normal saves, because doing so can make one live instance overwrite
-    another instance's current review set.
-    """
+    """Export the shared review store to reviews.db and then to GitHub."""
     if not GITHUB_TOKEN:
         return False, "GITHUB_TOKEN is not configured."
-    if not REVIEW_DB_FILE.exists():
-        return False, "reviews.db does not exist."
 
     try:
-        # Make sure the local DB is valid and current before taking the snapshot.
-        await asyncio.to_thread(_ensure_review_db_file_ready_sync)
+        store = await asyncio.to_thread(_load_shared_review_store)
+        await asyncio.to_thread(_mirror_review_store_to_sqlite, store)
         snapshot = await asyncio.to_thread(_review_db_snapshot)
-
         await asyncio.to_thread(
             _github_upload_db,
             GITHUB_DB_PATH,
@@ -4876,6 +5102,10 @@ async def on_ready():
 
     # Always ensure the restored database has the review schema.
     _ensure_review_db_schema()
+    try:
+        await asyncio.to_thread(_ensure_shared_review_store)
+    except Exception as error:
+        print(f"Review store initialization failed: {type(error).__name__}: {error}")
 
     global review_update_views_registered
     if not review_update_views_registered:
