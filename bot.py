@@ -1741,6 +1741,17 @@ def get_review_update_request(request_id):
         (request_id,),
     ).fetchone()
 
+def get_pending_review_update_requests():
+    return review_db.execute(
+        """
+        SELECT * FROM review_update_requests
+        WHERE status = 'pending'
+          AND approval_message_id IS NOT NULL
+          AND approval_channel_id = ?
+        ORDER BY id
+        """
+        , (REVIEW_UPDATE_APPROVAL_CHANNEL_ID,),
+    ).fetchall()
 
 def set_review_update_message(request_id, channel_id, message_id):
     with review_db_thread_lock:
@@ -2067,6 +2078,7 @@ bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 commands_synced = False
 user_blacklists_synced = False
+review_update_views_registered = False
 
 
 # =========================
@@ -4201,7 +4213,7 @@ def review_update_embed(request, status=None, moderator_id=None):
             value=f'{status.title()} by <@{moderator_id}>',
             inline=False,
         )
-    embed.set_footer(text='Use /approvevote or /rejectvote with the request ID.')
+    embed.set_footer(text='Review update awaiting moderator approval. Use the buttons below.')
     return embed
 
 
@@ -4212,10 +4224,39 @@ async def post_review_update_request(request_id):
     channel = bot.get_channel(REVIEW_UPDATE_APPROVAL_CHANNEL_ID)
     if channel is None:
         channel = await bot.fetch_channel(REVIEW_UPDATE_APPROVAL_CHANNEL_ID)
-    approval_message = await channel.send(embed=review_update_embed(request))
+    approval_message = await channel.send(embed=review_update_embed(request), view=ReviewUpdateApprovalView(request_id))
     set_review_update_message(request_id, REVIEW_UPDATE_APPROVAL_CHANNEL_ID, approval_message.id)
     return approval_message
 
+
+class ReviewUpdateApprovalView(discord.ui.View):
+    """Persistent Approve/Reject buttons for moderator review of vote updates."""
+    def __init__(self, request_id: int, disabled: bool = False):
+        super().__init__(timeout=None)
+        self.request_id = request_id
+
+        approve_button = discord.ui.Button(
+            label='Approve',
+            style=discord.ButtonStyle.success,
+            custom_id=f'review_update_approve:{request_id}',
+            disabled=disabled,
+        )
+        reject_button = discord.ui.Button(
+            label='Reject',
+            style=discord.ButtonStyle.danger,
+            custom_id=f'review_update_reject:{request_id}',
+            disabled=disabled,
+        )
+        approve_button.callback = self.approve_callback
+        reject_button.callback = self.reject_callback
+        self.add_item(approve_button)
+        self.add_item(reject_button)
+
+    async def approve_callback(self, interaction: discord.Interaction):
+        await handle_review_update_decision(interaction, self.request_id, True)
+
+    async def reject_callback(self, interaction: discord.Interaction):
+        await handle_review_update_decision(interaction, self.request_id, False)
 
 class UpdateReviewModal(discord.ui.Modal):
     def __init__(self, target, current_review):
@@ -4331,7 +4372,10 @@ async def handle_review_update_decision(interaction: discord.Interaction, reques
             channel = await bot.fetch_channel(request['approval_channel_id'])
         if channel is not None and request['approval_message_id']:
             message = await channel.fetch_message(request['approval_message_id'])
-            await message.edit(embed=review_update_embed(request, status, interaction.user.id))
+            await message.edit(
+                embed=review_update_embed(request, status, interaction.user.id),
+                view=ReviewUpdateApprovalView(request_id, disabled=True),
+            )
     except Exception:
         pass
     asyncio.create_task(sync_review_db_to_github_locked())
@@ -4344,16 +4388,16 @@ async def handle_review_update_decision(interaction: discord.Interaction, reques
     await interaction.followup.send(text, ephemeral=True)
 
 
-@tree.command(name='approvevote', description='Approve a pending review vote update.')
-@app_commands.describe(request_id='The review update request ID.')
-async def approvevote(interaction: discord.Interaction, request_id: int):
-    await handle_review_update_decision(interaction, request_id, True)
-
-
-@tree.command(name='rejectvote', description='Reject a pending review vote update.')
-@app_commands.describe(request_id='The review update request ID.')
-async def rejectvote(interaction: discord.Interaction, request_id: int):
-    await handle_review_update_decision(interaction, request_id, False)
+async def register_pending_review_update_views():
+    """Re-register persistent buttons after a bot restart."""
+    for request in get_pending_review_update_requests():
+        try:
+            bot.add_view(
+                ReviewUpdateApprovalView(request['id']),
+                message_id=request['approval_message_id'],
+            )
+        except Exception:
+            pass
 
 # ============================================================
 # /reviews
@@ -4603,6 +4647,11 @@ async def on_ready():
 
     # Always ensure the restored database has the review schema.
     _ensure_review_db_schema()
+
+    global review_update_views_registered
+    if not review_update_views_registered:
+        await register_pending_review_update_views()
+        review_update_views_registered = True
 
     if not review_db_sync_loop.is_running():
         review_db_sync_loop.start()
