@@ -3607,6 +3607,130 @@ async def on_message(message: discord.Message):
         await message.reply(response, mention_author=False)
         return
 
+    if spaced_parts and spaced_parts[0].lower() == ",removestrike":
+        if not (
+            message.guild is not None
+            and message.guild.id == MAIN_SERVER
+            and isinstance(message.author, discord.Member)
+            and staff_strike_command_allowed(message.author)
+        ):
+            await message.reply(
+                "❌ You do not have permission to use the staff strike system.",
+                mention_author=False,
+            )
+            return
+
+        strike_parts = content.split()
+        if len(strike_parts) != 3:
+            await message.reply(
+                "Usage: ,removestrike @user 1",
+                mention_author=False,
+            )
+            return
+
+        target = message.mentions[0] if message.mentions else None
+        target_token = strike_parts[1].strip("<@!>")
+
+        if target is None:
+            try:
+                target_id = int(target_token)
+            except ValueError:
+                target_id = 0
+
+            if target_id:
+                target = message.guild.get_member(target_id)
+                if target is None:
+                    try:
+                        target = await message.guild.fetch_member(target_id)
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                        target = None
+
+        if target is None:
+            await message.reply(
+                "❌ Mention a valid member or provide their user ID.",
+                mention_author=False,
+            )
+            return
+
+        try:
+            strike_number = int(strike_parts[2])
+        except ValueError:
+            strike_number = 0
+
+        if strike_number < 1:
+            await message.reply(
+                "❌ Strike number must be 1 or higher.",
+                mention_author=False,
+            )
+            return
+
+        expired = prune_expired_staff_strikes()
+        if expired:
+            await handle_expired_staff_strikes(expired)
+            await save_staff_strikes()
+
+        matching = next(
+            (
+                strike
+                for strike in staff_strikes
+                if int(strike.get("user_id", 0)) == target.id
+                and int(strike.get("strike_number", 0)) == strike_number
+            ),
+            None,
+        )
+
+        if matching is None:
+            await message.reply(
+                f"❌ {target.mention} does not have an active strike #{strike_number}.",
+                mention_author=False,
+            )
+            return
+
+        original_role_id = (
+            int(matching["original_staff_role_id"])
+            if matching.get("original_staff_role_id") is not None
+            else get_original_staff_role_id(target.id)
+        )
+
+        before_info = get_staff_role_for_member(target)
+        before_role_name = before_info[0] if before_info is not None else (
+            "Suspended" if len(get_user_staff_strikes(target.id)) >= 3 else "No Staff Role"
+        )
+
+        staff_strikes.remove(matching)
+
+        active_count = len(get_user_staff_strikes(target.id))
+        consequence = await apply_staff_strike_consequences(
+            target,
+            active_count=active_count,
+            original_role_id_override=original_role_id,
+        )
+        synced = await save_staff_strikes()
+
+        response = (
+            f"✅ Removed strike #{strike_number} from "
+            f"{target.mention} / {target.id}.\n\n"
+            f"Active strikes: **{active_count}**"
+        )
+
+        if consequence is not None:
+            old_role, new_role = consequence
+            response += f"\nRole action: **{old_role} → {new_role}**"
+        elif original_role_id is not None:
+            refreshed = await resolve_main_guild_member(target.id) or target
+            after_info = get_staff_role_for_member(refreshed)
+            after_role_name = after_info[0] if after_info is not None else (
+                "Suspended" if active_count >= 3 else "No Staff Role"
+            )
+            if before_role_name != after_role_name:
+                response += f"\nRole action: **{before_role_name} → {after_role_name}**"
+
+        if not synced:
+            response += "\n⚠️ GitHub sync failed; the strike removal was saved locally."
+
+        await message.reply(response, mention_author=False)
+        return
+
     if len(spaced_parts) >= 2 and spaced_parts[0].lower() == ",reviewblacklist" and spaced_parts[1].lower() in {"add", "remove", "status"}:
         if not prefix_blacklist_allowed(message):
             await message.reply("❌ You do not have permission to use this review blacklist command.", mention_author=False)
