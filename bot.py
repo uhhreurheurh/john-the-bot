@@ -562,7 +562,7 @@ def parse_staff_strike_duration(
     return days
 
 
- -> dict[str, str]:
+def _github_headers() -> dict[str, str]:
     """Build headers for GitHub's REST API."""
     if not GITHUB_TOKEN:
         raise RuntimeError("GITHUB_TOKEN is not configured in Railway.")
