@@ -997,7 +997,8 @@ async def send_hood_message(
     if target.id in hood_user_blacklist:
         raise HoodUserBlacklisted
 
-    ensure_hood_message_is_allowed(content)    webhook = await get_hood_webhook(channel)
+    ensure_hood_message_is_allowed(content)
+    webhook = await get_hood_webhook(channel)
     hood_text = hoodify_text(content)
 
     if not hood_text:
@@ -1997,8 +1998,7 @@ async def on_message(message: discord.Message):
     # Parse the readable spaced prefix syntax once so all handlers can use it.
     spaced_parts = content.split(maxsplit=2)
     prefix_command = content.lower().split(maxsplit=1)[0]    if prefix_command in {
-        ",uwuify", ",unuwuify", ",hoodify", ",unhoodify", ",uwu", ",hood"
-    } and uwu_hoodify_user_is_banned(message.author):
+        ",uwuify", ",unuwuify", ",hoodify", ",unhoodify", ",uwu", ",hood"    } and uwu_hoodify_user_is_banned(message.author):
         await message.reply(
             "❌ You are banned from using UWUIFY and HOODIFY.",
             mention_author=False,
@@ -2997,8 +2997,7 @@ async def uwu_command(
             ephemeral=False,
         )    except UserBlacklistStorageUnavailable as error:
         await interaction.response.send_message(
-            "❌ I could not verify the UWUIFY blacklist from GitHub, "
-            f"so I will not activate this target. Error: `{error}`",
+            "❌ I could not verify the UWUIFY blacklist from GitHub, "            f"so I will not activate this target. Error: `{error}`",
             ephemeral=False,
         )
     except UwuTargetLimitReached:
@@ -3998,7 +3997,6 @@ async def leaderboard(
     interaction: discord.Interaction,
     review_id: int
 ):
-
     review = get_review(review_id)
 
     if not review:
