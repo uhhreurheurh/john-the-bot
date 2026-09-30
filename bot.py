@@ -1574,6 +1574,18 @@ def _ensure_review_db_schema() -> None:
                     SELECT RAISE(ABORT, 'Review updates require moderator approval.');
                 END
             ''')
+            connection.execute('''
+                DELETE FROM reviews
+                WHERE id NOT IN (
+                    SELECT MIN(id)
+                    FROM reviews
+                    GROUP BY target_id, reviewer_id
+                )
+            ''')
+            connection.execute('''
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_target_reviewer
+                ON reviews(target_id, reviewer_id)
+            ''')
             connection.commit()
         finally:
             connection.close()
@@ -1640,6 +1652,18 @@ def _reopen_review_db() -> None:
         BEGIN
             SELECT RAISE(ABORT, 'Review updates require moderator approval.');
         END
+    ''')
+    review_db.execute('''
+        DELETE FROM reviews
+        WHERE id NOT IN (
+            SELECT MIN(id)
+            FROM reviews
+            GROUP BY target_id, reviewer_id
+        )
+    ''')
+    review_db.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_target_reviewer
+        ON reviews(target_id, reviewer_id)
     ''')
     review_db.commit()
 
@@ -1731,16 +1755,22 @@ def add_review(target_id: int, reviewer_id: int, rating: int, comment: str):
             ).fetchone()
             if existing:
                 raise DuplicateReviewError
-            cursor = connection.execute(
-                '''
-                INSERT INTO reviews
-                (target_id, reviewer_id, rating, comment)
-                VALUES (?, ?, ?, ?)
-                ''',
-                (target_id, reviewer_id, rating, comment),
-            )
-            connection.commit()
-            return cursor.lastrowid
+            try:
+                cursor = connection.execute(
+                    '''
+                    INSERT INTO reviews
+                    (target_id, reviewer_id, rating, comment)
+                    VALUES (?, ?, ?, ?)
+                    ''',
+                    (target_id, reviewer_id, rating, comment),
+                )
+                connection.commit()
+                return cursor.lastrowid
+            except sqlite3.IntegrityError as error:
+                connection.rollback()
+                if 'UNIQUE' in str(error).upper():
+                    raise DuplicateReviewError from error
+                raise
         finally:
             connection.close()
 
@@ -2151,6 +2181,7 @@ tree = app_commands.CommandTree(bot)
 commands_synced = False
 user_blacklists_synced = False
 review_update_views_registered = False
+review_db_restore_checked = False
 
 
 # =========================
@@ -4121,6 +4152,17 @@ async def review(
         )
         return
 
+    # /review creates a review only. Existing reviews must be changed through
+    # /updatereview so the moderator approval workflow is always used.
+    existing = get_user_review(user.id, interaction.user.id)
+    if existing:
+        await interaction.response.send_message(
+            "❌ You already reviewed this user. Use /updatereview to request a change. "
+            "Your existing review will stay unchanged until a moderator approves it.",
+            ephemeral=True
+        )
+        return
+
     await interaction.response.send_message(
         "**select your star rating:**",
         view=StarView(user),
@@ -4700,7 +4742,7 @@ terminal_status_printed = False
 
 @bot.event
 async def on_ready():
-    global commands_synced, terminal_status_printed
+    global commands_synced, terminal_status_printed, review_db_restore_checked
 
     if not terminal_status_printed:
         print("Bot is alive")
@@ -4719,7 +4761,10 @@ async def on_ready():
         except Exception as e:
             pass
 
-    await restore_review_db_from_github()
+    if not review_db_restore_checked:
+        restored = await restore_review_db_from_github()
+        if restored or _review_db_has_reviews() or not GITHUB_TOKEN:
+            review_db_restore_checked = True
 
     # Always ensure the restored database has the review schema.
     _ensure_review_db_schema()
