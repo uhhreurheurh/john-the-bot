@@ -93,6 +93,7 @@ STAFF_STRIKES_FILE = Path(__file__).with_name("staff_strikes.json")
 STAFF_STRIKE_EXPIRY_CHECK_SECONDS = 60
 STAFF_STRIKE_TWO_ACTIVE_CHANNEL_ID = 1371890083833319554
 STAFF_STRIKE_EXPIRED_CHANNEL_ID = 1371889867151114343
+STAFF_STRIKE_ACTIVE_CHANNEL_ID = 1380990378605281290
 
 # Staff rank order, highest to lowest.
 STAFF_ROLE_HIERARCHY = [
@@ -3583,6 +3584,11 @@ async def on_message(message: discord.Message):
         )
         synced = await save_staff_strikes()
 
+        await send_staff_strike_log(
+            STAFF_STRIKE_ACTIVE_CHANNEL_ID,
+            format_staff_strike(target, strike),
+        )
+
         response = (
             format_staff_strike(target, strike)
             + f"\n\nActive strikes: **{active_count}**"
@@ -5120,6 +5126,11 @@ async def strike_command(
         log_three_strikes=(active_count >= 3),
     )
     synced = await save_staff_strikes()
+
+    await send_staff_strike_log(
+        STAFF_STRIKE_ACTIVE_CHANNEL_ID,
+        format_staff_strike(member, strike),
+    )
 
     extra = ""
     if not synced:
