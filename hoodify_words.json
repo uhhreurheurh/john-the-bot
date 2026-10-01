@@ -1,0 +1,1036 @@
+{
+  "replacements": [
+    {
+      "pattern": "\bnot gonna lie\b",
+      "replacement": "ngl"
+    },
+    {
+      "pattern": "\bto be honest\b",
+      "replacement": "tbh"
+    },
+    {
+      "pattern": "\bin my opinion\b",
+      "replacement": "imo"
+    },
+    {
+      "pattern": "\bas soon as possible\b",
+      "replacement": "asap"
+    },
+    {
+      "pattern": "\bby the way\b",
+      "replacement": "btw"
+    },
+    {
+      "pattern": "\bI do not know\b",
+      "replacement": "idk"
+    },
+    {
+      "pattern": "\bI don't know\b",
+      "replacement": "idk"
+    },
+    {
+      "pattern": "\bI do not care\b",
+      "replacement": "idc"
+    },
+    {
+      "pattern": "\bI don't care\b",
+      "replacement": "idc"
+    },
+    {
+      "pattern": "\bnever mind\b",
+      "replacement": "nvm"
+    },
+    {
+      "pattern": "\bsee you\b",
+      "replacement": "cya"
+    },
+    {
+      "pattern": "\bthank you\b",
+      "replacement": [
+        "thx",
+        "ty",
+        "preciate it"
+      ]
+    },
+    {
+      "pattern": "\bwhat are you doing\b",
+      "replacement": [
+        "what you doing",
+        "what you on"
+      ]
+    },
+    {
+      "pattern": "\bwhat do you mean\b",
+      "replacement": [
+        "what you mean",
+        "what you talkin bout"
+      ]
+    },
+    {
+      "pattern": "\bwhat is up\b",
+      "replacement": [
+        "what's good",
+        "what's poppin",
+        "what's the move"
+      ]
+    },
+    {
+      "pattern": "\bwhat's up\b",
+      "replacement": [
+        "what's good",
+        "what's poppin",
+        "what's the move"
+      ]
+    },
+    {
+      "pattern": "\bhow are you\b",
+      "replacement": [
+        "how you doing",
+        "how you been",
+        "you good"
+      ]
+    },
+    {
+      "pattern": "\bmy friends\b",
+      "replacement": [
+        "the homies",
+        "my homies",
+        "the gang"
+      ]
+    },
+    {
+      "pattern": "\bmy friend\b",
+      "replacement": [
+        "my homie",
+        "my bro",
+        "my guy"
+      ]
+    },
+    {
+      "pattern": "\bwait a minute\b",
+      "replacement": [
+        "hold up",
+        "wait a sec",
+        "hold on"
+      ]
+    },
+    {
+      "pattern": "\bthat is crazy\b",
+      "replacement": [
+        "that's wild",
+        "that's crazy",
+        "that's nuts"
+      ]
+    },
+    {
+      "pattern": "\bthat's crazy\b",
+      "replacement": [
+        "that's wild",
+        "that's crazy",
+        "that's nuts"
+      ]
+    },
+    {
+      "pattern": "\bthat makes sense\b",
+      "replacement": [
+        "that checks out",
+        "makes sense",
+        "I see it"
+      ]
+    },
+    {
+      "pattern": "\bI understand\b",
+      "replacement": [
+        "I got you",
+        "I hear you",
+        "say less"
+      ]
+    },
+    {
+      "pattern": "\byou are right\b",
+      "replacement": [
+        "you right",
+        "facts",
+        "real talk"
+      ]
+    },
+    {
+      "pattern": "\bfor real\b",
+      "replacement": [
+        "fr",
+        "deadass",
+        "no cap"
+      ]
+    },
+    {
+      "pattern": "\bright now\b",
+      "replacement": [
+        "rn",
+        "right now fr",
+        "as we speak"
+      ]
+    },
+    {
+      "pattern": "\bat the moment\b",
+      "replacement": "rn"
+    },
+    {
+      "pattern": "\ba lot\b",
+      "replacement": [
+        "mad",
+        "hella",
+        "a ton"
+      ]
+    },
+    {
+      "pattern": "\ba little bit\b",
+      "replacement": [
+        "a lil",
+        "a bit"
+      ]
+    },
+    {
+      "pattern": "\bright away\b",
+      "replacement": [
+        "rn",
+        "ASAP",
+        "on the spot"
+      ]
+    },
+    {
+      "pattern": "\bcome here\b",
+      "replacement": [
+        "slide thru",
+        "pull up",
+        "come thru"
+      ]
+    },
+    {
+      "pattern": "\bgo home\b",
+      "replacement": [
+        "head home",
+        "dip home",
+        "bounce home"
+      ]
+    },
+    {
+      "pattern": "\bgoing to\b",
+      "replacement": [
+        "gonna",
+        "boutta"
+      ]
+    },
+    {
+      "pattern": "\bwant to\b",
+      "replacement": [
+        "wanna",
+        "tryna"
+      ]
+    },
+    {
+      "pattern": "\btrying to\b",
+      "replacement": [
+        "tryna",
+        "boutta"
+      ]
+    },
+    {
+      "pattern": "\bgot to\b",
+      "replacement": [
+        "gotta",
+        "gonna have to"
+      ]
+    },
+    {
+      "pattern": "\bhave to\b",
+      "replacement": [
+        "gotta",
+        "hafta"
+      ]
+    },
+    {
+      "pattern": "\bsupposed to\b",
+      "replacement": [
+        "sposed to",
+        "supposedta"
+      ]
+    },
+    {
+      "pattern": "\bkind of\b",
+      "replacement": [
+        "kinda",
+        "sorta"
+      ]
+    },
+    {
+      "pattern": "\bsort of\b",
+      "replacement": [
+        "sorta",
+        "kinda"
+      ]
+    },
+    {
+      "pattern": "\bout of\b",
+      "replacement": "outta"
+    },
+    {
+      "pattern": "\blet me\b",
+      "replacement": [
+        "lemme",
+        "lmk"
+      ]
+    },
+    {
+      "pattern": "\bgive me\b",
+      "replacement": "gimme"
+    },
+    {
+      "pattern": "\bcome on\b",
+      "replacement": [
+        "cmon",
+        "bro cmon"
+      ]
+    },
+    {
+      "pattern": "\babout\b",
+      "replacement": [
+        "bout",
+        "ab"
+      ]
+    },
+    {
+      "pattern": "\bbecause\b",
+      "replacement": [
+        "cause",
+        "cuz",
+        "bc"
+      ]
+    },
+    {
+      "pattern": "\bthem\b",
+      "replacement": "em"
+    },
+    {
+      "pattern": "\byou all\b",
+      "replacement": "y'all"
+    },
+    {
+      "pattern": "\byou guys\b",
+      "replacement": "y'all"
+    },
+    {
+      "pattern": "\bdo not\b",
+      "replacement": "don't"
+    },
+    {
+      "pattern": "\bdoes not\b",
+      "replacement": "doesn't"
+    },
+    {
+      "pattern": "\bdid not\b",
+      "replacement": "didn't"
+    },
+    {
+      "pattern": "\bcannot\b",
+      "replacement": "can't"
+    },
+    {
+      "pattern": "\bcan not\b",
+      "replacement": "can't"
+    },
+    {
+      "pattern": "\bwill not\b",
+      "replacement": "won't"
+    },
+    {
+      "pattern": "\bit is\b",
+      "replacement": "it's"
+    },
+    {
+      "pattern": "\bthat is\b",
+      "replacement": "that's"
+    },
+    {
+      "pattern": "\bwhat is\b",
+      "replacement": "what's"
+    },
+    {
+      "pattern": "\bthere is\b",
+      "replacement": "there's"
+    },
+    {
+      "pattern": "\bwe are\b",
+      "replacement": "we're"
+    },
+    {
+      "pattern": "\byou are\b",
+      "replacement": "you're"
+    },
+    {
+      "pattern": "\bthey are\b",
+      "replacement": "they're"
+    },
+    {
+      "pattern": "\bI am\b",
+      "replacement": "I'm"
+    },
+    {
+      "pattern": "\bI have\b",
+      "replacement": "I've"
+    },
+    {
+      "pattern": "\bI will\b",
+      "replacement": "I'll"
+    },
+    {
+      "pattern": "\bI would\b",
+      "replacement": "I'd"
+    },
+    {
+      "pattern": "\bhello\b",
+      "replacement": [
+        "yo",
+        "ayy",
+        "what's good"
+      ]
+    },
+    {
+      "pattern": "\bhi\b",
+      "replacement": [
+        "yo",
+        "ayy"
+      ]
+    },
+    {
+      "pattern": "\bhey\b",
+      "replacement": [
+        "ayy",
+        "yo",
+        "what's good"
+      ]
+    },
+    {
+      "pattern": "\bgood morning\b",
+      "replacement": [
+        "morning",
+        "gm y'all"
+      ]
+    },
+    {
+      "pattern": "\bgood night\b",
+      "replacement": [
+        "night y'all",
+        "gn gang",
+        "night"
+      ]
+    },
+    {
+      "pattern": "\bfriends\b",
+      "replacement": [
+        "homies",
+        "the homies",
+        "the gang"
+      ]
+    },
+    {
+      "pattern": "\bfriend\b",
+      "replacement": [
+        "homie",
+        "bro",
+        "my guy"
+      ]
+    },
+    {
+      "pattern": "\bbrother\b",
+      "replacement": [
+        "bro",
+        "bruh"
+      ]
+    },
+    {
+      "pattern": "\bsister\b",
+      "replacement": [
+        "sis",
+        "girl"
+      ]
+    },
+    {
+      "pattern": "\bdude\b",
+      "replacement": [
+        "bro",
+        "bruh"
+      ]
+    },
+    {
+      "pattern": "\bman\b",
+      "replacement": [
+        "bro",
+        "my guy"
+      ]
+    },
+    {
+      "pattern": "\bdawg\b",
+      "replacement": [
+        "bro",
+        "my guy"
+      ]
+    },
+    {
+      "pattern": "\bguys\b",
+      "replacement": [
+        "y'all",
+        "everybody",
+        "the gang"
+      ]
+    },
+    {
+      "pattern": "\bpeople\b",
+      "replacement": [
+        "folks",
+        "y'all",
+        "everybody"
+      ]
+    },
+    {
+      "pattern": "\byes\b",
+      "replacement": [
+        "yeah",
+        "yup",
+        "bet",
+        "yea"
+      ]
+    },
+    {
+      "pattern": "\bno\b",
+      "replacement": [
+        "nah",
+        "nope",
+        "nuh uh"
+      ]
+    },
+    {
+      "pattern": "\bokay\b",
+      "replacement": [
+        "aight",
+        "bet",
+        "cool"
+      ]
+    },
+    {
+      "pattern": "\bok\b",
+      "replacement": [
+        "aight",
+        "bet"
+      ]
+    },
+    {
+      "pattern": "\bplease\b",
+      "replacement": [
+        "pls",
+        "plz"
+      ]
+    },
+    {
+      "pattern": "\bthanks\b",
+      "replacement": [
+        "ty",
+        "thx",
+        "preciate it"
+      ]
+    },
+    {
+      "pattern": "\bprobably\b",
+      "replacement": [
+        "prob",
+        "prolly",
+        "most likely"
+      ]
+    },
+    {
+      "pattern": "\breally\b",
+      "replacement": [
+        "rly",
+        "fr",
+        "deadass"
+      ]
+    },
+    {
+      "pattern": "\bvery\b",
+      "replacement": [
+        "mad",
+        "hella",
+        "real"
+      ]
+    },
+    {
+      "pattern": "\blittle\b",
+      "replacement": [
+        "lil",
+        "tiny lil"
+      ]
+    },
+    {
+      "pattern": "\bsomething\b",
+      "replacement": [
+        "sumn",
+        "something fr"
+      ]
+    },
+    {
+      "pattern": "\bnothing\b",
+      "replacement": [
+        "nun",
+        "nothing"
+      ]
+    },
+    {
+      "pattern": "\beverything\b",
+      "replacement": [
+        "all that",
+        "everything fr"
+      ]
+    },
+    {
+      "pattern": "\bsomewhere\b",
+      "replacement": [
+        "somewhere fr",
+        "someplace"
+      ]
+    },
+    {
+      "pattern": "\bnowhere\b",
+      "replacement": [
+        "nowhere fr",
+        "not anywhere"
+      ]
+    },
+    {
+      "pattern": "\bhome\b",
+      "replacement": [
+        "crib",
+        "place"
+      ]
+    },
+    {
+      "pattern": "\bhouse\b",
+      "replacement": [
+        "crib",
+        "place"
+      ]
+    },
+    {
+      "pattern": "\bcar\b",
+      "replacement": [
+        "whip",
+        "ride"
+      ]
+    },
+    {
+      "pattern": "\bfood\b",
+      "replacement": [
+        "grub",
+        "eats"
+      ]
+    },
+    {
+      "pattern": "\bmoney\b",
+      "replacement": [
+        "cash",
+        "bread",
+        "bag"
+      ]
+    },
+    {
+      "pattern": "\bwork\b",
+      "replacement": [
+        "the grind",
+        "job",
+        "work"
+      ]
+    },
+    {
+      "pattern": "\bjob\b",
+      "replacement": [
+        "work",
+        "the grind"
+      ]
+    },
+    {
+      "pattern": "\bphone\b",
+      "replacement": [
+        "cell",
+        "phone"
+      ]
+    },
+    {
+      "pattern": "\bcomputer\b",
+      "replacement": [
+        "PC",
+        "rig"
+      ]
+    },
+    {
+      "pattern": "\bstore\b",
+      "replacement": [
+        "spot",
+        "store"
+      ]
+    },
+    {
+      "pattern": "\bawesome\b",
+      "replacement": [
+        "fire",
+        "tuff",
+        "hard"
+      ]
+    },
+    {
+      "pattern": "\bgreat\b",
+      "replacement": [
+        "fire",
+        "solid",
+        "tuff"
+      ]
+    },
+    {
+      "pattern": "\bnice\b",
+      "replacement": [
+        "clean",
+        "solid",
+        "valid"
+      ]
+    },
+    {
+      "pattern": "\bcool\b",
+      "replacement": [
+        "valid",
+        "clean",
+        "chill"
+      ]
+    },
+    {
+      "pattern": "\bamazing\b",
+      "replacement": [
+        "crazy",
+        "insane",
+        "fire"
+      ]
+    },
+    {
+      "pattern": "\bexcellent\b",
+      "replacement": [
+        "fire",
+        "solid"
+      ]
+    },
+    {
+      "pattern": "\bfunny\b",
+      "replacement": [
+        "hilarious",
+        "wild"
+      ]
+    },
+    {
+      "pattern": "\bfun\b",
+      "replacement": [
+        "lit",
+        "a vibe"
+      ]
+    },
+    {
+      "pattern": "\bperfect\b",
+      "replacement": [
+        "tuff",
+        "clean",
+        "spot on"
+      ]
+    },
+    {
+      "pattern": "\bseriously\b",
+      "replacement": [
+        "deadass",
+        "fr",
+        "no joke"
+      ]
+    },
+    {
+      "pattern": "\bI agree\b",
+      "replacement": [
+        "facts",
+        "real talk",
+        "deadass"
+      ]
+    },
+    {
+      "pattern": "\bno way\b",
+      "replacement": [
+        "nahhh",
+        "ain't no way",
+        "bro what"
+      ]
+    },
+    {
+      "pattern": "\bcalm down\b",
+      "replacement": [
+        "chill",
+        "relax bro",
+        "take it easy"
+      ]
+    },
+    {
+      "pattern": "\brelax\b",
+      "replacement": [
+        "chill",
+        "take it easy"
+      ]
+    },
+    {
+      "pattern": "\bconfused\b",
+      "replacement": [
+        "lost",
+        "confused as hell"
+      ]
+    },
+    {
+      "pattern": "\btired\b",
+      "replacement": [
+        "cooked",
+        "drained",
+        "finished"
+      ]
+    },
+    {
+      "pattern": "\bexhausted\b",
+      "replacement": [
+        "cooked",
+        "done for",
+        "fried"
+      ]
+    },
+    {
+      "pattern": "\bangry\b",
+      "replacement": [
+        "heated",
+        "mad",
+        "tight"
+      ]
+    },
+    {
+      "pattern": "\bhappy\b",
+      "replacement": [
+        "hyped",
+        "feeling good",
+        "geeked"
+      ]
+    },
+    {
+      "pattern": "\bexcited\b",
+      "replacement": [
+        "hyped",
+        "geeked",
+        "locked in"
+      ]
+    },
+    {
+      "pattern": "\bread y\b",
+      "replacement": [
+        "locked in",
+        "set",
+        "good to go"
+      ]
+    },
+    {
+      "pattern": "\bread y\b",
+      "replacement": [
+        "locked in",
+        "set"
+      ]
+    },
+    {
+      "pattern": "\bserious\b",
+      "replacement": [
+        "dead serious",
+        "fr"
+      ]
+    },
+    {
+      "pattern": "\blie\b",
+      "replacement": [
+        "cap",
+        "front"
+      ]
+    },
+    {
+      "pattern": "\blies\b",
+      "replacement": [
+        "caps",
+        "fronting"
+      ]
+    },
+    {
+      "pattern": "\bly ing\b",
+      "replacement": [
+        "cappin",
+        "frontin"
+      ]
+    },
+    {
+      "pattern": "\blying\b",
+      "replacement": [
+        "cappin",
+        "frontin"
+      ]
+    },
+    {
+      "pattern": "\bjoking\b",
+      "replacement": [
+        "trolling",
+        "playing"
+      ]
+    },
+    {
+      "pattern": "\bmistake\b",
+      "replacement": [
+        "fumble",
+        "L"
+      ]
+    },
+    {
+      "pattern": "\bproblem\b",
+      "replacement": [
+        "issue",
+        "situation"
+      ]
+    },
+    {
+      "pattern": "\bproblems\b",
+      "replacement": [
+        "issues",
+        "situations"
+      ]
+    },
+    {
+      "pattern": "\bwinning\b",
+      "replacement": [
+        "cooking",
+        "going crazy"
+      ]
+    },
+    {
+      "pattern": "\bwin\b",
+      "replacement": [
+        "W",
+        "dub"
+      ]
+    },
+    {
+      "pattern": "\bwon\b",
+      "replacement": [
+        "cooked",
+        "got the W"
+      ]
+    },
+    {
+      "pattern": "\bloss\b",
+      "replacement": [
+        "L",
+        "an L"
+      ]
+    },
+    {
+      "pattern": "\blosing\b",
+      "replacement": [
+        "taking an L",
+        "selling"
+      ]
+    },
+    {
+      "pattern": "\blost\b",
+      "replacement": [
+        "sold",
+        "took an L"
+      ]
+    },
+    {
+      "pattern": "\bfailed\b",
+      "replacement": [
+        "sold",
+        "fumbled"
+      ]
+    },
+    {
+      "pattern": "\bfail\b",
+      "replacement": [
+        "sell",
+        "fumble"
+      ]
+    },
+    {
+      "pattern": "\bignore\b",
+      "replacement": [
+        "leave on read",
+        "leave it"
+      ]
+    },
+    {
+      "pattern": "\bjoin\b",
+      "replacement": [
+        "pull up",
+        "slide in"
+      ]
+    },
+    {
+      "pattern": "\bwait for me\b",
+      "replacement": [
+        "hold up for me",
+        "wait on me"
+      ]
+    }
+  ],
+  "openers": [
+    "yo",
+    "ayy",
+    "bro",
+    "bruh",
+    "nah",
+    "ight",
+    "look"
+  ],
+  "mid_phrases": [
+    "lowkey",
+    "highkey",
+    "deadass",
+    "no cap",
+    "on god",
+    "real talk",
+    "say less",
+    "you feel me",
+    "I'm sayin",
+    "type shi"
+  ],
+  "closers": [
+    "fr",
+    "ngl",
+    "lowkey",
+    "deadass",
+    "no cap",
+    "bet",
+    "on god",
+    "😭",
+    "💀"
+  ],
+  "extras": [
+    "bro",
+    "bruh",
+    "gang",
+    "homie",
+    "fr",
+    "ngl",
+    "lowkey",
+    "highkey",
+    "deadass",
+    "no cap",
+    "bet"
+  ],
+  "word_blacklist": []
+}
