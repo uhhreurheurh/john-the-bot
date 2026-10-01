@@ -576,6 +576,14 @@
       "rating": 4,
       "comment": "Gay r word but funny at times",
       "created_at": "2026-10-01 20:16:06"
+    },
+    {
+      "id": 77,
+      "target_id": 1201920572616097832,
+      "reviewer_id": 1289416451114930256,
+      "rating": 5,
+      "comment": "Good guy for rage bait",
+      "created_at": "2026-10-01 20:17:09"
     }
   ],
   "review_update_requests": [
