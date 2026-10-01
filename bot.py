@@ -2186,7 +2186,7 @@ async def on_app_command_error(
 # =========================
 
 async def remove_auto_role_if_needed(member: discord.Member, reason: str) -> bool:
-    """Remove the configured role when the member has the trigger role."""
+    """Remove the configured role whenever the member has the trigger role."""
     if not AUTO_REMOVE_TRIGGER_ROLE_ID or not AUTO_REMOVE_ROLE_ID:
         return False
 
@@ -2199,6 +2199,7 @@ async def remove_auto_role_if_needed(member: discord.Member, reason: str) -> boo
     if trigger_role is None or role_to_remove is None:
         return False
 
+    # Keep enforcing the rule whenever both roles are present.
     if trigger_role not in member.roles or role_to_remove not in member.roles:
         return False
 
@@ -2206,30 +2207,28 @@ async def remove_auto_role_if_needed(member: discord.Member, reason: str) -> boo
         return False
 
     bot_member = member.guild.me
-
-    if bot_member is None:
+    if bot_member is None or not bot_member.guild_permissions.manage_roles:
         return False
 
-    if not bot_member.guild_permissions.manage_roles:
-        return False
-
+    # The bot only needs its highest role to be above the role being removed.
+    # The member's own highest role does not block removing this specific role.
     if role_to_remove.is_default() or role_to_remove.managed:
         return False
 
     if bot_member.top_role <= role_to_remove:
         return False
 
-    if member.top_role >= bot_member.top_role:
-        return False
-
     try:
-        await member.remove_roles(role_to_remove, reason=reason)
+        await member.remove_roles(
+            role_to_remove,
+            reason=reason,
+        )
         return True
-
+    except (discord.Forbidden, discord.HTTPException):
+        return False
     except Exception:
         return False
 
-    return False
 
 
 # =========================
