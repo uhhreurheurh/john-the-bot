@@ -1640,6 +1640,25 @@ async def on_message(message: discord.Message):
 # WEBHOOK
 # =========================
 
+WEBHOOK_DEBUG = os.getenv("WEBHOOK_DEBUG", "1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+
+def _report_webhook_error(title, error):
+    """Print webhook failures when WEBHOOK_DEBUG is enabled."""
+    if not WEBHOOK_DEBUG:
+        return
+
+    print(
+        f"Webhook failed [{title}]: "
+        f"{type(error).__name__}: {error}"
+    )
+
+
 async def send_webhook(
     webhook_url,
     title,
@@ -1649,12 +1668,16 @@ async def send_webhook(
 ) -> bool:
     """Send an embed through a Discord webhook and report whether it succeeded."""
     if not webhook_url:
+        _report_webhook_error(
+            title,
+            RuntimeError("ROLE_WEBHOOK_URL is not configured."),
+        )
         return False
 
     try:
         # Use the bot client rather than Discord.py's private HTTP session.
         webhook = discord.Webhook.from_url(
-            webhook_url,
+            webhook_url.strip(),
             client=bot,
         )
 
@@ -1675,22 +1698,25 @@ async def send_webhook(
 
         embed.set_footer(text="Tag Server Bot")
 
+        # Do not send an empty username override. Discord can reject the
+        # request when the override is present but blank.
         await webhook.send(
             embed=embed,
-            username="",
             allowed_mentions=discord.AllowedMentions(
                 everyone=False,
                 roles=False,
                 users=True,
                 replied_user=False,
             ),
-            wait=False,
+            wait=True,
         )
         return True
 
-    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+    except (discord.Forbidden, discord.NotFound, discord.HTTPException) as error:
+        _report_webhook_error(title, error)
         return False
-    except Exception:
+    except Exception as error:
+        _report_webhook_error(title, error)
         return False
 
 # =========================
