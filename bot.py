@@ -1647,15 +1647,20 @@ WEBHOOK_DEBUG = os.getenv("WEBHOOK_DEBUG", "1").strip().lower() in {
     "on",
 }
 
+last_webhook_error: str | None = None
+
 
 def _report_webhook_error(title, error):
     """Print webhook failures when WEBHOOK_DEBUG is enabled."""
+    global last_webhook_error
+    last_webhook_error = f"{type(error).__name__}: {error}"
+
     if not WEBHOOK_DEBUG:
         return
 
     print(
         f"Webhook failed [{title}]: "
-        f"{type(error).__name__}: {error}"
+        f"{last_webhook_error}"
     )
 
 
@@ -1718,6 +1723,54 @@ async def send_webhook(
     except Exception as error:
         _report_webhook_error(title, error)
         return False
+
+@tree.command(
+    name="rolewebhooktest",
+    description="Test the configured ROLE_WEBHOOK_URL.",
+)
+@app_commands.check(blacklist_command_check)
+async def role_webhook_test_command(interaction: discord.Interaction):
+    """Send a test message through ROLE_WEBHOOK_URL."""
+    global last_webhook_error
+    last_webhook_error = None
+
+    success = await send_role_webhook(
+        title="✅ Role Webhook Test",
+        description="This is a test message from the role system.",
+        color=discord.Color.green(),
+        fields=[
+            ("Webhook Variable", "ROLE_WEBHOOK_URL", True),
+            ("Result", "Sent" if success else "Failed", True),
+        ],
+    )
+
+    if success:
+        await interaction.response.send_message(
+            "✅ ROLE_WEBHOOK_URL is working and the test webhook was sent.",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.send_message(
+        "❌ ROLE_WEBHOOK_URL failed. "
+        f"Railway error: {last_webhook_error or 'No error was returned.'}",
+        ephemeral=True,
+    )
+
+async def send_role_webhook(
+    title,
+    description,
+    color=discord.Color.blurple(),
+    fields=None,
+) -> bool:
+    """Send a role-system event through ROLE_WEBHOOK_URL."""
+    return await send_webhook(
+        ROLE_WEBHOOK_URL,
+        title=title,
+        description=description,
+        color=color,
+        fields=fields,
+    )
 
 # =========================
 # SLASH COMMAND PERMISSION
@@ -2802,8 +2855,7 @@ async def tag_role_loop():
                         tag_role,
                         reason="User has a configured first tag role in a tag server",
                     )
-                    await send_webhook(
-                        ROLE_WEBHOOK_URL,
+                    await send_role_webhook(
                         title="🏷️ Tag Role Added",
                         description=f"{member.mention} was given the main tag role.",
                         color=discord.Color.green(),
@@ -2839,8 +2891,7 @@ async def tag_role_loop():
                             tag_role,
                             reason="User no longer has the configured first tag role",
                         )
-                        await send_webhook(
-                            ROLE_WEBHOOK_URL,
+                        await send_role_webhook(
                             title="🏷️ Tag Role Removed",
                             description=f"{member.mention} no longer has the configured first tag role in any tag server.",
                             color=discord.Color.orange(),
@@ -2911,8 +2962,7 @@ async def tag_role_loop():
                         tag_role_2,
                         reason="User has the configured second tag role in a tag server",
                     )
-                    await send_webhook(
-                        ROLE_WEBHOOK_URL,
+                    await send_role_webhook(
                         title="🏷️ Second Tag Role Added",
                         description=f"{member.mention} was given the second main tag role.",
                         color=discord.Color.green(),
@@ -2946,8 +2996,7 @@ async def tag_role_loop():
                             tag_role_2,
                             reason="User no longer has the configured second tag role",
                         )
-                        await send_webhook(
-                            ROLE_WEBHOOK_URL,
+                        await send_role_webhook(
                             title="🏷️ Second Tag Role Removed",
                             description=f"{member.mention} no longer has the configured second tag role in any tag server.",
                             color=discord.Color.orange(),
