@@ -561,6 +561,10 @@ async def hoodify_command(
         )
         return
 
+    # A GitHub-backed blacklist check can perform network I/O on the first use after a restart.
+    # Defer before entering that path so Discord does not expire the interaction.
+    await interaction.response.defer(ephemeral=False)
+
     try:
         await set_hood_target(interaction.channel, member)
 
@@ -568,7 +572,7 @@ async def hoodify_command(
             try:
                 await send_hood_message(interaction.channel, member, message)
             except HoodMessageBlocked as blocked_error:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     f"❌ HOODIFY was enabled, but the one-time message was not sent "
                     f"because it contains a blacklisted word/phrase: `{blocked_error}`",
                     ephemeral=False,
@@ -576,7 +580,7 @@ async def hoodify_command(
                 return
 
         active_count = get_active_hood_target_count()
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"✅ HOODIFY is active for {member.mention} in this channel. "
             f"Active people: **{active_count}/{MAX_ACTIVE_HOOD_TARGETS}**.\n"
             "You can add more people with another `/hoodify` command. "
@@ -584,34 +588,34 @@ async def hoodify_command(
             ephemeral=False,
         )
     except HoodUserBlacklisted:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"❌ {member.mention} is blacklisted from using HOODIFY.",
             ephemeral=False,
         )
     except UserBlacklistStorageUnavailable as error:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "❌ I could not verify the HOODIFY blacklist from GitHub, "
             f"so I will not activate this target. Error: `{error}`",
             ephemeral=False,
         )
     except HoodTargetLimitReached:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"❌ The global limit of {MAX_ACTIVE_HOOD_TARGETS} HOODIFIED people has been reached. "
             "Use `,unhoodify @user` or `/unhoodify @user` to disable HOODIFY for one member.",
             ephemeral=False,
         )
     except discord.Forbidden:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel/server.",
             ephemeral=False,
         )
     except discord.HTTPException as e:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"❌ Discord rejected the HOODIFY webhook request: `{e}`",
             ephemeral=False,
         )
     except Exception as error:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "❌ The HOODIFY mode could not be enabled. "
             f"Error: `{type(error).__name__}: {error}`",
             ephemeral=False,
