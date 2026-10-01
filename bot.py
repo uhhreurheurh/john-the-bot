@@ -669,6 +669,15 @@ async def handle_proxy_message(message: discord.Message) -> bool:
         proxy_requests.pop(message.channel.id, None)
         return False
 
+    # The proxy message must be deleted after transformation. Do not create a
+    # duplicate transformed message when the bot cannot delete the original.
+    bot_member = message.guild.me if message.guild is not None else None
+    if (
+        bot_member is None
+        or not message.channel.permissions_for(bot_member).manage_messages
+    ):
+        return False
+
     try:
         if mode == "uwu":
             if target.id in uwu_user_blacklist:
