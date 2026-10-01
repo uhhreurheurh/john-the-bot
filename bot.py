@@ -2421,7 +2421,6 @@ async def sync_tag_roles_for_source_member(source_member: discord.Member) -> Non
             and not first_main_role.managed
             and not first_main_role.is_default()
             and bot_member.top_role > first_main_role
-            and main_member.top_role < bot_member.top_role
         ):
             has_current_source_role = current_source_role_id in source_role_ids
 
@@ -2431,8 +2430,12 @@ async def sync_tag_roles_for_source_member(source_member: discord.Member) -> Non
                         first_main_role,
                         reason="Configured tag-server source role detected",
                     )
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
+                except (discord.Forbidden, discord.HTTPException) as error:
+                    print(
+                        "Immediate first tag-role assignment failed for "
+                        f"{main_member} ({main_member.id}) -> role {first_main_role.id}: "
+                        f"{type(error).__name__}: {error}"
+                    )
 
             elif not has_current_source_role and first_main_role in main_member.roles:
                 still_qualified = False
@@ -2466,7 +2469,6 @@ async def sync_tag_roles_for_source_member(source_member: discord.Member) -> Non
         or second_main_role.managed
         or second_main_role.is_default()
         or bot_member.top_role <= second_main_role
-        or main_member.top_role >= bot_member.top_role
     ):
         return
 
@@ -2492,8 +2494,12 @@ async def sync_tag_roles_for_source_member(source_member: discord.Member) -> Non
                 second_main_role,
                 reason="Configured second tag-server source role was removed",
             )
-    except (discord.Forbidden, discord.HTTPException):
-        pass
+    except (discord.Forbidden, discord.HTTPException) as error:
+        print(
+            "Immediate second tag-role sync failed for "
+            f"{main_member} ({main_member.id}) -> role {second_main_role.id}: "
+            f"{type(error).__name__}: {error}"
+        )
 
 # ============================================================
 # HELPERS
@@ -2790,9 +2796,6 @@ async def tag_role_loop():
                 continue
             if member.id == main_guild.owner_id:
                 continue
-            if member.top_role >= bot_member.top_role:
-                continue
-
             if tag_role not in member.roles:
                 try:
                     await member.add_roles(
@@ -2890,7 +2893,7 @@ async def tag_role_loop():
             is_blacklisted = member.id in second_role_blacklist
 
             if is_blacklisted:
-                if has_role_2 and member.id != main_guild.owner_id and member.top_role < bot_member.top_role:
+                if has_role_2 and member.id != main_guild.owner_id:
                     try:
                         await member.remove_roles(
                             tag_role_2,
@@ -2901,7 +2904,7 @@ async def tag_role_loop():
                 continue
 
             if has_tag_2 and not has_role_2:
-                if member.id == main_guild.owner_id or member.top_role >= bot_member.top_role:
+                if member.id == main_guild.owner_id:
                     continue
                 try:
                     await member.add_roles(
@@ -2934,7 +2937,7 @@ async def tag_role_loop():
             for member in main_guild.members:
                 if member.bot or member.id in tagged_users_2:
                     continue
-                if member.id == main_guild.owner_id or member.top_role >= bot_member.top_role:
+                if member.id == main_guild.owner_id:
                     continue
 
                 if tag_role_2 in member.roles and member.id not in second_role_blacklist:
