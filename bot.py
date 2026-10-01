@@ -1434,6 +1434,7 @@ async def on_message(message: discord.Message):
                         mention_author=False,
                     )
 
+                    return
             await message.reply(
                 f"✅ Uwu mode is active for {target.mention} in this channel. "
                 f"Active people: **{get_active_uwu_target_count()}/{MAX_ACTIVE_UWU_TARGETS}**.",
