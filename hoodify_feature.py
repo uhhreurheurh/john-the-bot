@@ -366,17 +366,6 @@ async def hood_webhook_cleanup_loop():
 async def before_hood_webhook_cleanup():
     await bot.wait_until_ready()
 
-# channel_id -> {"webhook": discord.Webhook, "timer": asyncio.Task | None}
-uwu_webhooks: dict[int, dict] = {}
-
-# channel_id -> set of target member IDs.
-# Multiple people can be UWUified in the same channel at once.
-uwu_targets: dict[int, set[int]] = {}
-
-# Protect the global 5-person cap from simultaneous commands.
-uwu_target_lock = asyncio.Lock()
-
-
 
 @tree.command(
     name="unhoodify",
