@@ -1759,7 +1759,8 @@ async def send_role_webhook(
     fields=None,
 ) -> bool:
     """Send a role-system event through ROLE_WEBHOOK_URL."""
-    return await send_role_webhook(
+    return await send_webhook(
+        ROLE_WEBHOOK_URL,
         title=title,
         description=description,
         color=color,
