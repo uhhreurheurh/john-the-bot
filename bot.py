@@ -2389,8 +2389,15 @@ async def sync_tag_roles_for_source_member(source_member: discord.Member) -> Non
     if main_guild is None:
         return
 
-    bot_member = main_guild.me
+    # Fetch the bot's member record fresh so Discord's current role
+    # positions are used for hierarchy checks.
+    try:
+        bot_member = await main_guild.fetch_member(bot.user.id)
+    except (discord.NotFound, discord.HTTPException):
+        bot_member = main_guild.me
+
     if bot_member is None or not bot_member.guild_permissions.manage_roles:
+        print("Role sync skipped: bot does not currently have Manage Roles.")
         return
 
     main_member = main_guild.get_member(source_member.id)
@@ -2797,8 +2804,15 @@ async def tag_role_loop():
                             ("Reason", "User has a configured tag role in a tag server.", False),
                         ],
                     )
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
+                except (discord.Forbidden, discord.HTTPException) as error:
+                    print(
+                        "First tag-role assignment failed for "
+                        f"{member} ({member.id}) -> role {tag_role.id} "
+                        f"(bot top role: {bot_member.top_role.id}/{bot_member.top_role.position}, "
+                        f"member top role: {member.top_role.id}/{member.top_role.position}, "
+                        f"target role: {tag_role.id}/{tag_role.position}): "
+                        f"{type(error).__name__}: {error}"
+                    )
 
         # Only remove the main role when every configured source was checked.
         if not first_role_check_failed:
@@ -2899,8 +2913,15 @@ async def tag_role_loop():
                             ("Reason", "User has the configured second tag role in a tag server.", False),
                         ],
                     )
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
+                except (discord.Forbidden, discord.HTTPException) as error:
+                    print(
+                        "Second tag-role assignment failed for "
+                        f"{member} ({member.id}) -> role {tag_role_2.id} "
+                        f"(bot top role: {bot_member.top_role.id}/{bot_member.top_role.position}, "
+                        f"member top role: {member.top_role.id}/{member.top_role.position}, "
+                        f"target role: {tag_role_2.id}/{tag_role_2.position}): "
+                        f"{type(error).__name__}: {error}"
+                    )
 
         # Only remove when all configured second-role sources were checked.
         if not second_role_check_failed:
