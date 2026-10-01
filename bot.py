@@ -1670,12 +1670,26 @@ async def send_webhook(
     description,
     color=discord.Color.blurple(),
     fields=None,
+    webhook_name="WEBHOOK_URL",
 ) -> bool:
     """Send an embed through a Discord webhook and report whether it succeeded."""
     if not webhook_url:
         _report_webhook_error(
             title,
-            RuntimeError("ROLE_WEBHOOK_URL is not configured."),
+            RuntimeError(f"{webhook_name} is not configured."),
+        )
+        return False
+
+    webhook_url = webhook_url.strip()
+    if not (
+        webhook_url.startswith("https://discord.com/api/webhooks/")
+        or webhook_url.startswith("https://discordapp.com/api/webhooks/")
+    ):
+        _report_webhook_error(
+            title,
+            RuntimeError(
+                f"{webhook_name} does not look like a Discord webhook URL."
+            ),
         )
         return False
 
@@ -1737,6 +1751,24 @@ async def send_role_webhook(
         description=description,
         color=color,
         fields=fields,
+        webhook_name="ROLE_WEBHOOK_URL",
+    )
+
+
+async def send_kick_webhook(
+    title,
+    description,
+    color=discord.Color.blurple(),
+    fields=None,
+) -> bool:
+    """Send a kick-system event through KICK_WEBHOOK_URL."""
+    return await send_webhook(
+        KICK_WEBHOOK_URL,
+        title=title,
+        description=description,
+        color=color,
+        fields=fields,
+        webhook_name="KICK_WEBHOOK_URL",
     )
 
 
@@ -1794,6 +1826,40 @@ async def role_webhook_test_command(interaction: discord.Interaction):
     await interaction.response.send_message(
         "❌ ROLE_WEBHOOK_URL failed. "
         f"Railway error: {last_webhook_error or 'No error was returned.'}",
+        ephemeral=True,
+    )
+
+
+@tree.command(
+    name="kickwebhooktest",
+    description="Test the configured KICK_WEBHOOK_URL.",
+)
+@app_commands.check(blacklist_command_check)
+async def kick_webhook_test_command(interaction: discord.Interaction):
+    """Send a test message through KICK_WEBHOOK_URL."""
+    global last_webhook_error
+    last_webhook_error = None
+
+    success = await send_kick_webhook(
+        title="✅ Kick Webhook Test",
+        description="This is a test message from the kick system.",
+        color=discord.Color.green(),
+        fields=[
+            ("Webhook Variable", "KICK_WEBHOOK_URL", True),
+            ("Result", "Sent" if success else "Failed", True),
+        ],
+    )
+
+    if success:
+        await interaction.response.send_message(
+            "✅ KICK_WEBHOOK_URL is working and the test webhook was sent.",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.send_message(
+        "❌ KICK_WEBHOOK_URL failed. "
+        f"Railway error: {last_webhook_error}",
         ephemeral=True,
     )
 
@@ -2819,8 +2885,7 @@ async def kick_loop():
                     reason="not in main server",
                 )
 
-                await send_webhook(
-                    KICK_WEBHOOK_URL,
+                await send_kick_webhook(
                     title="🚫 Member Kicked",
                     description=(
                         f"{member.mention} was kicked from a tag server "
@@ -2839,8 +2904,7 @@ async def kick_loop():
                     f"Kick failed for {member} ({member.id}) in {guild.name}: "
                     f"{type(error).__name__}: {error}"
                 )
-                await send_webhook(
-                    KICK_WEBHOOK_URL,
+                await send_kick_webhook(
                     title="⚠️ Kick Failed",
                     description=(
                         f"Failed to kick {member.mention} "
