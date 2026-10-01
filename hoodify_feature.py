@@ -159,7 +159,7 @@ def get_blacklisted_hood_word(content: str) -> str | None:
         blocked = str(blocked).strip()
         if not blocked:
             continue
-        pattern = rf"(?<!\\w){re.escape(blocked)}(?!\\w)"
+        pattern = rf"(?<!\w){re.escape(blocked)}(?!\w)"
         if re.search(pattern, content, flags=re.IGNORECASE):
             return blocked
     return None
