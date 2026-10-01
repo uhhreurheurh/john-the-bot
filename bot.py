@@ -2307,9 +2307,9 @@ staff_strike_expiry_task: asyncio.Task | None = None
 # =========================
 import hoodify_feature
 import uwuify_feature
-import reviews
-import leaderboard
-import staff_strikes
+import reviews as reviews_feature
+import leaderboard as leaderboard_feature
+import staff_strikes as staff_strikes_feature
 from hoodify_feature import *
 from uwuify_feature import *
 from reviews import *
@@ -2374,7 +2374,7 @@ async def on_ready():
             review_db_auto_sync_worker()
         )
 
-    if GITHUB_TOKEN and staff_strikes.staff_strike_github_sync_error is None:
+    if GITHUB_TOKEN and staff_strikes_feature.staff_strike_github_sync_error is None:
         try:
             await sync_staff_strikes_from_github()
         except Exception:
