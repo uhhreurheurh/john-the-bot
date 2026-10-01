@@ -157,6 +157,9 @@ PROTECTED_ROLE_IDS = {
 
 # How often to check for tag-based role assignment (seconds)
 tag_check_time = 1
+# How often to refresh source-server member/role data (seconds).
+# The role assignment loop remains fast, but source data is not fetched every second.
+TAG_SOURCE_REFRESH_SECONDS = 30
 
 # How often to check for users to kick (minutes)
 check_time = 10
@@ -2264,10 +2267,77 @@ async def ensure_guild_members_loaded(guild: discord.Guild) -> bool:
         if not guild.chunked:
             await guild.chunk(cache=True)
         return True
-    except discord.HTTPException as e:
+    except discord.HTTPException:
         return False
-    except Exception as e:
+    except Exception:
         return False
+
+
+# Source-server role/member refresh cache.
+# key = guild ID, value = {"expires": monotonic_time, "members": list[discord.Member]}
+tag_source_member_cache: dict[int, dict] = {}
+
+
+async def get_source_members_for_role_check(
+    guild: discord.Guild,
+) -> list[discord.Member] | None:
+    """Return a current-enough member list for a source-server role check."""
+    now = time.monotonic()
+    cached = tag_source_member_cache.get(guild.id)
+
+    if cached is not None and float(cached.get("expires", 0)) > now:
+        return list(cached.get("members", []))
+
+    try:
+        # fetch_members gives us current member role data instead of relying
+        # exclusively on a possibly stale in-memory cache.
+        members = [
+            member
+            async for member in guild.fetch_members(limit=None)
+            if not member.bot
+        ]
+        tag_source_member_cache[guild.id] = {
+            "expires": now + TAG_SOURCE_REFRESH_SECONDS,
+            "members": members,
+        }
+        return members
+    except (discord.Forbidden, discord.HTTPException):
+        # Fall back to the gateway cache if the HTTP refresh is unavailable.
+        if await ensure_guild_members_loaded(guild):
+            members = [member for member in guild.members if not member.bot]
+            tag_source_member_cache[guild.id] = {
+                "expires": now + 5,
+                "members": members,
+            }
+            return members
+        return None
+    except Exception:
+        if await ensure_guild_members_loaded(guild):
+            members = [member for member in guild.members if not member.bot]
+            tag_source_member_cache[guild.id] = {
+                "expires": now + 5,
+                "members": members,
+            }
+            return members
+        return None
+
+
+async def get_source_role_for_check(
+    guild: discord.Guild,
+    role_id: int,
+) -> discord.Role | None:
+    """Get a source role from cache, falling back to Discord when necessary."""
+    role = guild.get_role(role_id)
+    if role is not None:
+        return role
+
+    try:
+        roles = await guild.fetch_roles()
+        return next((candidate for candidate in roles if candidate.id == role_id), None)
+    except (discord.Forbidden, discord.HTTPException):
+        return None
+    except Exception:
+        return None
 
 
 # ============================================================
@@ -2569,19 +2639,19 @@ async def tag_role_loop():
         if guild is None:
             continue
 
-        if not await ensure_guild_members_loaded(guild):
-            continue
-
-        tag_server_role = guild.get_role(tag_server_role_id)
-
+        tag_server_role = await get_source_role_for_check(
+            guild,
+            tag_server_role_id,
+        )
         if tag_server_role is None:
             continue
 
-        for member in guild.members:
-            if member.bot:
-                continue
+        source_members = await get_source_members_for_role_check(guild)
+        if source_members is None:
+            continue
 
-            if tag_server_role in member.roles:
+        for member in source_members:
+            if tag_server_role.id in {role.id for role in member.roles}:
                 tagged_users.add(member.id)
 
     # -------------------------
@@ -2605,34 +2675,22 @@ async def tag_role_loop():
                 continue
 
 
-            if not await ensure_guild_members_loaded(source_guild):
-                second_role_check_failed = True
-                continue
-
-            source_role = source_guild.get_role(source_role_id)
-
-            if source_role is None:
-                try:
-                    fetched_roles = await source_guild.fetch_roles()
-                    source_role = next(
-                        (role for role in fetched_roles if role.id == source_role_id),
-                        None,
-                    )
-                except discord.HTTPException as e:
-                    second_role_check_failed = True
-                    continue
-
+            source_role = await get_source_role_for_check(
+                source_guild,
+                source_role_id,
+            )
             if source_role is None:
                 second_role_check_failed = True
                 continue
 
+            source_members = await get_source_members_for_role_check(source_guild)
+            if source_members is None:
+                second_role_check_failed = True
+                continue
 
             found_count = 0
-            for source_member in source_guild.members:
-                if source_member.bot:
-                    continue
-
-                if source_role in source_member.roles:
+            for source_member in source_members:
+                if source_role.id in {role.id for role in source_member.roles}:
                     tagged_users_2.add(source_member.id)
                     found_count += 1
 
