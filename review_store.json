@@ -352,6 +352,14 @@
       "rating": 5,
       "comment": "good guy",
       "created_at": "2026-10-01 13:58:04"
+    },
+    {
+      "id": 49,
+      "target_id": 767322244975165442,
+      "reviewer_id": 1522487943346782218,
+      "rating": 1,
+      "comment": "dude look. No offence, but I don't like u one bit and neither wanna converse with u.\n\nI'm going to block u and u can do the same.\n\nAND please, don't reply to me from today onwards and i will be doing the same.\n\nThanks.",
+      "created_at": "2026-10-01 15:30:25"
     }
   ],
   "review_update_requests": [
