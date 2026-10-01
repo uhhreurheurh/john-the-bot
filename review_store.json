@@ -440,6 +440,14 @@
       "rating": 2,
       "comment": "Fag",
       "created_at": "2026-10-01 16:23:59"
+    },
+    {
+      "id": 60,
+      "target_id": 1348469829425959022,
+      "reviewer_id": 1341368821352497243,
+      "rating": 5,
+      "comment": "Begger!",
+      "created_at": "2026-10-01 16:24:33"
     }
   ],
   "review_update_requests": [
