@@ -1293,9 +1293,15 @@ async def on_message(message: discord.Message):
         elif spaced_root == ",uwu" and spaced_action in {"on", "off"}:
             rest = spaced_parts[2] if len(spaced_parts) >= 3 else ""
             content = ",uwuify " + spaced_action + (f" {rest}" if rest else "")
+        elif spaced_root == ",uwu" and message.mentions:
+            rest = spaced_parts[2] if len(spaced_parts) >= 3 else ""
+            content = ",uwuify " + spaced_action + (f" {rest}" if rest else "")
         elif spaced_root == ",hood" and spaced_action == "count":
             content = ",hoodcount"
         elif spaced_root == ",hood" and spaced_action in {"on", "off"}:
+            rest = spaced_parts[2] if len(spaced_parts) >= 3 else ""
+            content = ",hoodify " + spaced_action + (f" {rest}" if rest else "")
+        elif spaced_root == ",hood" and message.mentions:
             rest = spaced_parts[2] if len(spaced_parts) >= 3 else ""
             content = ",hoodify " + spaced_action + (f" {rest}" if rest else "")
 
