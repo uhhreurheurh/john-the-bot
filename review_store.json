@@ -61,8 +61,8 @@
       "id": 10,
       "target_id": 1512484378050302053,
       "reviewer_id": 1368674912943866010,
-      "rating": 2,
-      "comment": "doesnt deserve vip got it by dirty means and is homophobic",
+      "rating": 4,
+      "comment": "sometimes good",
       "created_at": "2026-09-30 16:43:16"
     },
     {
@@ -608,12 +608,12 @@
       "new_rating": 4,
       "new_comment": "sometimes good",
       "update_reason": "i changed my opinion",
-      "status": "pending",
+      "status": "approved",
       "approval_message_id": 1555264060621324369,
       "approval_channel_id": 1554700806220161164,
-      "reviewed_by": null,
+      "reviewed_by": 191233879175200768,
       "created_at": "2026-10-01 17:04:05",
-      "reviewed_at": null
+      "reviewed_at": "2026-10-01 18:18:19"
     },
     {
       "id": 5,
