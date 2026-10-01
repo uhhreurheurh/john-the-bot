@@ -1376,9 +1376,9 @@ async def on_message(message: discord.Message):
 
         parts = content.split(maxsplit=2)
 
-        if len(parts) >= 2 and parts[1].lower() == "off":
+        if len(parts) >= 2 and parts[1].lower() in {"on", "off"}:
             # ",uwuify off @user" removes only that target.
-            if len(parts) >= 3 and message.mentions:
+            if parts[1].lower() == "off" and len(parts) >= 3 and message.mentions:
                 target = message.mentions[0]
                 removed, channel_disabled = await remove_uwu_user_from_channel(
                     message.channel.id,
@@ -1393,6 +1393,45 @@ async def on_message(message: discord.Message):
                     response = f"ℹ️ {target.mention} was not being UWUified in this channel."
 
                 await message.reply(response, mention_author=False)
+                return
+
+            if parts[1].lower() == "on":
+                if len(parts) < 3 or not message.mentions:
+                    await message.reply(
+                        "Usage: ,uwuify on @user",
+                        mention_author=False,
+                    )
+                    return
+
+                target = message.mentions[0]
+                try:
+                    await set_uwu_target(message.channel, target)
+                    await message.reply(
+                        f"✅ Uwu mode is active for {target.mention} in this channel. "
+                        f"Active people: **{get_active_uwu_target_count()}/{MAX_ACTIVE_UWU_TARGETS}**.",
+                        mention_author=False,
+                    )
+                except UwuUserBlacklisted:
+                    await message.reply(
+                        f"❌ {target.mention} is blacklisted from using UWUIFY.",
+                        mention_author=False,
+                    )
+                except UserBlacklistStorageUnavailable as error:
+                    await message.reply(
+                        "❌ I could not verify the UWUIFY blacklist from GitHub, "
+                        f"so I will not activate this target. Error: `{error}`",
+                        mention_author=False,
+                    )
+                except UwuTargetLimitReached:
+                    await message.reply(
+                        f"❌ The global limit of {MAX_ACTIVE_UWU_TARGETS} UWUified people has been reached.",
+                        mention_author=False,
+                    )
+                except (discord.Forbidden, discord.HTTPException) as error:
+                    await message.reply(
+                        f"❌ Discord rejected the UWUIFY setup: `{error}`",
+                        mention_author=False,
+                    )
                 return
 
             # ",uwuify off" disables every target in this channel.
@@ -1544,8 +1583,8 @@ async def on_message(message: discord.Message):
 
         parts = content.split(maxsplit=2)
 
-        if len(parts) >= 2 and parts[1].lower() == "off":
-            if len(parts) >= 3 and message.mentions:
+        if len(parts) >= 2 and parts[1].lower() in {"on", "off"}:
+            if parts[1].lower() == "off" and len(parts) >= 3 and message.mentions:
                 target = message.mentions[0]
                 removed, channel_disabled = await remove_hood_user_from_channel(
                     message.channel.id,
@@ -1566,6 +1605,45 @@ async def on_message(message: discord.Message):
                     )
 
                 await message.reply(response, mention_author=False)
+                return
+
+            if parts[1].lower() == "on":
+                if len(parts) < 3 or not message.mentions:
+                    await message.reply(
+                        "Usage: ,hoodify on @user",
+                        mention_author=False,
+                    )
+                    return
+
+                target = message.mentions[0]
+                try:
+                    await set_hood_target(message.channel, target)
+                    await message.reply(
+                        f"✅ HOODIFY is active for {target.mention} in this channel. "
+                        f"Active people: **{get_active_hood_target_count()}/{MAX_ACTIVE_HOOD_TARGETS}**.",
+                        mention_author=False,
+                    )
+                except HoodUserBlacklisted:
+                    await message.reply(
+                        f"❌ {target.mention} is blacklisted from using HOODIFY.",
+                        mention_author=False,
+                    )
+                except UserBlacklistStorageUnavailable as error:
+                    await message.reply(
+                        "❌ I could not verify the HOODIFY blacklist from GitHub, "
+                        f"so I will not activate this target. Error: `{error}`",
+                        mention_author=False,
+                    )
+                except HoodTargetLimitReached:
+                    await message.reply(
+                        f"❌ The global limit of {MAX_ACTIVE_HOOD_TARGETS} HOODIFIED people has been reached.",
+                        mention_author=False,
+                    )
+                except (discord.Forbidden, discord.HTTPException) as error:
+                    await message.reply(
+                        f"❌ Discord rejected the HOODIFY setup: `{error}`",
+                        mention_author=False,
+                    )
                 return
 
             disabled = await disable_hood_target(message.channel.id)
