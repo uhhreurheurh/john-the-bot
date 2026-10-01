@@ -1646,16 +1646,16 @@ async def send_webhook(
     description,
     color=discord.Color.blurple(),
     fields=None,
-):
-    """Sends an embed to the specified Discord webhook."""
-
+) -> bool:
+    """Send an embed through a Discord webhook and report whether it succeeded."""
     if not webhook_url:
-        return
+        return False
 
     try:
+        # Use the bot client rather than Discord.py's private HTTP session.
         webhook = discord.Webhook.from_url(
             webhook_url,
-            session=bot.http._HTTPClient__session,
+            client=bot,
         )
 
         embed = discord.Embed(
@@ -1678,7 +1678,6 @@ async def send_webhook(
         await webhook.send(
             embed=embed,
             username="",
-            # Never let bot-created webhook messages ping roles, @everyone, or @here.
             allowed_mentions=discord.AllowedMentions(
                 everyone=False,
                 roles=False,
@@ -1687,10 +1686,12 @@ async def send_webhook(
             ),
             wait=False,
         )
+        return True
 
-    except Exception as e:
-        pass
-
+    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+        return False
+    except Exception:
+        return False
 
 # =========================
 # SLASH COMMAND PERMISSION
