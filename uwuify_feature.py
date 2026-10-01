@@ -1,7 +1,6 @@
 """UWUIFY feature module."""
 
 from bot import *
-from hoodify_feature import hood_targets, disable_hood_target
 
 _UWU_DATA = json.loads(Path(__file__).with_name("uwu_words.json").read_text(encoding="utf-8"))
 
@@ -397,8 +396,12 @@ async def disable_uwu_for_user(user_id: int) -> int:
     return removed
 
 
-async def disable_hood_for_user(user_id: int) -> int:
-    """Remove one user from every active HOODIFY channel."""
+async def disable_hood_targets_for_user(user_id: int) -> int:
+    """Remove one user from every active HOODIFY channel without a module import cycle."""
+    # Import lazily: bot.py loads HOODIFY before UWUIFY, so importing HOODIFY
+    # at module import time would create a circular import during startup.
+    from hoodify_feature import hood_targets, disable_hood_target
+
     affected_channels = [
         channel_id
         for channel_id, target_ids in hood_targets.items()
