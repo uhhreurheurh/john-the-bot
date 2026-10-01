@@ -653,7 +653,7 @@ async def handle_proxy_message(message: discord.Message) -> bool:
     if not is_proxy_bot_message(message):
         return False
 
-    request = proxy_requests.get(message.channel.id)
+    request = proxy_requests.pop(message.channel.id, None)
     if request is None:
         return False
 
