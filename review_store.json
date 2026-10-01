@@ -240,6 +240,14 @@
       "rating": 3,
       "comment": "AAAHHHHHHHHHHHH 😱😱😳😰😰👻👻💀",
       "created_at": "2026-10-01 02:23:32"
+    },
+    {
+      "id": 34,
+      "target_id": 1348469829425959022,
+      "reviewer_id": 191233879175200768,
+      "rating": 4,
+      "comment": "cool person to talk with but sometimes makes you wanna hit your head but other than that he is chill",
+      "created_at": "2026-10-01 02:23:46"
     }
   ],
   "review_update_requests": [
