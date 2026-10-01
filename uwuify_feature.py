@@ -471,6 +471,24 @@ async def uwucount_command(interaction: discord.Interaction):
 
 
 @tree.command(
+    name="uwucount",
+    description="Show how many people are currently being UWUified.",
+)
+async def uwucount_root_command(interaction: discord.Interaction):
+    global_count = get_active_uwu_target_count()
+    channel_count = 0
+    if isinstance(interaction.channel, discord.TextChannel):
+        channel_count = len(uwu_targets.get(interaction.channel.id, set()))
+
+    await interaction.response.send_message(
+        f"🩷 **UWU count**\n"
+        f"Global: **{global_count}/{MAX_ACTIVE_UWU_TARGETS}** people\n"
+        f"This channel: **{channel_count}** people",
+        ephemeral=False,
+    )
+
+
+@tree.command(
     name="uwuify",
     description="Add a member to this channel's automatic UWU mode.",
 )
