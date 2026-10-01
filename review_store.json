@@ -533,6 +533,23 @@
       "reviewed_by": 191233879175200768,
       "created_at": "2026-09-30 21:33:38",
       "reviewed_at": "2026-09-30 21:36:26"
+    },
+    {
+      "id": 4,
+      "review_id": 10,
+      "target_id": 1512484378050302053,
+      "reviewer_id": 1368674912943866010,
+      "old_rating": 2,
+      "old_comment": "doesnt deserve vip got it by dirty means and is homophobic",
+      "new_rating": 4,
+      "new_comment": "sometimes good",
+      "update_reason": "i changed my opinion",
+      "status": "pending",
+      "approval_message_id": null,
+      "approval_channel_id": null,
+      "reviewed_by": null,
+      "created_at": "2026-10-01 17:04:05",
+      "reviewed_at": null
     }
   ],
   "review_id_sequence": 6
