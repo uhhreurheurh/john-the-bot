@@ -1,6 +1,7 @@
 """Staff strike feature module."""
 
 from bot import *
+from bot import _github_contents_url, _github_request_json
 
 def load_staff_strikes() -> list[dict]:
     """Load all staff strikes from local disk."""
