@@ -1,6 +1,7 @@
 """Review system feature module."""
 
 from bot import *
+from bot import _github_headers
 
 # =========================
 # REVIEW DATABASE
