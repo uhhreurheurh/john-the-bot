@@ -11,6 +11,7 @@ HOOD_EXTRAS = list(_HOODIFY_DATA.get("extras", []))
 
 HOOD_WEBHOOK_NAME = "Hoodify Relay"
 HOOD_WEBHOOK_IDLE_SECONDS = 5 * 60
+HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS = 60
 
 # Members with one of these roles may enable/disable HOODIFY.
 # Set to the same roles as UWU, or change them independently.
@@ -409,7 +410,7 @@ async def cleanup_stale_hood_webhooks() -> None:
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 pass
 
-@tasks.loop(seconds=HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS if "HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS" in globals() else 60)
+@tasks.loop(seconds=HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS)
 async def hood_webhook_cleanup_loop():
     await cleanup_stale_hood_webhooks()
 
