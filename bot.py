@@ -1759,8 +1759,7 @@ async def send_role_webhook(
     fields=None,
 ) -> bool:
     """Send a role-system event through ROLE_WEBHOOK_URL."""
-    return await send_webhook(
-        ROLE_WEBHOOK_URL,
+    return await send_role_webhook(
         title=title,
         description=description,
         color=color,
@@ -2240,8 +2239,7 @@ async def blacklist_command(
         ephemeral=False,
     )
 
-    await send_webhook(
-        ROLE_WEBHOOK_URL,
+    await send_role_webhook(
         title="🚫 Second Role Blacklisted",
         description=f"{member.mention} was added to the second-role blacklist.",
         color=discord.Color.red(),
@@ -2280,8 +2278,7 @@ async def unblacklist_command(
         ephemeral=False,
     )
 
-    await send_webhook(
-        ROLE_WEBHOOK_URL,
+    await send_role_webhook(
         title="✅ Second Role Blacklist Removed",
         description=f"{member.mention} was removed from the second-role blacklist.",
         color=discord.Color.green(),
@@ -2451,16 +2448,45 @@ tag_source_member_cache: dict[int, dict] = {}
 async def get_source_members_for_role_check(
     guild: discord.Guild,
 ) -> list[discord.Member] | None:
-    """Return a current-enough member list for a source-server role check."""
+    """Return a current-enough member list without hammering Discord's API."""
     now = time.monotonic()
     cached = tag_source_member_cache.get(guild.id)
 
     if cached is not None and float(cached.get("expires", 0)) > now:
         return list(cached.get("members", []))
 
+    # With the Members intent enabled, discord.py maintains guild.members from
+    # gateway events. Prefer that cache so the 1-second tag loop does not make
+    # a full REST member download every 30 seconds for every source server.
+    cached_members = [
+        member for member in guild.members
+        if not member.bot
+    ]
+    if guild.chunked or cached_members:
+        tag_source_member_cache[guild.id] = {
+            "expires": now + TAG_SOURCE_REFRESH_SECONDS,
+            "members": cached_members,
+        }
+        return cached_members
+
     try:
-        # fetch_members gives us current member role data instead of relying
-        # exclusively on a possibly stale in-memory cache.
+        await ensure_guild_members_loaded(guild)
+    except Exception:
+        pass
+
+    cached_members = [
+        member for member in guild.members
+        if not member.bot
+    ]
+    if cached_members or guild.chunked:
+        tag_source_member_cache[guild.id] = {
+            "expires": now + 5,
+            "members": cached_members,
+        }
+        return cached_members
+
+    # Last resort for a cold cache: use Discord's REST member endpoint.
+    try:
         members = [
             member
             async for member in guild.fetch_members(limit=None)
@@ -2472,23 +2498,8 @@ async def get_source_members_for_role_check(
         }
         return members
     except (discord.Forbidden, discord.HTTPException):
-        # Fall back to the gateway cache if the HTTP refresh is unavailable.
-        if await ensure_guild_members_loaded(guild):
-            members = [member for member in guild.members if not member.bot]
-            tag_source_member_cache[guild.id] = {
-                "expires": now + 5,
-                "members": members,
-            }
-            return members
         return None
     except Exception:
-        if await ensure_guild_members_loaded(guild):
-            members = [member for member in guild.members if not member.bot]
-            tag_source_member_cache[guild.id] = {
-                "expires": now + 5,
-                "members": members,
-            }
-            return members
         return None
 
 
@@ -2590,7 +2601,16 @@ async def sync_tag_roles_for_source_member(source_member: discord.Member) -> Non
                     if other_guild is None:
                         continue
                     other_member = other_guild.get_member(source_member.id)
-                    if other_member is not None and role_id in {r.id for r in other_member.roles}:
+                    if other_member is None:
+                        try:
+                            other_member = await other_guild.fetch_member(source_member.id)
+                        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                            other_member = None
+
+                    if (
+                        other_member is not None
+                        and role_id in {r.id for r in other_member.roles}
+                    ):
                         still_qualified = True
                         break
 
