@@ -2462,20 +2462,22 @@ async def get_source_members_for_role_check(
     if cached is not None and float(cached.get("expires", 0)) > now:
         return list(cached.get("members", []))
 
-    # With the Members intent enabled, discord.py maintains guild.members from
-    # gateway events. Prefer that cache so the 1-second tag loop does not make
-    # a full REST member download every 30 seconds for every source server.
+    # With the Members intent enabled, use the complete gateway cache when
+    # discord.py reports that the guild has finished chunking.
     cached_members = [
         member for member in guild.members
         if not member.bot
     ]
-    if guild.chunked or cached_members:
+    if guild.chunked:
         tag_source_member_cache[guild.id] = {
             "expires": now + TAG_SOURCE_REFRESH_SECONDS,
             "members": cached_members,
         }
         return cached_members
 
+    # A partial cache must not be treated as the complete member list: doing
+    # so can make the kick system incorrectly think somebody is absent from
+    # the main server. Ask Discord for the remaining chunks first.
     try:
         await ensure_guild_members_loaded(guild)
     except Exception:
@@ -2485,9 +2487,9 @@ async def get_source_members_for_role_check(
         member for member in guild.members
         if not member.bot
     ]
-    if cached_members or guild.chunked:
+    if guild.chunked:
         tag_source_member_cache[guild.id] = {
-            "expires": now + 5,
+            "expires": now + TAG_SOURCE_REFRESH_SECONDS,
             "members": cached_members,
         }
         return cached_members
