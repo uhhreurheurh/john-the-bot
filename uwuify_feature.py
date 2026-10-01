@@ -1,6 +1,7 @@
 """UWUIFY feature module."""
 
 from bot import *
+from hoodify_feature import hood_targets, disable_hood_target
 
 _UWU_DATA = json.loads(Path(__file__).with_name("uwu_words.json").read_text(encoding="utf-8"))
 
