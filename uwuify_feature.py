@@ -114,15 +114,20 @@ async def _delete_uwu_webhook_after_idle(channel_id: int, webhook: discord.Webho
     try:
         await asyncio.sleep(UWU_WEBHOOK_IDLE_SECONDS)
 
-        entry = uwu_webhooks.get(channel_id)
-        if entry is not None and entry.get("webhook") is webhook:
+        should_delete = False
+        entry_to_delete = None
+        async with uwu_target_lock:
+            entry = uwu_webhooks.get(channel_id)
+            if entry is not None and entry.get("webhook") is webhook:
+                entry_to_delete = uwu_webhooks.pop(channel_id, None)
+                uwu_targets.pop(channel_id, None)
+                should_delete = True
+
+        if should_delete:
             try:
                 await webhook.delete(reason="Uwu webhook unused for 5 minutes")
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 pass
-            finally:
-                uwu_webhooks.pop(channel_id, None)
-                uwu_targets.pop(channel_id, None)
     except asyncio.CancelledError:
         return
 
@@ -194,7 +199,6 @@ async def set_uwu_target(
                 target.id not in active_target_ids
                 and len(active_target_ids) >= MAX_ACTIVE_UWU_TARGETS
             ):
-                # Don't leave an empty set behind when the command is rejected.
                 if not channel_targets:
                     uwu_targets.pop(channel.id, None)
 
@@ -204,17 +208,29 @@ async def set_uwu_target(
 
             channel_targets.add(target.id)
 
-    # Create/reuse the webhook outside the cap lock so webhook API calls do not
-    # block another target from being checked against the cap.
-    webhook = await get_uwu_webhook(channel)
-    _reset_uwu_webhook_timer(channel.id, webhook)
-    return webhook
+        # Keep target state and webhook creation synchronized so a failed
+        # webhook creation cannot leave a phantom active target behind.
+        try:
+            webhook = await get_uwu_webhook(channel)
+        except Exception:
+            if target.id in channel_targets and target.id not in (
+                get_active_uwu_target_ids(exclude_channel_id=channel.id)
+            ):
+                channel_targets.discard(target.id)
+                if not channel_targets:
+                    uwu_targets.pop(channel.id, None)
+            raise
+
+        _reset_uwu_webhook_timer(channel.id, webhook)
+        return webhook
 
 
 async def disable_uwu_target(channel_id: int) -> bool:
     """Disable UWU mode and delete its temporary webhook immediately."""
-    uwu_targets.pop(channel_id, None)
-    entry = uwu_webhooks.pop(channel_id, None)
+    async with uwu_target_lock:
+        uwu_targets.pop(channel_id, None)
+        entry = uwu_webhooks.pop(channel_id, None)
+
     if entry is None:
         return False
 
@@ -384,23 +400,33 @@ async def before_uwu_webhook_cleanup():
 
 async def disable_uwu_for_user(user_id: int) -> int:
     """Remove one user from every active UWUIFY channel."""
-    affected_channels = [
-        channel_id
-        for channel_id, target_ids in uwu_targets.items()
-        if user_id in target_ids
-    ]
-
+    entries_to_delete = []
     removed = 0
-    for channel_id in affected_channels:
-        target_ids = uwu_targets.get(channel_id)
-        if target_ids is None or user_id not in target_ids:
-            continue
 
-        target_ids.discard(user_id)
-        removed += 1
+    async with uwu_target_lock:
+        for channel_id, target_ids in list(uwu_targets.items()):
+            if user_id not in target_ids:
+                continue
 
-        if not target_ids:
-            await disable_uwu_target(channel_id)
+            target_ids.discard(user_id)
+            removed += 1
+
+            if not target_ids:
+                uwu_targets.pop(channel_id, None)
+                entry = uwu_webhooks.pop(channel_id, None)
+                if entry is not None:
+                    entries_to_delete.append(entry)
+
+    for entry in entries_to_delete:
+        timer = entry.get("timer")
+        if timer is not None and not timer.done():
+            timer.cancel()
+        webhook = entry.get("webhook")
+        if webhook is not None:
+            try:
+                await webhook.delete(reason="UWUIFY disabled for user")
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
 
     return removed
 
