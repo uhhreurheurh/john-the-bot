@@ -2486,6 +2486,16 @@ async def sync_tag_roles_for_source_member(source_member: discord.Member) -> Non
                         first_main_role,
                         reason="Configured tag-server source role detected",
                     )
+                    await send_role_webhook(
+                        title="🏷️ Tag Role Added",
+                        description=f"{main_member.mention} was given the main tag role.",
+                        color=discord.Color.green(),
+                        fields=[
+                            ("User", f"{main_member} ({main_member.id})", True),
+                            ("Role", f"{first_main_role.mention} ({first_main_role.id})", True),
+                            ("Reason", "Configured tag-server source role detected.", False),
+                        ],
+                    )
                 except (discord.Forbidden, discord.HTTPException) as error:
                     print(
                         "Immediate first tag-role assignment failed for "
@@ -2511,6 +2521,16 @@ async def sync_tag_roles_for_source_member(source_member: discord.Member) -> Non
                         await main_member.remove_roles(
                             first_main_role,
                             reason="Configured source role was removed",
+                        )
+                        await send_role_webhook(
+                            title="🏷️ Tag Role Removed",
+                            description=f"{main_member.mention} lost the main tag role because the configured source role was removed.",
+                            color=discord.Color.orange(),
+                            fields=[
+                                ("User", f"{main_member} ({main_member.id})", True),
+                                ("Role", f"{first_main_role.mention} ({first_main_role.id})", True),
+                                ("Reason", "Configured source role was removed.", False),
+                            ],
                         )
                     except (discord.Forbidden, discord.HTTPException):
                         pass
@@ -2538,6 +2558,16 @@ async def sync_tag_roles_for_source_member(source_member: discord.Member) -> Non
                     second_main_role,
                     reason="Member is on the second-role blacklist",
                 )
+                await send_role_webhook(
+                    title="🚫 Second Tag Role Removed",
+                    description=f"{main_member.mention} lost the second main tag role because they are blacklisted.",
+                    color=discord.Color.red(),
+                    fields=[
+                        ("User", f"{main_member} ({main_member.id})", True),
+                        ("Role", f"{second_main_role.mention} ({second_main_role.id})", True),
+                        ("Reason", "Member is on the second-role blacklist.", False),
+                    ],
+                )
             return
 
         if has_second_source_role and second_main_role not in main_member.roles:
@@ -2545,10 +2575,30 @@ async def sync_tag_roles_for_source_member(source_member: discord.Member) -> Non
                 second_main_role,
                 reason="Configured second tag-server source role detected",
             )
+            await send_role_webhook(
+                title="🏷️ Second Tag Role Added",
+                description=f"{main_member.mention} was given the second main tag role.",
+                color=discord.Color.green(),
+                fields=[
+                    ("User", f"{main_member} ({main_member.id})", True),
+                    ("Role", f"{second_main_role.mention} ({second_main_role.id})", True),
+                    ("Reason", "Configured second tag-server source role detected.", False),
+                ],
+            )
         elif not has_second_source_role and second_main_role in main_member.roles:
             await main_member.remove_roles(
                 second_main_role,
                 reason="Configured second tag-server source role was removed",
+            )
+            await send_role_webhook(
+                title="🏷️ Second Tag Role Removed",
+                description=f"{main_member.mention} lost the second main tag role because the configured source role was removed.",
+                color=discord.Color.orange(),
+                fields=[
+                    ("User", f"{main_member} ({main_member.id})", True),
+                    ("Role", f"{second_main_role.mention} ({second_main_role.id})", True),
+                    ("Reason", "Configured second tag-server source role was removed.", False),
+                ],
             )
     except (discord.Forbidden, discord.HTTPException) as error:
         print(
