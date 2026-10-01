@@ -8,7 +8,6 @@ HOOD_OPENERS = list(_HOODIFY_DATA.get("openers", []))
 HOOD_MID_PHRASES = list(_HOODIFY_DATA.get("mid_phrases", []))
 HOOD_CLOSERS = list(_HOODIFY_DATA.get("closers", []))
 HOOD_EXTRAS = list(_HOODIFY_DATA.get("extras", []))
-HOOD_WORD_BLACKLIST = set(_HOODIFY_DATA.get("word_blacklist", []))
 
 HOOD_WEBHOOK_NAME = "Hoodify Relay"
 HOOD_WEBHOOK_IDLE_SECONDS = 5 * 60
@@ -38,6 +37,8 @@ hood_targets: dict[int, set[int]] = {}
 # Protect the global HOODIFY target cap from simultaneous commands.
 hood_target_lock = asyncio.Lock()
 
+# Load the editable blacklist after the legacy inline default is declared.
+HOOD_WORD_BLACKLIST = set(_HOODIFY_DATA.get("word_blacklist", []))
 
 def hoodify_text(content: str) -> str:
     """Convert ordinary text into varied casual internet slang.
@@ -377,6 +378,11 @@ uwu_target_lock = asyncio.Lock()
 
 
 
+@tree.command(
+    name="unhoodify",
+    description="Disable HOODIFY for a selected member.",
+)
+@app_commands.describe(member="The member to stop HOODIFYING")
 async def unhoodify_command(interaction: discord.Interaction, member: discord.Member):
     if uwu_hoodify_user_is_banned(interaction.user):
         await interaction.response.send_message(
@@ -514,12 +520,3 @@ async def hoodify_command(
             ephemeral=False,
         )
 
-
-@tree.command(
-    name="uwuify",
-    description="Add a member to this channel's automatic UWU mode.",
-)
-@app_commands.describe(
-    member="The member whose messages should be automatically uwuified",
-    message="Optional one-time message to send through the uwu webhook",
-)
