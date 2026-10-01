@@ -177,11 +177,15 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 # =========================
 # AUTOMATIC ROLE REMOVAL
 # =========================
-# When a member has the trigger role in the MAIN_SERVER, the bot will
-# automatically remove the role listed below. Set either value to 0
-# to disable this feature.
-AUTO_REMOVE_TRIGGER_ROLE_ID = 1378810715611336914  # Role that causes the removal
-AUTO_REMOVE_ROLE_ID = 1372658714825457729          # Role to automatically remove
+# Remove AUTO_REMOVE_ROLE_ID from anyone in MAIN_SERVER who has either:
+# - the explicit trigger role below, or
+# - any role listed in STAFF_ROLE_HIERARCHY.
+AUTO_REMOVE_TRIGGER_ROLE_ID = 1378810715611336914
+AUTO_REMOVE_TRIGGER_ROLE_IDS = {
+    AUTO_REMOVE_TRIGGER_ROLE_ID,
+    *STAFF_ROLE_IDS,
+}
+AUTO_REMOVE_ROLE_ID = 1372658714825457729
 
 
 # =========================
@@ -2569,21 +2573,21 @@ async def on_app_command_error(
 # =========================
 
 async def remove_auto_role_if_needed(member: discord.Member, reason: str) -> bool:
-    """Remove the configured role whenever the member has the trigger role."""
-    if not AUTO_REMOVE_TRIGGER_ROLE_ID or not AUTO_REMOVE_ROLE_ID:
+    """Remove the configured role whenever a member has any trigger role."""
+    if not AUTO_REMOVE_TRIGGER_ROLE_IDS or not AUTO_REMOVE_ROLE_ID:
         return False
 
     if member.bot or member.guild.id != MAIN_SERVER:
         return False
 
-    trigger_role = member.guild.get_role(AUTO_REMOVE_TRIGGER_ROLE_ID)
-    role_to_remove = member.guild.get_role(AUTO_REMOVE_ROLE_ID)
+    role_ids = {role.id for role in member.roles}
 
-    if trigger_role is None or role_to_remove is None:
+    # Any staff hierarchy role OR the explicit trigger role qualifies.
+    if not role_ids.intersection(AUTO_REMOVE_TRIGGER_ROLE_IDS):
         return False
 
-    # Keep enforcing the rule whenever both roles are present.
-    if trigger_role not in member.roles or role_to_remove not in member.roles:
+    role_to_remove = member.guild.get_role(AUTO_REMOVE_ROLE_ID)
+    if role_to_remove is None or role_to_remove not in member.roles:
         return False
 
     if member.guild.owner_id == member.id:
@@ -2620,17 +2624,16 @@ async def remove_auto_role_if_needed(member: discord.Member, reason: str) -> boo
 
 @bot.event
 async def on_member_update(before: discord.Member, after: discord.Member):
-    """Handle main-server automatic removal and source-server tag-role changes."""
+    """Handle automatic removal and source-server tag-role changes."""
     if after.guild.id == MAIN_SERVER:
-        if AUTO_REMOVE_TRIGGER_ROLE_ID and AUTO_REMOVE_ROLE_ID:
-            had_trigger = AUTO_REMOVE_TRIGGER_ROLE_ID in {role.id for role in before.roles}
-            has_trigger = AUTO_REMOVE_TRIGGER_ROLE_ID in {role.id for role in after.roles}
-
-            if not had_trigger and has_trigger:
-                await remove_auto_role_if_needed(
-                    after,
-                    reason="Member received the configured automatic-removal trigger role",
-                )
+        # Enforce the rule whenever a qualifying trigger/staff role exists.
+        # This catches both newly-added roles and cases where the removable
+        # role was added while the trigger was already present.
+        if AUTO_REMOVE_TRIGGER_ROLE_IDS and AUTO_REMOVE_ROLE_ID:
+            await remove_auto_role_if_needed(
+                after,
+                reason="Member has a configured automatic-removal trigger or staff role",
+            )
         return
 
     source_pairs = dict(zip(tag_servers, tag_server_role_ids))
@@ -3198,8 +3201,9 @@ async def tag_role_loop():
     if main_guild is None:
         return
 
-    # Keep enforcing the automatic role-removal rule.
-    if AUTO_REMOVE_TRIGGER_ROLE_ID and AUTO_REMOVE_ROLE_ID:
+    # Keep enforcing the automatic role-removal rule for the explicit
+    # trigger role and every configured staff hierarchy role.
+    if AUTO_REMOVE_TRIGGER_ROLE_IDS and AUTO_REMOVE_ROLE_ID:
         for member in main_guild.members:
             if member.bot:
                 continue
