@@ -1874,47 +1874,6 @@ async def handle_prefix_review_command(message, content):
         await send_prefix_leaderboard(message)
         return True
 
-    if command in {",rolewebhooktest", ",kickwebhooktest"}:
-        if not prefix_blacklist_allowed(message):
-            await message.reply(
-                "You do not have permission to run webhook tests.",
-                mention_author=False,
-            )
-            return True
-
-        global last_webhook_error
-        last_webhook_error = None
-
-        if command == ",rolewebhooktest":
-            success = await send_role_webhook(
-                title="Role Webhook Test",
-                description="This is a test message from the role system.",
-                color=discord.Color.green(),
-                fields=[("Webhook Variable", "ROLE_WEBHOOK_URL", True)],
-            )
-            result_name = "ROLE_WEBHOOK_URL"
-        else:
-            success = await send_kick_webhook(
-                title="Kick Webhook Test",
-                description="This is a test message from the kick system.",
-                color=discord.Color.green(),
-                fields=[("Webhook Variable", "KICK_WEBHOOK_URL", True)],
-            )
-            result_name = "KICK_WEBHOOK_URL"
-
-        if success:
-            await message.reply(
-                f"{result_name} is working and the test webhook was sent.",
-                mention_author=False,
-            )
-        else:
-            await message.reply(
-                f"{result_name} failed. Railway error: "
-                f"{last_webhook_error or 'No error was returned.'}",
-                mention_author=False,
-            )
-        return True
-
     if command == ",savedb":
         if not isinstance(message.author, discord.Member) or REVIEW_DB_SAVE_ROLE_ID not in {role.id for role in message.author.roles}:
             await message.reply("You do not have permission to use ,savedb.", mention_author=False)
@@ -2122,72 +2081,6 @@ async def blacklist_command_check(interaction: discord.Interaction) -> bool:
         )
 
     return True
-
-
-@tree.command(
-    name="rolewebhooktest",
-    description="Test the configured ROLE_WEBHOOK_URL.",
-)
-@app_commands.check(blacklist_command_check)
-async def role_webhook_test_command(interaction: discord.Interaction):
-    """Send a test message through ROLE_WEBHOOK_URL."""
-    global last_webhook_error
-    last_webhook_error = None
-
-    success = await send_role_webhook(
-        title="✅ Role Webhook Test",
-        description="This is a test message from the role system.",
-        color=discord.Color.green(),
-        fields=[
-            ("Webhook Variable", "ROLE_WEBHOOK_URL", True),
-        ],
-    )
-
-    if success:
-        await interaction.response.send_message(
-            "✅ ROLE_WEBHOOK_URL is working and the test webhook was sent.",
-            ephemeral=True,
-        )
-        return
-
-    await interaction.response.send_message(
-        "❌ ROLE_WEBHOOK_URL failed. "
-        f"Railway error: {last_webhook_error or 'No error was returned.'}",
-        ephemeral=True,
-    )
-
-
-@tree.command(
-    name="kickwebhooktest",
-    description="Test the configured KICK_WEBHOOK_URL.",
-)
-@app_commands.check(blacklist_command_check)
-async def kick_webhook_test_command(interaction: discord.Interaction):
-    """Send a test message through KICK_WEBHOOK_URL."""
-    global last_webhook_error
-    last_webhook_error = None
-
-    success = await send_kick_webhook(
-        title="✅ Kick Webhook Test",
-        description="This is a test message from the kick system.",
-        color=discord.Color.green(),
-        fields=[
-            ("Webhook Variable", "KICK_WEBHOOK_URL", True),
-        ],
-    )
-
-    if success:
-        await interaction.response.send_message(
-            "✅ KICK_WEBHOOK_URL is working and the test webhook was sent.",
-            ephemeral=True,
-        )
-        return
-
-    await interaction.response.send_message(
-        "❌ KICK_WEBHOOK_URL failed. "
-        f"Railway error: {last_webhook_error}",
-        ephemeral=True,
-    )
 
 
 def uwu_hoodify_user_is_banned(member: discord.Member | discord.User) -> bool:
