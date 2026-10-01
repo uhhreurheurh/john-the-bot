@@ -2225,11 +2225,10 @@ async def textify_unblacklist_command(interaction: discord.Interaction, member: 
     uwu_user_blacklist.discard(member.id)
     hood_user_blacklist.discard(member.id)
 
-    uwu_synced = await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, uwu_user_blacklist)
-    hood_synced = await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, hood_user_blacklist)
+    github_synced = await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, textify_blacklist)
 
     response = f"✅ {member.mention} can use UWUIFY and HOODIFY again."
-    if not uwu_synced or not hood_synced:
+    if not github_synced:
         response += (
             "\n⚠️ GitHub sync FAILED."
             f"\n`{github_blacklist_sync_error}`"
