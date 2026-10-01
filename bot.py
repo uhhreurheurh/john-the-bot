@@ -1636,6 +1636,263 @@ async def on_message(message: discord.Message):
             )
         return
 
+
+# =========================
+# REVIEW / LEADERBOARD / STRIKE PREFIX COMMANDS
+# =========================
+
+async def interaction_from_prefix_update_modal(message, target, current_review):
+    await message.reply(
+        "Click **Update Review** to open the update form.",
+        view=PrefixUpdateView(target, current_review),
+        mention_author=False,
+    )
+
+
+class PrefixUpdateView(discord.ui.View):
+    def __init__(self, target, current_review):
+        super().__init__(timeout=120)
+        self.target = target
+        self.current_review = current_review
+
+    @discord.ui.button(label="Update Review", style=discord.ButtonStyle.primary)
+    async def open_modal(self, interaction, button):
+        if interaction.user.id != self.current_review["reviewer_id"]:
+            await interaction.response.send_message(
+                "Only the person who wrote this review can update it.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_modal(
+            UpdateReviewModal(self.target, self.current_review)
+        )
+
+
+async def send_prefix_leaderboard(message):
+    try:
+        store = await asyncio.to_thread(_load_shared_review_store)
+        reviews = store.get("reviews", [])
+        stats = {}
+        liked = {}
+        neutral = {}
+        disliked = {}
+
+        for review in reviews:
+            target_id = int(review["target_id"])
+            rating = int(review["rating"])
+            info = stats.setdefault(target_id, {"total": 0, "approved": 0, "sum": 0})
+            info["total"] += 1
+            info["sum"] += rating
+            if rating in (4, 5):
+                info["approved"] += 1
+                liked[target_id] = liked.get(target_id, 0) + 1
+            elif rating == 3:
+                neutral[target_id] = neutral.get(target_id, 0) + 1
+            else:
+                disliked[target_id] = disliked.get(target_id, 0) + 1
+
+        liked_rows = sorted(liked.items(), key=lambda item: (-item[1], item[0]))[:5]
+        reviewed_rows = sorted(stats.items(), key=lambda item: (-item[1]["total"], -(item[1]["sum"] / item[1]["total"]), item[0]))[:5]
+        neutral_rows = sorted(neutral.items(), key=lambda item: (-item[1], item[0]))[:5]
+        disliked_rows = sorted(disliked.items(), key=lambda item: (-item[1], item[0]))[:5]
+
+        target_ids = []
+        for target_id, _ in liked_rows + reviewed_rows + neutral_rows + disliked_rows:
+            if target_id not in target_ids:
+                target_ids.append(target_id)
+
+        members = {}
+        if message.guild is not None:
+            for target_id in target_ids:
+                members[target_id] = await get_review_member_or_user(message.guild, target_id)
+
+        def label(target_id):
+            member = members.get(target_id)
+            return (member.mention if member else f"<@{target_id}>", member.name if member else "unknown")
+
+        embed = discord.Embed(title="leaderboard", color=discord.Color.dark_grey())
+
+        text = "**top 5 most liked users**\\n\\n"
+        if liked_rows:
+            for index, (target_id, count) in enumerate(liked_rows, 1):
+                mention, username = label(target_id)
+                info = stats[target_id]
+                approval = info["approved"] / info["total"] * 100
+                text += f"{index} {mention} ({username}) 🟢 **{count}** ({approval:.2f}% approval)\\n"
+        else:
+            text += "No reviews yet."
+        embed.add_field(name="Most Liked", value=text, inline=False)
+
+        text = "**top 5 most reviewed**\\n\\n"
+        if reviewed_rows:
+            for index, (target_id, info) in enumerate(reviewed_rows, 1):
+                mention, username = label(target_id)
+                average = info["sum"] / info["total"] if info["total"] else 0
+                text += f"{index} {mention} ({username}) 📝 **{info['total']} reviews** (⭐ {average:.1f} avg)\\n"
+        else:
+            text += "No reviews yet."
+        embed.add_field(name="Most Reviewed", value=text, inline=False)
+
+        text = "**top 5 neutral users**\\n\\n"
+        if neutral_rows:
+            for index, (target_id, count) in enumerate(neutral_rows, 1):
+                mention, username = label(target_id)
+                text += f"{index} {mention} ({username}) 🟠 **{count} neutral reviews**\\n"
+        else:
+            text += "No 3-star reviews yet."
+        embed.add_field(name="Neutral (3 Stars)", value=text, inline=False)
+
+        text = "**top 5 most disliked users**\\n\\n"
+        if disliked_rows:
+            for index, (target_id, count) in enumerate(disliked_rows, 1):
+                mention, username = label(target_id)
+                info = stats[target_id]
+                approval = info["approved"] / info["total"] * 100
+                text += f"{index} {mention} ({username}) 🔴 **{count} negative reviews** ({approval:.2f}% approval)\\n"
+        else:
+            text += "No negative reviews yet."
+        embed.add_field(name="Most Disliked", value=text, inline=False)
+
+        await message.reply(embed=embed, mention_author=False)
+    except Exception as error:
+        print(f"Prefix leaderboard failed: {type(error).__name__}: {error}")
+        await message.reply(
+            "I couldn't load the leaderboard right now.",
+            mention_author=False,
+        )
+
+
+async def handle_prefix_review_command(message, content):
+    parts = content.split(maxsplit=2)
+    command = parts[0].lower() if parts else ""
+
+    if command == ",review":
+        if not message.mentions:
+            await message.reply("Usage: ,review @user", mention_author=False)
+            return True
+        if review_user_is_blacklisted(message.author.id):
+            await message.reply("You are blacklisted from the review system.", mention_author=False)
+            return True
+        target = message.mentions[0]
+        if target.id == message.author.id:
+            await message.reply("You can't review yourself.", mention_author=False)
+            return True
+        if get_user_review(target.id, message.author.id):
+            await message.reply("You already reviewed this user. Use ,updatereview @user to request a change.", mention_author=False)
+            return True
+        await message.reply("**select your star rating:**", view=StarView(target), mention_author=False)
+        return True
+
+    if command == ",updatereview":
+        if not message.mentions:
+            await message.reply("Usage: ,updatereview @user", mention_author=False)
+            return True
+        if review_user_is_blacklisted(message.author.id):
+            await message.reply("You are blacklisted from the review system.", mention_author=False)
+            return True
+        target = message.mentions[0]
+        if target.id == message.author.id:
+            await message.reply("You cannot update a review for yourself.", mention_author=False)
+            return True
+        await refresh_local_review_db_from_github()
+        current = get_user_review(target.id, message.author.id)
+        if not current:
+            await message.reply("You have not reviewed this user yet. Use ,review @user first.", mention_author=False)
+            return True
+        await interaction_from_prefix_update_modal(message, target, current)
+        return True
+
+    if command == ",reviews":
+        if not message.mentions:
+            await message.reply("Usage: ,reviews @user", mention_author=False)
+            return True
+        target = message.mentions[0]
+        await refresh_local_review_db_from_github()
+        review_list = get_reviews(target.id)
+        if not review_list:
+            await message.reply(f"{target.display_name} has no reviews yet.", mention_author=False)
+            return True
+        view = ReviewPagination(target=target, reviews=review_list)
+        await message.reply(embed=view.make_embed(), view=view, mention_author=False)
+        return True
+
+    if command == ",deletereview":
+        if len(parts) < 2:
+            await message.reply("Usage: ,deletereview 123", mention_author=False)
+            return True
+        if not isinstance(message.author, discord.Member) or not any(role.id in DELETE_REVIEW_ALLOWED_ROLE_IDS for role in message.author.roles):
+            await message.reply("You do not have permission to delete reviews.", mention_author=False)
+            return True
+        try:
+            review_id = int(parts[1])
+        except ValueError:
+            await message.reply("Review ID must be a number.", mention_author=False)
+            return True
+        await refresh_local_review_db_from_github()
+        review = get_review(review_id)
+        if not review:
+            await message.reply("Review not found.", mention_author=False)
+            return True
+        delete_review(review_id)
+        asyncio.create_task(sync_review_db_to_github_locked())
+        await log_review_event(
+            "Review Removed",
+            f"{message.author.mention} removed review #{review_id}.",
+            fields=[
+                ("Review ID", f"Review #{review_id}", True),
+                ("Removed By", f"{message.author.mention} / {message.author.id}", False),
+                ("Reviewer", f"<@{review['reviewer_id']}> / {review['reviewer_id']}", False),
+                ("Target", f"<@{review['target_id']}> / {review['target_id']}", False),
+                ("Rating", review_stars(int(review["rating"])), True),
+                ("Comment", str(review.get("comment") or "No comment")[:1024], False),
+            ],
+            color=discord.Color.red(),
+        )
+        await message.reply(f"Review {review_id} deleted.", mention_author=False)
+        return True
+
+    if command == ",leaderboard":
+        await send_prefix_leaderboard(message)
+        return True
+
+    if command == ",savedb":
+        if not isinstance(message.author, discord.Member) or REVIEW_DB_SAVE_ROLE_ID not in {role.id for role in message.author.roles}:
+            await message.reply("You do not have permission to use ,savedb.", mention_author=False)
+            return True
+        success, error = await sync_review_db_to_github_locked()
+        if success:
+            await message.reply("The review database was saved to GitHub successfully.", mention_author=False)
+        else:
+            await message.reply(f"Could not save the review database to GitHub: {error}", mention_author=False)
+        return True
+
+    if command == ",strikes":
+        if not (message.guild and message.guild.id == MAIN_SERVER and isinstance(message.author, discord.Member) and staff_strike_command_allowed(message.author)):
+            await message.reply("You do not have permission to use the staff strike system.", mention_author=False)
+            return True
+        if not message.mentions:
+            await message.reply("Usage: ,strikes @user", mention_author=False)
+            return True
+        target = message.mentions[0]
+        expired = prune_expired_staff_strikes()
+        if expired:
+            await handle_expired_staff_strikes(expired)
+            await save_staff_strikes()
+        strikes = get_user_staff_strikes(target.id)
+        if not strikes:
+            await message.reply(f"{target.mention} / {target.id} has no active strikes.", mention_author=False)
+            return True
+        await message.reply(
+            f"{target.mention} / {target.id}\\n\\n" + "\\n\\n".join(f"strike #{int(s['strike_number'])}: {s['reason']}" for s in strikes),
+            mention_author=False,
+        )
+        return True
+
+    return False
+
+    if await handle_prefix_review_command(message, content):
+        return
+
 # =========================
 # WEBHOOK
 # =========================
