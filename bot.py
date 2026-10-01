@@ -1636,6 +1636,25 @@ async def on_message(message: discord.Message):
             )
         return
 
+    # Review, leaderboard, and remaining staff prefix commands.
+    try:
+        if await handle_prefix_review_command(message, content):
+            return
+    except (discord.Forbidden, discord.HTTPException):
+        return
+    except Exception as error:
+        print(
+            f"Prefix command failed: {type(error).__name__}: {error}"
+        )
+        try:
+            await message.reply(
+                "❌ That prefix command could not be completed.",
+                mention_author=False,
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+        return
+
 
 # =========================
 # REVIEW / LEADERBOARD / STRIKE PREFIX COMMANDS
@@ -1889,9 +1908,6 @@ async def handle_prefix_review_command(message, content):
         return True
 
     return False
-
-    if await handle_prefix_review_command(message, content):
-        return
 
 # =========================
 # WEBHOOK
@@ -2594,14 +2610,22 @@ async def on_app_command_error(
         return
 
 
+    original_error = getattr(error, "original", error)
+    print(
+        f"Slash command failed: {type(original_error).__name__}: "
+        f"{original_error}"
+    )
+
     if interaction.response.is_done():
         await interaction.followup.send(
-            "An unexpected error occurred while running the command.",
+            "An unexpected error occurred while running the command. "
+            f"Error: {original_error}",
             ephemeral=False,
         )
     else:
         await interaction.response.send_message(
-            "An unexpected error occurred while running the command.",
+            "An unexpected error occurred while running the command. "
+            f"Error: {original_error}",
             ephemeral=False,
         )
 
@@ -3000,6 +3024,7 @@ from reviews import (
     _ensure_review_db_schema,
     _ensure_shared_review_store,
     _review_db_has_reviews,
+    _load_shared_review_store,
 )
 from leaderboard import *
 from staff_strikes import *
