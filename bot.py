@@ -1790,12 +1790,6 @@ async def ping_command(interaction: discord.Interaction):
     )
 
 
-@tree.command(
-    name="unhoodify",
-    description="Disable HOODIFY for a selected member.",
-)
-@app_commands.describe(member="The member to stop HOODIFYING")
-
 @textify_group.command(
     name="blacklist",
     description="Block a member from both UWUIFY and HOODIFY.",
