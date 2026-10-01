@@ -133,8 +133,8 @@
       "id": 20,
       "target_id": 191233879175200768,
       "reviewer_id": 1485649466928402486,
-      "rating": 1,
-      "comment": "dictator against human empathy and democracy",
+      "rating": 5,
+      "comment": "🤝🏿🇲🇻☝🏻",
       "created_at": "2026-09-30 21:29:40"
     },
     {
@@ -625,12 +625,12 @@
       "new_rating": 5,
       "new_comment": "🤝🏿🇲🇻☝🏻",
       "update_reason": "Bbbbbbbbbb",
-      "status": "pending",
+      "status": "approved",
       "approval_message_id": 1555281541075308675,
       "approval_channel_id": 1554700806220161164,
-      "reviewed_by": null,
+      "reviewed_by": 191233879175200768,
       "created_at": "2026-10-01 18:13:33",
-      "reviewed_at": null
+      "reviewed_at": "2026-10-01 18:18:11"
     }
   ],
   "review_id_sequence": 6
