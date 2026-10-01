@@ -1681,9 +1681,23 @@ async def send_webhook(
         return False
 
     webhook_url = webhook_url.strip()
-    if not (
-        webhook_url.startswith("https://discord.com/api/webhooks/")
-        or webhook_url.startswith("https://discordapp.com/api/webhooks/")
+
+    # Discord can issue webhook URLs on several official Discord hosts,
+    # including ptb.discord.com. Validate the webhook path instead of
+    # requiring the stable discord.com hostname.
+    parsed_webhook_url = urllib.parse.urlparse(webhook_url)
+    webhook_host = (parsed_webhook_url.hostname or "").lower()
+    valid_discord_host = (
+        webhook_host == "discord.com"
+        or webhook_host.endswith(".discord.com")
+        or webhook_host == "discordapp.com"
+        or webhook_host.endswith(".discordapp.com")
+    )
+
+    if (
+        parsed_webhook_url.scheme != "https"
+        or not valid_discord_host
+        or not parsed_webhook_url.path.startswith("/api/webhooks/")
     ):
         _report_webhook_error(
             title,
