@@ -766,7 +766,13 @@ async def on_message(message: discord.Message):
 
     # Parse the readable spaced prefix syntax once so all handlers can use it.
     spaced_parts = content.split(maxsplit=2)
-    prefix_command = content.lower().split(maxsplit=1)[0]
+    prefix_command_parts = content.lower().split(maxsplit=1)
+    prefix_command = prefix_command_parts[0] if prefix_command_parts else ""
+
+    # Register proxy requests before automatic target replacement. An active
+    # target's proxy command must still be recorded, while the command message
+    # itself continues through the normal UWUIFY/HOODIFY transformation path.
+    remember_proxy_request(message, content)
     if prefix_command in {
         ",uwuify", ",unuwuify", ",hoodify", ",unhoodify", ",uwu", ",hood"
     } and uwu_hoodify_user_is_banned(message.author):
@@ -1269,7 +1275,6 @@ async def on_message(message: discord.Message):
         return
 
     # Only non-target users continue into the command parser.
-    remember_proxy_request(message, content)
 
     # Translate readable mode/count prefixes to the existing command parser.
     if len(spaced_parts) >= 2:
