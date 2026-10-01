@@ -2723,8 +2723,14 @@ async def tag_role_loop():
                 reason="Periodic automatic-role-removal check",
             )
 
-    bot_member = main_guild.me
+    # Refresh the bot member so role-position checks use Discord's current data.
+    try:
+        bot_member = await main_guild.fetch_member(bot.user.id)
+    except (discord.NotFound, discord.HTTPException):
+        bot_member = main_guild.me
+
     if bot_member is None or not bot_member.guild_permissions.manage_roles:
+        print("Role sync skipped: bot does not currently have Manage Roles.")
         return
 
     # First main-server tag role.
