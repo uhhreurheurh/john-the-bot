@@ -248,6 +248,43 @@ async def disable_uwu_target(channel_id: int) -> bool:
     return True
 
 
+async def remove_uwu_user_from_channel(
+    channel_id: int,
+    user_id: int,
+) -> tuple[bool, bool]:
+    """Remove one target from one channel without racing another activation.
+
+    Returns (removed, channel_disabled).
+    """
+    entry = None
+
+    async with uwu_target_lock:
+        target_ids = uwu_targets.get(channel_id)
+        if target_ids is None or user_id not in target_ids:
+            return False, False
+
+        target_ids.discard(user_id)
+        if target_ids:
+            return True, False
+
+        uwu_targets.pop(channel_id, None)
+        entry = uwu_webhooks.pop(channel_id, None)
+
+    if entry is not None:
+        timer = entry.get("timer")
+        if timer is not None and not timer.done():
+            timer.cancel()
+
+        webhook = entry.get("webhook")
+        if webhook is not None:
+            try:
+                await webhook.delete(reason="UWUIFY channel target removed")
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
+
+    return True, True
+
+
 async def disable_all_uwu_targets() -> int:
     """Disable UWU mode in every currently tracked channel and delete its webhooks."""
     channel_ids = list(uwu_targets.keys() | uwu_webhooks.keys())
