@@ -608,6 +608,14 @@ def parse_staff_strike_duration(
 
 
 
+    description="Give a staff strike that expires after 7 to 40 days.",
+)
+@app_commands.describe(
+    member="The staff member receiving the strike",
+    reason="Reason for the strike",
+    days="How many days the strike should last (7-40)",
+)
+@app_commands.check(staff_strike_command_check)
 async def strike_command(
     interaction: discord.Interaction,
     member: discord.Member,
