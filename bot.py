@@ -807,8 +807,7 @@ async def on_message(message: discord.Message):
             if textify_action == "blacklist":
                 uwu_user_blacklist.add(target.id)
                 hood_user_blacklist.add(target.id)
-                await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, uwu_user_blacklist)
-                await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, hood_user_blacklist)
+                await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, textify_blacklist)
                 removed = (
                     await disable_uwu_for_user(target.id)
                     + await disable_hood_for_user(target.id)
@@ -823,8 +822,7 @@ async def on_message(message: discord.Message):
                 else:
                     uwu_user_blacklist.discard(target.id)
                     hood_user_blacklist.discard(target.id)
-                    await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, uwu_user_blacklist)
-                    await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, hood_user_blacklist)
+                    await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, textify_blacklist)
                     response = f"✅ {target.mention} can use UWUIFY and HOODIFY again."
             else:
                 uwu_blacklisted = target.id in uwu_user_blacklist
@@ -2188,8 +2186,7 @@ async def textify_blacklist_command(interaction: discord.Interaction, member: di
     uwu_user_blacklist.add(member.id)
     hood_user_blacklist.add(member.id)
 
-    uwu_synced = await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, uwu_user_blacklist)
-    hood_synced = await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, hood_user_blacklist)
+    github_synced = await save_user_blacklist(TEXTIFY_BLACKLIST_FILE, textify_blacklist)
 
     removed = (
         await disable_uwu_for_user(member.id)
@@ -2200,7 +2197,7 @@ async def textify_blacklist_command(interaction: discord.Interaction, member: di
         f"✅ {member.mention} is now blacklisted from both UWUIFY and HOODIFY."
         + (f" Removed them from **{removed}** active mode(s)." if removed else "")
     )
-    if not uwu_synced or not hood_synced:
+    if not github_synced:
         response += (
             "\n⚠️ GitHub sync FAILED."
             f"\n`{github_blacklist_sync_error}`"
