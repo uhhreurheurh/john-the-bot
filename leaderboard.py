@@ -73,6 +73,10 @@ def get_user_stats(user_id: int):
     )
 
 
+@tree.command(
+    name="leaderboard",
+    description="View the reputation leaderboard."
+)
 async def leaderboard(interaction: discord.Interaction):
     # Acknowledge the interaction immediately. GitHub/API work can take longer
     # than Discord's initial interaction response window.
