@@ -778,10 +778,6 @@ async def on_message(message: discord.Message):
     prefix_command_parts = content.lower().split(maxsplit=1)
     prefix_command = prefix_command_parts[0] if prefix_command_parts else ""
 
-    # Register proxy requests before automatic target replacement. An active
-    # target's proxy command must still be recorded, while the command message
-    # itself continues through the normal UWUIFY/HOODIFY transformation path.
-    remember_proxy_request(message, content)
     if prefix_command in {
         ",uwuify", ",unuwuify", ",hoodify", ",unhoodify", ",uwu", ",hood"
     } and uwu_hoodify_user_is_banned(message.author):
@@ -790,6 +786,11 @@ async def on_message(message: discord.Message):
             mention_author=False,
         )
         return
+
+    # Register proxy requests after the operator-ban check. An active target's
+    # proxy command is still recorded, while the command message itself
+    # continues through the normal UWUIFY/HOODIFY transformation path.
+    remember_proxy_request(message, content)
 
     # Spaced moderation commands.
     # Combined Textify prefix commands.
