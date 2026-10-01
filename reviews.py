@@ -1428,7 +1428,7 @@ class ReviewPagination(discord.ui.View):
 
         page_reviews = self.reviews[start:end]
 
-        stats = get_user_stats(self.target.id)
+        # Keep this module independent from leaderboard.py.  Importing the\n        # leaderboard helper here creates a circular-import timing issue, so\n        # calculate the same stats directly from the shared review store.\n        stats = _aggregate_target_stats(\n            _load_shared_review_store(),\n            self.target.id,\n        )
 
         embed = discord.Embed(
             title=f"reviews for {self.target.display_name}",
