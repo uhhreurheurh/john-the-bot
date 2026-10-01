@@ -2675,14 +2675,11 @@ async def kick_loop():
 
 @tasks.loop(seconds=tag_check_time)
 async def tag_role_loop():
-
     main_guild = bot.get_guild(MAIN_SERVER)
-
     if main_guild is None:
         return
 
-    # Periodic sweep catches members who already had the trigger role when
-    # the bot started. The member-update event handles newly added roles.
+    # Keep enforcing the automatic role-removal rule.
     if AUTO_REMOVE_TRIGGER_ROLE_ID and AUTO_REMOVE_ROLE_ID:
         for member in main_guild.members:
             if member.bot:
@@ -2692,302 +2689,221 @@ async def tag_role_loop():
                 reason="Periodic automatic-role-removal check",
             )
 
-    tag_role = main_guild.get_role(TAG_ROLE_ID),    first_role_ready = (,        tag_role is not None,        and not tag_role.is_default(),        and not tag_role.managed,    ),,    tag_role_2 = None,    second_role_ready = False,    if TAG_ROLE_ID_2:,        tag_role_2 = main_guild.get_role(TAG_ROLE_ID_2),        second_role_ready = (,            tag_role_2 is not None,            and not tag_role_2.is_default(),            and not tag_role_2.managed,        ),,    if len(tag_servers) != len(tag_server_role_ids):,        first_role_ready = False,,    if not await ensure_guild_members_loaded(main_guild):,        return,,    bot_member = main_guild.me,    if bot_member is None or not bot_member.guild_permissions.manage_roles:,        return,,    if first_role_ready and bot_member.top_role <= tag_role:,        first_role_ready = False,,    if second_role_ready and bot_member.top_role <= tag_role_2:,        second_role_ready = False,,    if not first_role_ready and not second_role_ready:,        return,    tagged_users = set()
-    tagged_users_2 = set()
-    second_role_check_failed = False
-    second_role_servers_configured = 0
+    bot_member = main_guild.me
+    if bot_member is None or not bot_member.guild_permissions.manage_roles:
+        return
 
+    # First main-server tag role.
+    tag_role = main_guild.get_role(TAG_ROLE_ID)
+    first_role_ready = (
+        tag_role is not None
+        and not tag_role.is_default()
+        and not tag_role.managed
+        and bot_member.top_role > tag_role
+    )
+
+    # Second main-server tag role is completely independent from the first.
+    tag_role_2 = main_guild.get_role(TAG_ROLE_ID_2) if TAG_ROLE_ID_2 else None
+    second_role_ready = (
+        tag_role_2 is not None
+        and not tag_role_2.is_default()
+        and not tag_role_2.managed
+        and bot_member.top_role > tag_role_2
+    )
+
+    tagged_users: set[int] = set()
+    tagged_users_2: set[int] = set()
 
     # -------------------------
+    # CHECK ALL FIRST-ROLE TAG SERVERS
+    # -------------------------
     if first_role_ready:
-        # CHECK ALL FIRST-ROLE TAG SERVERS
-        # -------------------------
+        first_role_check_complete = True
 
-        for server_id, tag_server_role_id in zip(
-            tag_servers,
-            tag_server_role_ids,
-        ):
+        if len(tag_servers) != len(tag_server_role_ids):
+            first_role_check_complete = False
+
+        for server_id, tag_server_role_id in zip(tag_servers, tag_server_role_ids):
             guild = bot.get_guild(server_id)
-
             if guild is None:
+                first_role_check_complete = False
                 continue
 
-            tag_server_role = await get_source_role_for_check(
-                guild,
-                tag_server_role_id,
-            )
+            tag_server_role = await get_source_role_for_check(guild, tag_server_role_id)
             if tag_server_role is None:
+                first_role_check_complete = False
                 continue
 
             source_members = await get_source_members_for_role_check(guild)
             if source_members is None:
+                first_role_check_complete = False
                 continue
 
             for member in source_members:
                 if tag_server_role.id in {role.id for role in member.roles}:
                     tagged_users.add(member.id)
 
-        # -------------------------
+        if first_role_check_complete:
+            for member in main_guild.members:
+                if member.bot:
+                    continue
+
+                has_tag = member.id in tagged_users
+                has_role = tag_role in member.roles
+
+                if has_tag and not has_role:
+                    if main_guild.owner_id == member.id:
+                        continue
+                    if member.top_role >= bot_member.top_role:
+                        continue
+
+                    try:
+                        await member.add_roles(
+                            tag_role,
+                            reason="User has a configured first tag role in a tag server",
+                        )
+                        await send_webhook(
+                            ROLE_WEBHOOK_URL,
+                            title="🏷️ Tag Role Added",
+                            description=f"{member.mention} was given the main tag role.",
+                            color=discord.Color.green(),
+                            fields=[
+                                ("User", f"{member} (`{member.id}`)", True),
+                                ("Role", f"{tag_role.mention}\n`{tag_role.id}`", True),
+                                ("Reason", "User has a configured tag role in a tag server.", False),
+                            ],
+                        )
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
+
+                elif not has_tag and has_role:
+                    if main_guild.owner_id == member.id:
+                        continue
+                    if member.top_role >= bot_member.top_role:
+                        continue
+
+                    try:
+                        await member.remove_roles(
+                            tag_role,
+                            reason="User no longer has the configured first tag role",
+                        )
+                        await send_webhook(
+                            ROLE_WEBHOOK_URL,
+                            title="🏷️ Tag Role Removed",
+                            description=f"{member.mention} no longer has the configured first tag role in any tag server.",
+                            color=discord.Color.orange(),
+                            fields=[
+                                ("User", f"{member} (`{member.id}`)", True),
+                                ("Role", f"{tag_role.mention}\n`{tag_role.id}`", True),
+                                ("Reason", "User no longer has a configured tag role.", False),
+                            ],
+                        )
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
+
+    # -------------------------
     # CHECK SECOND-ROLE SOURCE SERVERS
     # -------------------------
-    # This is intentionally separate from tag_servers. A second-role source
-    # server does NOT need to be in the first-role tag_servers list.
-
-    if second_role_ready and tag_role_2:
+    if second_role_ready:
+        second_role_check_complete = True
 
         for source_server_id, source_role_id in tag_server_role_ids_2.items():
             if not source_role_id:
                 continue
 
-            second_role_servers_configured += 1
-
             source_guild = bot.get_guild(source_server_id)
-
             if source_guild is None:
-                second_role_check_failed = True
+                second_role_check_complete = False
                 continue
 
-
-            source_role = await get_source_role_for_check(
-                source_guild,
-                source_role_id,
-            )
+            source_role = await get_source_role_for_check(source_guild, source_role_id)
             if source_role is None:
-                second_role_check_failed = True
+                second_role_check_complete = False
                 continue
 
             source_members = await get_source_members_for_role_check(source_guild)
             if source_members is None:
-                second_role_check_failed = True
+                second_role_check_complete = False
                 continue
 
-            found_count = 0
             for source_member in source_members:
                 if source_role.id in {role.id for role in source_member.roles}:
                     tagged_users_2.add(source_member.id)
-                    found_count += 1
 
-            pass
-
-    # -------------------------
-    if first_role_ready:
-        # FIRST MAIN ROLE
-        # -------------------------
-
-        for member in main_guild.members:
-            if member.bot:
-                continue
-
-            has_tag = member.id in tagged_users
-            has_role = tag_role in member.roles
-
-            if has_tag and not has_role:
-                if main_guild.owner_id == member.id:
+        if second_role_check_complete:
+            for member in main_guild.members:
+                if member.bot:
                     continue
 
-                if member.top_role >= bot_member.top_role:
+                has_tag_2 = member.id in tagged_users_2
+                has_role_2 = tag_role_2 in member.roles
+                is_blacklisted = member.id in second_role_blacklist
+
+                if is_blacklisted:
+                    if has_role_2 and main_guild.owner_id != member.id and member.top_role < bot_member.top_role:
+                        try:
+                            await member.remove_roles(
+                                tag_role_2,
+                                reason="User is on the second-role blacklist",
+                            )
+                            await send_webhook(
+                                ROLE_WEBHOOK_URL,
+                                title="🚫 Second Role Removed (Blacklisted)",
+                                description=f"{member.mention} was prevented from keeping the second main tag role because they are blacklisted.",
+                                color=discord.Color.red(),
+                                fields=[
+                                    ("User", f"{member} (`{member.id}`)", True),
+                                    ("Role", f"{tag_role_2.mention}\n`{tag_role_2.id}`", True),
+                                    ("Reason", "Member is on the second-role blacklist.", False),
+                                ],
+                            )
+                        except (discord.Forbidden, discord.HTTPException):
+                            pass
                     continue
 
-                try:
-                    await member.add_roles(
-                        tag_role,
-                        reason="User has a configured first tag role in a tag server",
-                    )
-
-                    await send_webhook(
-                        ROLE_WEBHOOK_URL,
-                        title="🏷️ Tag Role Added",
-                        description=f"{member.mention} was given the main tag role.",
-                        color=discord.Color.green(),
-                        fields=[
-                            ("User", f"{member} (`{member.id}`)", True),
-                            ("Role", f"{tag_role.mention}\n`{tag_role.id}`", True),
-                            (
-                                "Reason",
-                                "User has a configured tag role in a tag server.",
-                                False,
-                            ),
-                        ],
-                    )
-                except discord.Forbidden as e:
-                    pass
-                except discord.HTTPException as e:
-                    pass
-                except Exception as e:
-                    pass
-
-                await asyncio.sleep(0.5)
-
-            elif not has_tag and has_role:
-                try:
-                    await member.remove_roles(
-                        tag_role,
-                        reason="User no longer has the configured first tag role",
-                    )
-
-                    await send_webhook(
-                        ROLE_WEBHOOK_URL,
-                        title="🏷️ Tag Role Removed",
-                        description=(
-                            f"{member.mention} no longer has the configured "
-                            "first tag role in any tag server."
-                        ),
-                        color=discord.Color.orange(),
-                        fields=[
-                            ("User", f"{member} (`{member.id}`)", True),
-                            ("Role", f"{tag_role.mention}\n`{tag_role.id}`", True),
-                            (
-                                "Reason",
-                                "User no longer has a configured tag role.",
-                                False,
-                            ),
-                        ],
-                    )
-                except discord.Forbidden as e:
-                    pass
-                except discord.HTTPException as e:
-                    pass
-                except Exception as e:
-                    pass
-
-                await asyncio.sleep(0.5)
-
-        # -------------------------
-    # SECOND MAIN ROLE
-    # -------------------------
-
-    if second_role_ready and tag_role_2 and second_role_servers_configured > 0 and not second_role_check_failed:
-        for member in main_guild.members:
-            if member.bot:
-                continue
-
-            has_tag_2 = member.id in tagged_users_2
-            has_role_2 = tag_role_2 in member.roles
-            is_blacklisted = member.id in second_role_blacklist
-
-            # Blacklisted members must never receive the second role.
-            # If they already have it, remove it here as well.
-            if is_blacklisted:
-                if has_role_2:
-                    if (
-                        main_guild.owner_id == member.id
-                        or member.top_role >= bot_member.top_role
-                    ):
+                if has_tag_2 and not has_role_2:
+                    if main_guild.owner_id == member.id or member.top_role >= bot_member.top_role:
                         continue
-
                     try:
-                        await member.remove_roles(
+                        await member.add_roles(
                             tag_role_2,
-                            reason="User is on the second-role blacklist",
+                            reason="User has the configured second tag role in a tag server",
                         )
-
                         await send_webhook(
                             ROLE_WEBHOOK_URL,
-                            title="🚫 Second Role Removed (Blacklisted)",
-                            description=(
-                                f"{member.mention} was prevented from keeping "
-                                "the second main tag role because they are blacklisted."
-                            ),
-                            color=discord.Color.red(),
+                            title="🏷️ Second Tag Role Added",
+                            description=f"{member.mention} was given the second main tag role.",
+                            color=discord.Color.green(),
                             fields=[
                                 ("User", f"{member} (`{member.id}`)", True),
                                 ("Role", f"{tag_role_2.mention}\n`{tag_role_2.id}`", True),
-                                ("Reason", "Member is on the second-role blacklist.", False),
+                                ("Reason", "User has the configured second tag role in a tag server.", False),
                             ],
                         )
-                    except discord.Forbidden as e:
-                        pass
-                    except discord.HTTPException as e:
-                        pass
-                    except Exception as e:
+                    except (discord.Forbidden, discord.HTTPException):
                         pass
 
-                    await asyncio.sleep(0.5)
-
-                continue
-
-            if has_tag_2 and not has_role_2:
-                if main_guild.owner_id == member.id:
-                    continue
-
-                if member.top_role >= bot_member.top_role:
-                    continue
-
-                try:
-                    await member.add_roles(
-                        tag_role_2,
-                        reason="User has the configured second tag role in a tag server",
-                    )
-
-                    await send_webhook(
-                        ROLE_WEBHOOK_URL,
-                        title="🏷️ Second Tag Role Added",
-                        description=(
-                            f"{member.mention} was given the second main tag role."
-                        ),
-                        color=discord.Color.green(),
-                        fields=[
-                            ("User", f"{member} (`{member.id}`)", True),
-                            ("Role", f"{tag_role_2.mention}\n`{tag_role_2.id}`", True),
-                            (
-                                "Reason",
-                                "User has the configured second tag role in a tag server.",
-                                False,
-                            ),
-                        ],
-                    )
-                except discord.Forbidden as e:
-                    pass
-                except discord.HTTPException as e:
-                    pass
-                except Exception as e:
-                    pass
-
-                await asyncio.sleep(0.5)
-
-            elif not has_tag_2 and has_role_2:
-                try:
-                    await member.remove_roles(
-                        tag_role_2,
-                        reason="User no longer has the configured second tag role",
-                    )
-
-                    await send_webhook(
-                        ROLE_WEBHOOK_URL,
-                        title="🏷️ Second Tag Role Removed",
-                        description=(
-                            f"{member.mention} no longer has the configured "
-                            "second tag role in any tag server."
-                        ),
-                        color=discord.Color.orange(),
-                        fields=[
-                            ("User", f"{member} (`{member.id}`)", True),
-                            ("Role", f"{tag_role_2.mention}\n`{tag_role_2.id}`", True),
-                            (
-                                "Reason",
-                                "User no longer has a configured second tag role.",
-                                False,
-                            ),
-                        ],
-                    )
-                except discord.Forbidden as e:
-                    pass
-                except discord.HTTPException as e:
-                    pass
-                except Exception as e:
-                    pass
-
-                await asyncio.sleep(0.5)
-
-
-    elif TAG_ROLE_ID_2:
-        if second_role_servers_configured == 0:
-            pass
-        elif second_role_check_failed:
-            pass
-        elif not second_role_ready:
-            pass
-
+                elif not has_tag_2 and has_role_2:
+                    if main_guild.owner_id == member.id or member.top_role >= bot_member.top_role:
+                        continue
+                    try:
+                        await member.remove_roles(
+                            tag_role_2,
+                            reason="User no longer has the configured second tag role",
+                        )
+                        await send_webhook(
+                            ROLE_WEBHOOK_URL,
+                            title="🏷️ Second Tag Role Removed",
+                            description=f"{member.mention} no longer has the configured second tag role in any tag server.",
+                            color=discord.Color.orange(),
+                            fields=[
+                                ("User", f"{member} (`{member.id}`)", True),
+                                ("Role", f"{tag_role_2.mention}\n`{tag_role_2.id}`", True),
+                                ("Reason", "User no longer has a configured second tag role.", False),
+                            ],
+                        )
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
 # =========================
 # LOOP ERROR HANDLERS
 # =========================
