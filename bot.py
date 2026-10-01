@@ -2859,6 +2859,14 @@ def _aggregate_target_stats(store, target_id):
         1 for review in reviews
         if int(review["rating"]) in (4, 5)
     )
+    neutral = sum(
+        1 for review in reviews
+        if int(review["rating"]) == 3
+    )
+    negative = sum(
+        1 for review in reviews
+        if int(review["rating"]) in (1, 2)
+    )
     average = (
         sum(int(review["rating"]) for review in reviews) / total
         if total else 0
@@ -2867,6 +2875,8 @@ def _aggregate_target_stats(store, target_id):
         "total": total,
         "average": average,
         "approved": approved,
+        "neutral": neutral,
+        "negative": negative,
         "approval": ((approved / total) * 100) if total else 0,
     }
 
@@ -2921,7 +2931,7 @@ def get_leaderboard_disliked(limit: int = 5):
     store = _load_shared_review_store()
     counts = {}
     for review in store["reviews"]:
-        if int(review["rating"]) in (1, 2, 3):
+        if int(review["rating"]) in (1, 2):
             target_id = int(review["target_id"])
             counts[target_id] = counts.get(target_id, 0) + 1
 
@@ -5530,7 +5540,11 @@ def review_stars(rating: int) -> str:
 
 
 def review_approval_emoji(rating: int) -> str:
-    return "🟢" if rating in APPROVAL_RATINGS else "🔴"
+    if rating in (4, 5):
+        return "🟢"
+    if rating == 3:
+        return "🟠"
+    return "🔴"
 
 
 async def get_review_member_or_user(
@@ -6260,6 +6274,7 @@ async def leaderboard(interaction: discord.Interaction):
         # are consistent with one another and do not repeatedly hit GitHub.
         stats_by_target = {}
         liked_counts = {}
+        neutral_counts = {}
         disliked_counts = {}
 
         for review in reviews:
@@ -6276,7 +6291,9 @@ async def leaderboard(interaction: discord.Interaction):
             if rating in (4, 5):
                 stats["approved"] += 1
                 liked_counts[target_id] = liked_counts.get(target_id, 0) + 1
-            elif rating in (1, 2, 3):
+            elif rating == 3:
+                neutral_counts[target_id] = neutral_counts.get(target_id, 0) + 1
+            elif rating in (1, 2):
                 disliked_counts[target_id] = disliked_counts.get(target_id, 0) + 1
 
         liked = sorted(
@@ -6307,6 +6324,14 @@ async def leaderboard(interaction: discord.Interaction):
             ),
         )[:5]
 
+        neutral = sorted(
+            (
+                {"target_id": target_id, "neutral": count}
+                for target_id, count in neutral_counts.items()
+            ),
+            key=lambda row: (-row["neutral"], row["target_id"]),
+        )[:5]
+
         disliked = sorted(
             (
                 {"target_id": target_id, "disliked": count}
@@ -6322,7 +6347,7 @@ async def leaderboard(interaction: discord.Interaction):
 
         # Resolve each leaderboard target only once.
         target_ids = []
-        for rows in (liked, reviewed, disliked):
+        for rows in (liked, reviewed, neutral, disliked):
             for row in rows:
                 target_id = row["target_id"]
                 if target_id not in target_ids:
