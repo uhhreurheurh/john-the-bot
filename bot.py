@@ -1897,6 +1897,12 @@ textify_group = app_commands.Group(name="textify", description="Manage UWUIFY an
 # REVIEW BLACKLIST HELPERS
 # ============================================================
 
+@textify_group.command(
+    name="ban",
+    description="Prevent a member from running UWUIFY or HOODIFY.",
+)
+@app_commands.describe(member="The member to ban from UWUIFY and HOODIFY")
+@app_commands.check(blacklist_command_check)
 async def uwuify_hoodify_ban_command(interaction: discord.Interaction, member: discord.Member):
     await interaction.response.defer(ephemeral=False)
     if member.id in uwu_hoodify_ban:
