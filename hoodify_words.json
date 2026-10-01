@@ -1,51 +1,51 @@
 {
   "replacements": [
     {
-      "pattern": "\bnot gonna lie\b",
+      "pattern": "\\bnot gonna lie\\b",
       "replacement": "ngl"
     },
     {
-      "pattern": "\bto be honest\b",
+      "pattern": "\\bto be honest\\b",
       "replacement": "tbh"
     },
     {
-      "pattern": "\bin my opinion\b",
+      "pattern": "\\bin my opinion\\b",
       "replacement": "imo"
     },
     {
-      "pattern": "\bas soon as possible\b",
+      "pattern": "\\bas soon as possible\\b",
       "replacement": "asap"
     },
     {
-      "pattern": "\bby the way\b",
+      "pattern": "\\bby the way\\b",
       "replacement": "btw"
     },
     {
-      "pattern": "\bI do not know\b",
+      "pattern": "\\bI do not know\\b",
       "replacement": "idk"
     },
     {
-      "pattern": "\bI don't know\b",
+      "pattern": "\\bI don't know\\b",
       "replacement": "idk"
     },
     {
-      "pattern": "\bI do not care\b",
+      "pattern": "\\bI do not care\\b",
       "replacement": "idc"
     },
     {
-      "pattern": "\bI don't care\b",
+      "pattern": "\\bI don't care\\b",
       "replacement": "idc"
     },
     {
-      "pattern": "\bnever mind\b",
+      "pattern": "\\bnever mind\\b",
       "replacement": "nvm"
     },
     {
-      "pattern": "\bsee you\b",
+      "pattern": "\\bsee you\\b",
       "replacement": "cya"
     },
     {
-      "pattern": "\bthank you\b",
+      "pattern": "\\bthank you\\b",
       "replacement": [
         "thx",
         "ty",
@@ -53,21 +53,21 @@
       ]
     },
     {
-      "pattern": "\bwhat are you doing\b",
+      "pattern": "\\bwhat are you doing\\b",
       "replacement": [
         "what you doing",
         "what you on"
       ]
     },
     {
-      "pattern": "\bwhat do you mean\b",
+      "pattern": "\\bwhat do you mean\\b",
       "replacement": [
         "what you mean",
         "what you talkin bout"
       ]
     },
     {
-      "pattern": "\bwhat is up\b",
+      "pattern": "\\bwhat is up\\b",
       "replacement": [
         "what's good",
         "what's poppin",
@@ -75,7 +75,7 @@
       ]
     },
     {
-      "pattern": "\bwhat's up\b",
+      "pattern": "\\bwhat's up\\b",
       "replacement": [
         "what's good",
         "what's poppin",
@@ -83,7 +83,7 @@
       ]
     },
     {
-      "pattern": "\bhow are you\b",
+      "pattern": "\\bhow are you\\b",
       "replacement": [
         "how you doing",
         "how you been",
@@ -91,7 +91,7 @@
       ]
     },
     {
-      "pattern": "\bmy friends\b",
+      "pattern": "\\bmy friends\\b",
       "replacement": [
         "the homies",
         "my homies",
@@ -99,7 +99,7 @@
       ]
     },
     {
-      "pattern": "\bmy friend\b",
+      "pattern": "\\bmy friend\\b",
       "replacement": [
         "my homie",
         "my bro",
@@ -107,7 +107,7 @@
       ]
     },
     {
-      "pattern": "\bwait a minute\b",
+      "pattern": "\\bwait a minute\\b",
       "replacement": [
         "hold up",
         "wait a sec",
@@ -115,7 +115,7 @@
       ]
     },
     {
-      "pattern": "\bthat is crazy\b",
+      "pattern": "\\bthat is crazy\\b",
       "replacement": [
         "that's wild",
         "that's crazy",
@@ -123,7 +123,7 @@
       ]
     },
     {
-      "pattern": "\bthat's crazy\b",
+      "pattern": "\\bthat's crazy\\b",
       "replacement": [
         "that's wild",
         "that's crazy",
@@ -131,7 +131,7 @@
       ]
     },
     {
-      "pattern": "\bthat makes sense\b",
+      "pattern": "\\bthat makes sense\\b",
       "replacement": [
         "that checks out",
         "makes sense",
@@ -139,7 +139,7 @@
       ]
     },
     {
-      "pattern": "\bI understand\b",
+      "pattern": "\\bI understand\\b",
       "replacement": [
         "I got you",
         "I hear you",
@@ -147,7 +147,7 @@
       ]
     },
     {
-      "pattern": "\byou are right\b",
+      "pattern": "\\byou are right\\b",
       "replacement": [
         "you right",
         "facts",
@@ -155,7 +155,7 @@
       ]
     },
     {
-      "pattern": "\bfor real\b",
+      "pattern": "\\bfor real\\b",
       "replacement": [
         "fr",
         "deadass",
@@ -163,7 +163,7 @@
       ]
     },
     {
-      "pattern": "\bright now\b",
+      "pattern": "\\bright now\\b",
       "replacement": [
         "rn",
         "right now fr",
@@ -171,11 +171,11 @@
       ]
     },
     {
-      "pattern": "\bat the moment\b",
+      "pattern": "\\bat the moment\\b",
       "replacement": "rn"
     },
     {
-      "pattern": "\ba lot\b",
+      "pattern": "\\ba lot\\b",
       "replacement": [
         "mad",
         "hella",
@@ -183,14 +183,14 @@
       ]
     },
     {
-      "pattern": "\ba little bit\b",
+      "pattern": "\\ba little bit\\b",
       "replacement": [
         "a lil",
         "a bit"
       ]
     },
     {
-      "pattern": "\bright away\b",
+      "pattern": "\\bright away\\b",
       "replacement": [
         "rn",
         "ASAP",
@@ -198,7 +198,7 @@
       ]
     },
     {
-      "pattern": "\bcome here\b",
+      "pattern": "\\bcome here\\b",
       "replacement": [
         "slide thru",
         "pull up",
@@ -206,7 +206,7 @@
       ]
     },
     {
-      "pattern": "\bgo home\b",
+      "pattern": "\\bgo home\\b",
       "replacement": [
         "head home",
         "dip home",
@@ -214,92 +214,92 @@
       ]
     },
     {
-      "pattern": "\bgoing to\b",
+      "pattern": "\\bgoing to\\b",
       "replacement": [
         "gonna",
         "boutta"
       ]
     },
     {
-      "pattern": "\bwant to\b",
+      "pattern": "\\bwant to\\b",
       "replacement": [
         "wanna",
         "tryna"
       ]
     },
     {
-      "pattern": "\btrying to\b",
+      "pattern": "\\btrying to\\b",
       "replacement": [
         "tryna",
         "boutta"
       ]
     },
     {
-      "pattern": "\bgot to\b",
+      "pattern": "\\bgot to\\b",
       "replacement": [
         "gotta",
         "gonna have to"
       ]
     },
     {
-      "pattern": "\bhave to\b",
+      "pattern": "\\bhave to\\b",
       "replacement": [
         "gotta",
         "hafta"
       ]
     },
     {
-      "pattern": "\bsupposed to\b",
+      "pattern": "\\bsupposed to\\b",
       "replacement": [
         "sposed to",
         "supposedta"
       ]
     },
     {
-      "pattern": "\bkind of\b",
+      "pattern": "\\bkind of\\b",
       "replacement": [
         "kinda",
         "sorta"
       ]
     },
     {
-      "pattern": "\bsort of\b",
+      "pattern": "\\bsort of\\b",
       "replacement": [
         "sorta",
         "kinda"
       ]
     },
     {
-      "pattern": "\bout of\b",
+      "pattern": "\\bout of\\b",
       "replacement": "outta"
     },
     {
-      "pattern": "\blet me\b",
+      "pattern": "\\blet me\\b",
       "replacement": [
         "lemme",
         "lmk"
       ]
     },
     {
-      "pattern": "\bgive me\b",
+      "pattern": "\\bgive me\\b",
       "replacement": "gimme"
     },
     {
-      "pattern": "\bcome on\b",
+      "pattern": "\\bcome on\\b",
       "replacement": [
         "cmon",
         "bro cmon"
       ]
     },
     {
-      "pattern": "\babout\b",
+      "pattern": "\\babout\\b",
       "replacement": [
         "bout",
         "ab"
       ]
     },
     {
-      "pattern": "\bbecause\b",
+      "pattern": "\\bbecause\\b",
       "replacement": [
         "cause",
         "cuz",
@@ -307,87 +307,87 @@
       ]
     },
     {
-      "pattern": "\bthem\b",
+      "pattern": "\\bthem\\b",
       "replacement": "em"
     },
     {
-      "pattern": "\byou all\b",
+      "pattern": "\\byou all\\b",
       "replacement": "y'all"
     },
     {
-      "pattern": "\byou guys\b",
+      "pattern": "\\byou guys\\b",
       "replacement": "y'all"
     },
     {
-      "pattern": "\bdo not\b",
+      "pattern": "\\bdo not\\b",
       "replacement": "don't"
     },
     {
-      "pattern": "\bdoes not\b",
+      "pattern": "\\bdoes not\\b",
       "replacement": "doesn't"
     },
     {
-      "pattern": "\bdid not\b",
+      "pattern": "\\bdid not\\b",
       "replacement": "didn't"
     },
     {
-      "pattern": "\bcannot\b",
+      "pattern": "\\bcannot\\b",
       "replacement": "can't"
     },
     {
-      "pattern": "\bcan not\b",
+      "pattern": "\\bcan not\\b",
       "replacement": "can't"
     },
     {
-      "pattern": "\bwill not\b",
+      "pattern": "\\bwill not\\b",
       "replacement": "won't"
     },
     {
-      "pattern": "\bit is\b",
+      "pattern": "\\bit is\\b",
       "replacement": "it's"
     },
     {
-      "pattern": "\bthat is\b",
+      "pattern": "\\bthat is\\b",
       "replacement": "that's"
     },
     {
-      "pattern": "\bwhat is\b",
+      "pattern": "\\bwhat is\\b",
       "replacement": "what's"
     },
     {
-      "pattern": "\bthere is\b",
+      "pattern": "\\bthere is\\b",
       "replacement": "there's"
     },
     {
-      "pattern": "\bwe are\b",
+      "pattern": "\\bwe are\\b",
       "replacement": "we're"
     },
     {
-      "pattern": "\byou are\b",
+      "pattern": "\\byou are\\b",
       "replacement": "you're"
     },
     {
-      "pattern": "\bthey are\b",
+      "pattern": "\\bthey are\\b",
       "replacement": "they're"
     },
     {
-      "pattern": "\bI am\b",
+      "pattern": "\\bI am\\b",
       "replacement": "I'm"
     },
     {
-      "pattern": "\bI have\b",
+      "pattern": "\\bI have\\b",
       "replacement": "I've"
     },
     {
-      "pattern": "\bI will\b",
+      "pattern": "\\bI will\\b",
       "replacement": "I'll"
     },
     {
-      "pattern": "\bI would\b",
+      "pattern": "\\bI would\\b",
       "replacement": "I'd"
     },
     {
-      "pattern": "\bhello\b",
+      "pattern": "\\bhello\\b",
       "replacement": [
         "yo",
         "ayy",
@@ -395,14 +395,14 @@
       ]
     },
     {
-      "pattern": "\bhi\b",
+      "pattern": "\\bhi\\b",
       "replacement": [
         "yo",
         "ayy"
       ]
     },
     {
-      "pattern": "\bhey\b",
+      "pattern": "\\bhey\\b",
       "replacement": [
         "ayy",
         "yo",
@@ -410,14 +410,14 @@
       ]
     },
     {
-      "pattern": "\bgood morning\b",
+      "pattern": "\\bgood morning\\b",
       "replacement": [
         "morning",
         "gm y'all"
       ]
     },
     {
-      "pattern": "\bgood night\b",
+      "pattern": "\\bgood night\\b",
       "replacement": [
         "night y'all",
         "gn gang",
@@ -425,7 +425,7 @@
       ]
     },
     {
-      "pattern": "\bfriends\b",
+      "pattern": "\\bfriends\\b",
       "replacement": [
         "homies",
         "the homies",
@@ -433,7 +433,7 @@
       ]
     },
     {
-      "pattern": "\bfriend\b",
+      "pattern": "\\bfriend\\b",
       "replacement": [
         "homie",
         "bro",
@@ -441,42 +441,42 @@
       ]
     },
     {
-      "pattern": "\bbrother\b",
+      "pattern": "\\bbrother\\b",
       "replacement": [
         "bro",
         "bruh"
       ]
     },
     {
-      "pattern": "\bsister\b",
+      "pattern": "\\bsister\\b",
       "replacement": [
         "sis",
         "girl"
       ]
     },
     {
-      "pattern": "\bdude\b",
+      "pattern": "\\bdude\\b",
       "replacement": [
         "bro",
         "bruh"
       ]
     },
     {
-      "pattern": "\bman\b",
+      "pattern": "\\bman\\b",
       "replacement": [
         "bro",
         "my guy"
       ]
     },
     {
-      "pattern": "\bdawg\b",
+      "pattern": "\\bdawg\\b",
       "replacement": [
         "bro",
         "my guy"
       ]
     },
     {
-      "pattern": "\bguys\b",
+      "pattern": "\\bguys\\b",
       "replacement": [
         "y'all",
         "everybody",
@@ -484,7 +484,7 @@
       ]
     },
     {
-      "pattern": "\bpeople\b",
+      "pattern": "\\bpeople\\b",
       "replacement": [
         "folks",
         "y'all",
@@ -492,7 +492,7 @@
       ]
     },
     {
-      "pattern": "\byes\b",
+      "pattern": "\\byes\\b",
       "replacement": [
         "yeah",
         "yup",
@@ -501,7 +501,7 @@
       ]
     },
     {
-      "pattern": "\bno\b",
+      "pattern": "\\bno\\b",
       "replacement": [
         "nah",
         "nope",
@@ -509,7 +509,7 @@
       ]
     },
     {
-      "pattern": "\bokay\b",
+      "pattern": "\\bokay\\b",
       "replacement": [
         "aight",
         "bet",
@@ -517,21 +517,21 @@
       ]
     },
     {
-      "pattern": "\bok\b",
+      "pattern": "\\bok\\b",
       "replacement": [
         "aight",
         "bet"
       ]
     },
     {
-      "pattern": "\bplease\b",
+      "pattern": "\\bplease\\b",
       "replacement": [
         "pls",
         "plz"
       ]
     },
     {
-      "pattern": "\bthanks\b",
+      "pattern": "\\bthanks\\b",
       "replacement": [
         "ty",
         "thx",
@@ -539,7 +539,7 @@
       ]
     },
     {
-      "pattern": "\bprobably\b",
+      "pattern": "\\bprobably\\b",
       "replacement": [
         "prob",
         "prolly",
@@ -547,7 +547,7 @@
       ]
     },
     {
-      "pattern": "\breally\b",
+      "pattern": "\\breally\\b",
       "replacement": [
         "rly",
         "fr",
@@ -555,7 +555,7 @@
       ]
     },
     {
-      "pattern": "\bvery\b",
+      "pattern": "\\bvery\\b",
       "replacement": [
         "mad",
         "hella",
@@ -563,77 +563,77 @@
       ]
     },
     {
-      "pattern": "\blittle\b",
+      "pattern": "\\blittle\\b",
       "replacement": [
         "lil",
         "tiny lil"
       ]
     },
     {
-      "pattern": "\bsomething\b",
+      "pattern": "\\bsomething\\b",
       "replacement": [
         "sumn",
         "something fr"
       ]
     },
     {
-      "pattern": "\bnothing\b",
+      "pattern": "\\bnothing\\b",
       "replacement": [
         "nun",
         "nothing"
       ]
     },
     {
-      "pattern": "\beverything\b",
+      "pattern": "\\beverything\\b",
       "replacement": [
         "all that",
         "everything fr"
       ]
     },
     {
-      "pattern": "\bsomewhere\b",
+      "pattern": "\\bsomewhere\\b",
       "replacement": [
         "somewhere fr",
         "someplace"
       ]
     },
     {
-      "pattern": "\bnowhere\b",
+      "pattern": "\\bnowhere\\b",
       "replacement": [
         "nowhere fr",
         "not anywhere"
       ]
     },
     {
-      "pattern": "\bhome\b",
+      "pattern": "\\bhome\\b",
       "replacement": [
         "crib",
         "place"
       ]
     },
     {
-      "pattern": "\bhouse\b",
+      "pattern": "\\bhouse\\b",
       "replacement": [
         "crib",
         "place"
       ]
     },
     {
-      "pattern": "\bcar\b",
+      "pattern": "\\bcar\\b",
       "replacement": [
         "whip",
         "ride"
       ]
     },
     {
-      "pattern": "\bfood\b",
+      "pattern": "\\bfood\\b",
       "replacement": [
         "grub",
         "eats"
       ]
     },
     {
-      "pattern": "\bmoney\b",
+      "pattern": "\\bmoney\\b",
       "replacement": [
         "cash",
         "bread",
@@ -641,7 +641,7 @@
       ]
     },
     {
-      "pattern": "\bwork\b",
+      "pattern": "\\bwork\\b",
       "replacement": [
         "the grind",
         "job",
@@ -649,35 +649,35 @@
       ]
     },
     {
-      "pattern": "\bjob\b",
+      "pattern": "\\bjob\\b",
       "replacement": [
         "work",
         "the grind"
       ]
     },
     {
-      "pattern": "\bphone\b",
+      "pattern": "\\bphone\\b",
       "replacement": [
         "cell",
         "phone"
       ]
     },
     {
-      "pattern": "\bcomputer\b",
+      "pattern": "\\bcomputer\\b",
       "replacement": [
         "PC",
         "rig"
       ]
     },
     {
-      "pattern": "\bstore\b",
+      "pattern": "\\bstore\\b",
       "replacement": [
         "spot",
         "store"
       ]
     },
     {
-      "pattern": "\bawesome\b",
+      "pattern": "\\bawesome\\b",
       "replacement": [
         "fire",
         "tuff",
@@ -685,7 +685,7 @@
       ]
     },
     {
-      "pattern": "\bgreat\b",
+      "pattern": "\\bgreat\\b",
       "replacement": [
         "fire",
         "solid",
@@ -693,7 +693,7 @@
       ]
     },
     {
-      "pattern": "\bnice\b",
+      "pattern": "\\bnice\\b",
       "replacement": [
         "clean",
         "solid",
@@ -701,7 +701,7 @@
       ]
     },
     {
-      "pattern": "\bcool\b",
+      "pattern": "\\bcool\\b",
       "replacement": [
         "valid",
         "clean",
@@ -709,7 +709,7 @@
       ]
     },
     {
-      "pattern": "\bamazing\b",
+      "pattern": "\\bamazing\\b",
       "replacement": [
         "crazy",
         "insane",
@@ -717,28 +717,28 @@
       ]
     },
     {
-      "pattern": "\bexcellent\b",
+      "pattern": "\\bexcellent\\b",
       "replacement": [
         "fire",
         "solid"
       ]
     },
     {
-      "pattern": "\bfunny\b",
+      "pattern": "\\bfunny\\b",
       "replacement": [
         "hilarious",
         "wild"
       ]
     },
     {
-      "pattern": "\bfun\b",
+      "pattern": "\\bfun\\b",
       "replacement": [
         "lit",
         "a vibe"
       ]
     },
     {
-      "pattern": "\bperfect\b",
+      "pattern": "\\bperfect\\b",
       "replacement": [
         "tuff",
         "clean",
@@ -746,7 +746,7 @@
       ]
     },
     {
-      "pattern": "\bseriously\b",
+      "pattern": "\\bseriously\\b",
       "replacement": [
         "deadass",
         "fr",
@@ -754,7 +754,7 @@
       ]
     },
     {
-      "pattern": "\bI agree\b",
+      "pattern": "\\bI agree\\b",
       "replacement": [
         "facts",
         "real talk",
@@ -762,7 +762,7 @@
       ]
     },
     {
-      "pattern": "\bno way\b",
+      "pattern": "\\bno way\\b",
       "replacement": [
         "nahhh",
         "ain't no way",
@@ -770,7 +770,7 @@
       ]
     },
     {
-      "pattern": "\bcalm down\b",
+      "pattern": "\\bcalm down\\b",
       "replacement": [
         "chill",
         "relax bro",
@@ -778,21 +778,21 @@
       ]
     },
     {
-      "pattern": "\brelax\b",
+      "pattern": "\\brelax\\b",
       "replacement": [
         "chill",
         "take it easy"
       ]
     },
     {
-      "pattern": "\bconfused\b",
+      "pattern": "\\bconfused\\b",
       "replacement": [
         "lost",
         "confused as hell"
       ]
     },
     {
-      "pattern": "\btired\b",
+      "pattern": "\\btired\\b",
       "replacement": [
         "cooked",
         "drained",
@@ -800,7 +800,7 @@
       ]
     },
     {
-      "pattern": "\bexhausted\b",
+      "pattern": "\\bexhausted\\b",
       "replacement": [
         "cooked",
         "done for",
@@ -808,7 +808,7 @@
       ]
     },
     {
-      "pattern": "\bangry\b",
+      "pattern": "\\bangry\\b",
       "replacement": [
         "heated",
         "mad",
@@ -816,7 +816,7 @@
       ]
     },
     {
-      "pattern": "\bhappy\b",
+      "pattern": "\\bhappy\\b",
       "replacement": [
         "hyped",
         "feeling good",
@@ -824,7 +824,7 @@
       ]
     },
     {
-      "pattern": "\bexcited\b",
+      "pattern": "\\bexcited\\b",
       "replacement": [
         "hyped",
         "geeked",
@@ -832,7 +832,7 @@
       ]
     },
     {
-      "pattern": "\bread y\b",
+      "pattern": "\\bread y\\b",
       "replacement": [
         "locked in",
         "set",
@@ -840,147 +840,147 @@
       ]
     },
     {
-      "pattern": "\bread y\b",
+      "pattern": "\\bread y\\b",
       "replacement": [
         "locked in",
         "set"
       ]
     },
     {
-      "pattern": "\bserious\b",
+      "pattern": "\\bserious\\b",
       "replacement": [
         "dead serious",
         "fr"
       ]
     },
     {
-      "pattern": "\blie\b",
+      "pattern": "\\blie\\b",
       "replacement": [
         "cap",
         "front"
       ]
     },
     {
-      "pattern": "\blies\b",
+      "pattern": "\\blies\\b",
       "replacement": [
         "caps",
         "fronting"
       ]
     },
     {
-      "pattern": "\bly ing\b",
+      "pattern": "\\bly ing\\b",
       "replacement": [
         "cappin",
         "frontin"
       ]
     },
     {
-      "pattern": "\blying\b",
+      "pattern": "\\blying\\b",
       "replacement": [
         "cappin",
         "frontin"
       ]
     },
     {
-      "pattern": "\bjoking\b",
+      "pattern": "\\bjoking\\b",
       "replacement": [
         "trolling",
         "playing"
       ]
     },
     {
-      "pattern": "\bmistake\b",
+      "pattern": "\\bmistake\\b",
       "replacement": [
         "fumble",
         "L"
       ]
     },
     {
-      "pattern": "\bproblem\b",
+      "pattern": "\\bproblem\\b",
       "replacement": [
         "issue",
         "situation"
       ]
     },
     {
-      "pattern": "\bproblems\b",
+      "pattern": "\\bproblems\\b",
       "replacement": [
         "issues",
         "situations"
       ]
     },
     {
-      "pattern": "\bwinning\b",
+      "pattern": "\\bwinning\\b",
       "replacement": [
         "cooking",
         "going crazy"
       ]
     },
     {
-      "pattern": "\bwin\b",
+      "pattern": "\\bwin\\b",
       "replacement": [
         "W",
         "dub"
       ]
     },
     {
-      "pattern": "\bwon\b",
+      "pattern": "\\bwon\\b",
       "replacement": [
         "cooked",
         "got the W"
       ]
     },
     {
-      "pattern": "\bloss\b",
+      "pattern": "\\bloss\\b",
       "replacement": [
         "L",
         "an L"
       ]
     },
     {
-      "pattern": "\blosing\b",
+      "pattern": "\\blosing\\b",
       "replacement": [
         "taking an L",
         "selling"
       ]
     },
     {
-      "pattern": "\blost\b",
+      "pattern": "\\blost\\b",
       "replacement": [
         "sold",
         "took an L"
       ]
     },
     {
-      "pattern": "\bfailed\b",
+      "pattern": "\\bfailed\\b",
       "replacement": [
         "sold",
         "fumbled"
       ]
     },
     {
-      "pattern": "\bfail\b",
+      "pattern": "\\bfail\\b",
       "replacement": [
         "sell",
         "fumble"
       ]
     },
     {
-      "pattern": "\bignore\b",
+      "pattern": "\\bignore\\b",
       "replacement": [
         "leave on read",
         "leave it"
       ]
     },
     {
-      "pattern": "\bjoin\b",
+      "pattern": "\\bjoin\\b",
       "replacement": [
         "pull up",
         "slide in"
       ]
     },
     {
-      "pattern": "\bwait for me\b",
+      "pattern": "\\bwait for me\\b",
       "replacement": [
         "hold up for me",
         "wait on me"
