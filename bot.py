@@ -2733,37 +2733,78 @@ async def on_ready():
 
 @tasks.loop(minutes=check_time)
 async def kick_loop():
-
     main_guild = bot.get_guild(MAIN_SERVER)
 
     if main_guild is None:
         return
 
+    # Refresh the main-server member list so the bot does not rely on a stale
+    # cache when deciding whether someone is still in the main server.
+    main_source_members = await get_source_members_for_role_check(main_guild)
+    if main_source_members is None:
+        print("Kick check skipped: could not refresh main-server members.")
+        return
+
     main_members = {
         member.id
-        for member in main_guild.members
+        for member in main_source_members
+        if not member.bot
     }
 
     for server_id in tag_servers:
         guild = bot.get_guild(server_id)
 
         if guild is None:
+            print(f"Kick check skipped: source server {server_id} is not available.")
             continue
 
-        for member in guild.members:
+        bot_member = guild.me
+        if bot_member is None or not bot_member.guild_permissions.kick_members:
+            print(
+                f"Kick check skipped for {guild.name}: "
+                "bot does not have Kick Members permission."
+            )
+            continue
+
+        # Use a fresh member list for the tag server as well.
+        source_members = await get_source_members_for_role_check(guild)
+        if source_members is None:
+            print(
+                f"Kick check skipped for {guild.name}: "
+                "could not refresh source-server members."
+            )
+            continue
+
+        for member in source_members:
             if member.bot:
                 continue
 
             # Anyone with ANY protected role will never be kicked.
             if any(role.id in PROTECTED_ROLE_IDS for role in member.roles):
-                protected_roles = [
-                    role for role in member.roles
-                    if role.id in PROTECTED_ROLE_IDS
-                ]
-
                 continue
 
-            if member.id not in main_members:
+            if member.id in main_members:
+                continue
+
+            # Discord hierarchy applies to kicks. The bot must be above the
+            # member it is trying to kick, and the owner can never be kicked.
+            if guild.owner_id == member.id:
+                print(
+                    f"Kick skipped for {member} ({member.id}) in {guild.name}: "
+                    "member is the server owner."
+                )
+                continue
+
+            if member.top_role >= bot_member.top_role:
+                print(
+                    f"Kick skipped for {member} ({member.id}) in {guild.name}: "
+                    f"member top role {member.top_role.id}/{member.top_role.position} "
+                    f"is not below bot top role "
+                    f"{bot_member.top_role.id}/{bot_member.top_role.position}."
+                )
+                continue
+
+            try:
                 try:
                     await member.send(
                         f"Hey {member.mention}, you were kicked from **{guild.name}** "
@@ -2773,47 +2814,53 @@ async def kick_loop():
                 except Exception:
                     pass
 
-                try:
-                    await guild.kick(
-                        member,
-                        reason="not in main server",
-                    )
+                await guild.kick(
+                    member,
+                    reason="not in main server",
+                )
 
+                await send_webhook(
+                    KICK_WEBHOOK_URL,
+                    title="🚫 Member Kicked",
+                    description=(
+                        f"{member.mention} was kicked from a tag server "
+                        "because they are not in the main server."
+                    ),
+                    color=discord.Color.red(),
+                    fields=[
+                        ("User", f"{member} ({member.id})", True),
+                        ("Tag Server", f"{guild.name}\n{guild.id}", True),
+                        ("Reason", "Not a member of the main server", False),
+                    ],
+                )
 
-                    await send_webhook(
-                        KICK_WEBHOOK_URL,
-                        title="🚫 Member Kicked",
-                        description=(
-                            f"{member.mention} was kicked from a tag server "
-                            "because they are not in the main server."
-                        ),
-                        color=discord.Color.red(),
-                        fields=[
-                            ("User", f"{member} (`{member.id}`)", True),
-                            ("Tag Server", f"{guild.name}\n`{guild.id}`", True),
-                            ("Reason", "Not a member of the main server", False),
-                        ],
-                    )
+            except (discord.Forbidden, discord.HTTPException) as error:
+                print(
+                    f"Kick failed for {member} ({member.id}) in {guild.name}: "
+                    f"{type(error).__name__}: {error}"
+                )
+                await send_webhook(
+                    KICK_WEBHOOK_URL,
+                    title="⚠️ Kick Failed",
+                    description=(
+                        f"Failed to kick {member.mention} "
+                        f"from **{guild.name}**."
+                    ),
+                    color=discord.Color.orange(),
+                    fields=[
+                        ("User", f"{member} ({member.id})", True),
+                        ("Server", f"{guild.name}\n{guild.id}", True),
+                        ("Reason", "Discord rejected the kick request.", False),
+                        ("Error", f"{error}", False),
+                    ],
+                )
+            except Exception as error:
+                print(
+                    f"Unexpected kick error for {member} ({member.id}) in {guild.name}: "
+                    f"{type(error).__name__}: {error}"
+                )
 
-                except Exception as e:
-
-                    await send_webhook(
-                        KICK_WEBHOOK_URL,
-                        title="⚠️ Kick Failed",
-                        description=(
-                            f"Failed to kick {member.mention} "
-                            f"from **{guild.name}**."
-                        ),
-                        color=discord.Color.orange(),
-                        fields=[
-                            ("User", f"{member} (`{member.id}`)", True),
-                            ("Server", f"{guild.name}\n`{guild.id}`", True),
-                            ("Error", f"`{e}`", False),
-                        ],
-                    )
-
-                await asyncio.sleep(1)
-
+            await asyncio.sleep(1)
 
 # =========================
 # TAG ROLE LOOP
