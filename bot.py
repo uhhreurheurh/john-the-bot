@@ -1724,6 +1724,46 @@ async def send_webhook(
         _report_webhook_error(title, error)
         return False
 
+async def send_role_webhook(
+    title,
+    description,
+    color=discord.Color.blurple(),
+    fields=None,
+) -> bool:
+    """Send a role-system event through ROLE_WEBHOOK_URL."""
+    return await send_webhook(
+        ROLE_WEBHOOK_URL,
+        title=title,
+        description=description,
+        color=color,
+        fields=fields,
+    )
+
+
+
+# =========================
+# SLASH COMMAND PERMISSION
+# =========================
+
+async def blacklist_command_check(interaction: discord.Interaction) -> bool:
+    """Only allow the configured role to use blacklist commands in the main server."""
+    if interaction.guild_id != MAIN_SERVER:
+        raise app_commands.CheckFailure("This command can only be used in the main server.")
+
+    if BLACKLIST_ALLOWED_ROLE_ID == 0:
+        raise app_commands.CheckFailure("BLACKLIST_ALLOWED_ROLE_ID is not configured.")
+
+    if not isinstance(interaction.user, discord.Member):
+        raise app_commands.CheckFailure("Could not verify your server roles.")
+
+    if BLACKLIST_ALLOWED_ROLE_ID not in {role.id for role in interaction.user.roles}:
+        raise app_commands.CheckFailure(
+            "You do not have the role required to use this command."
+        )
+
+    return True
+
+
 @tree.command(
     name="rolewebhooktest",
     description="Test the configured ROLE_WEBHOOK_URL.",
@@ -1756,43 +1796,6 @@ async def role_webhook_test_command(interaction: discord.Interaction):
         f"Railway error: {last_webhook_error or 'No error was returned.'}",
         ephemeral=True,
     )
-
-async def send_role_webhook(
-    title,
-    description,
-    color=discord.Color.blurple(),
-    fields=None,
-) -> bool:
-    """Send a role-system event through ROLE_WEBHOOK_URL."""
-    return await send_webhook(
-        ROLE_WEBHOOK_URL,
-        title=title,
-        description=description,
-        color=color,
-        fields=fields,
-    )
-
-# =========================
-# SLASH COMMAND PERMISSION
-# =========================
-
-async def blacklist_command_check(interaction: discord.Interaction) -> bool:
-    """Only allow the configured role to use blacklist commands in the main server."""
-    if interaction.guild_id != MAIN_SERVER:
-        raise app_commands.CheckFailure("This command can only be used in the main server.")
-
-    if BLACKLIST_ALLOWED_ROLE_ID == 0:
-        raise app_commands.CheckFailure("BLACKLIST_ALLOWED_ROLE_ID is not configured.")
-
-    if not isinstance(interaction.user, discord.Member):
-        raise app_commands.CheckFailure("Could not verify your server roles.")
-
-    if BLACKLIST_ALLOWED_ROLE_ID not in {role.id for role in interaction.user.roles}:
-        raise app_commands.CheckFailure(
-            "You do not have the role required to use this command."
-        )
-
-    return True
 
 
 def uwu_hoodify_user_is_banned(member: discord.Member | discord.User) -> bool:
