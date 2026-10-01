@@ -424,6 +424,24 @@ async def hoodcount_command(interaction: discord.Interaction):
 
 
 @tree.command(
+    name="hoodcount",
+    description="Show how many people are currently being HOODIFIED.",
+)
+async def hoodcount_root_command(interaction: discord.Interaction):
+    global_count = get_active_hood_target_count()
+    channel_count = 0
+    if isinstance(interaction.channel, discord.TextChannel):
+        channel_count = len(hood_targets.get(interaction.channel.id, set()))
+
+    await interaction.response.send_message(
+        f"🖤 **HOODIFY count**\n"
+        f"Global: **{global_count}/{MAX_ACTIVE_HOOD_TARGETS}** people\n"
+        f"This channel: **{channel_count}** people",
+        ephemeral=False,
+    )
+
+
+@tree.command(
     name="hoodify",
     description="Add a member to this channel's automatic HOODIFY mode.",
 )
