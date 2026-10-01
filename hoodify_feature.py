@@ -610,9 +610,10 @@ async def hoodify_command(
             f"❌ Discord rejected the HOODIFY webhook request: `{e}`",
             ephemeral=False,
         )
-    except Exception:
+    except Exception as error:
         await interaction.response.send_message(
-            "❌ The HOODIFY mode could not be enabled.",
+            "❌ The HOODIFY mode could not be enabled. "
+            f"Error: `{type(error).__name__}: {error}`",
             ephemeral=False,
         )
 
