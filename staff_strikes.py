@@ -609,6 +609,8 @@ def parse_staff_strike_duration(
 
 
 
+@tree.command(
+    name="strike",
     description="Give a staff strike that expires after 7 to 40 days.",
 )
 @app_commands.describe(
