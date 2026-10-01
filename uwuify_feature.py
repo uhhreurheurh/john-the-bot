@@ -613,14 +613,14 @@ async def uwu_command(
             try:
                 await send_uwu_message(interaction.channel, member, message)
             except UwuMessageBlocked as blocked_error:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     f"❌ The UWU mode was enabled, but the one-time message was not sent because it contains a blacklisted word/phrase: `{blocked_error}`",
                     ephemeral=False,
                 )
                 return
 
         active_count = get_active_uwu_target_count()
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"✅ Uwu mode is active for {member.mention} in this channel. "
             f"Active people: **{active_count}/{MAX_ACTIVE_UWU_TARGETS}**.\n"
             "You can add more people with another `/uwuify` command. "
@@ -628,33 +628,34 @@ async def uwu_command(
             ephemeral=False,
         )
     except UwuUserBlacklisted:
-        await interaction.response.send_message(            f"❌ {member.mention} is blacklisted from using UWUIFY.",
+        await interaction.followup.send(
+            f"❌ {member.mention} is blacklisted from using UWUIFY.",
             ephemeral=False,
         )
     except UserBlacklistStorageUnavailable as error:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "❌ I could not verify the UWUIFY blacklist from GitHub, "
             f"so I will not activate this target. Error: `{error}`",
             ephemeral=False,
         )
     except UwuTargetLimitReached:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"❌ The global limit of {MAX_ACTIVE_UWU_TARGETS} UWUified people has been reached. "
             "Use `,unuwuify @user` or `/unuwuify @user` to disable UWU for one member, or wait for a slot to expire.",
             ephemeral=False,
         )
     except discord.Forbidden:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel/server.",
             ephemeral=False,
         )
     except discord.HTTPException as e:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"❌ Discord rejected the uwu webhook request: `{e}`",
             ephemeral=False,
         )
     except Exception as error:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "❌ The UWUIFY mode could not be enabled. "
             f"Error: `{type(error).__name__}: {error}`",
             ephemeral=False,
