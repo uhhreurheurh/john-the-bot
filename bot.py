@@ -1780,7 +1780,7 @@ async def role_webhook_test_command(interaction: discord.Interaction):
         color=discord.Color.green(),
         fields=[
             ("Webhook Variable", "ROLE_WEBHOOK_URL", True),
-            ("Result", "Sent" if success else "Failed", True),
+
         ],
     )
 
