@@ -1789,14 +1789,6 @@ async def register_pending_review_update_views():
 @app_commands.describe(
     user="The member whose reviews you want to see."
 )
-
-@tree.command(
-    name="reviews",
-    description="View a member's reviews."
-)
-@app_commands.describe(
-    user="The member whose reviews you want to see."
-)
 async def reviews(
     interaction: discord.Interaction,
     user: discord.Member
