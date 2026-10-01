@@ -2155,16 +2155,6 @@ async def blacklist_status_command(
     )
 
 
-@tree.command(
-    name="strike",
-    description="Give a staff strike that expires after 7 to 40 days.",
-)
-@app_commands.describe(
-    member="The staff member receiving the strike",
-    reason="Reason for the strike",
-    days="How many days the strike should last (7-40)",
-)
-@app_commands.check(staff_strike_command_check)
 # Register grouped slash-command roots.
 uwuify_group.add_command(uwuify_hoodify_group)
 tree.add_command(textify_group)
