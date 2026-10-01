@@ -1379,17 +1379,15 @@ async def on_message(message: discord.Message):
             # ",uwuify off @user" removes only that target.
             if len(parts) >= 3 and message.mentions:
                 target = message.mentions[0]
-                channel_targets = uwu_targets.get(message.channel.id, set())
+                removed, channel_disabled = await remove_uwu_user_from_channel(
+                    message.channel.id,
+                    target.id,
+                )
 
-                if target.id in channel_targets:
-                    channel_targets.remove(target.id)
-
-                    # Keep the webhook alive for other targets in this channel.
-                    if channel_targets:
-                        response = f"✅ {target.mention} is no longer being UWUified in this channel."
-                    else:
-                        await disable_uwu_target(message.channel.id)
-                        response = "✅ Uwu mode disabled for this channel."
+                if removed and channel_disabled:
+                    response = "✅ Uwu mode disabled for this channel."
+                elif removed:
+                    response = f"✅ {target.mention} is no longer being UWUified in this channel."
                 else:
                     response = f"ℹ️ {target.mention} was not being UWUified in this channel."
 
@@ -1547,18 +1545,18 @@ async def on_message(message: discord.Message):
         if len(parts) >= 2 and parts[1].lower() == "off":
             if len(parts) >= 3 and message.mentions:
                 target = message.mentions[0]
-                channel_targets = hood_targets.get(message.channel.id, set())
+                removed, channel_disabled = await remove_hood_user_from_channel(
+                    message.channel.id,
+                    target.id,
+                )
 
-                if target.id in channel_targets:
-                    channel_targets.remove(target.id)
-                    if channel_targets:
-                        response = (
-                            f"✅ {target.mention} is no longer being HOODIFIED "
-                            "in this channel."
-                        )
-                    else:
-                        await disable_hood_target(message.channel.id)
-                        response = "✅ Hoodify mode disabled for this channel."
+                if removed and channel_disabled:
+                    response = "✅ Hoodify mode disabled for this channel."
+                elif removed:
+                    response = (
+                        f"✅ {target.mention} is no longer being HOODIFIED "
+                        "in this channel."
+                    )
                 else:
                     response = (
                         f"ℹ️ {target.mention} was not being HOODIFIED "
