@@ -1099,13 +1099,6 @@ async def review_blacklist_status_command(
     )
 
 
-@textify_group.command(
-    name="ban",
-    description="Ban a member from running UWUIFY and HOODIFY.",
-)
-@app_commands.describe(member="The member to ban from UWUIFY and HOODIFY")
-@app_commands.check(blacklist_command_check)
-
 def review_stars(rating: int) -> str:
     return "⭐" * rating + "☆" * (5 - rating)
 
