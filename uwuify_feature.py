@@ -605,6 +605,9 @@ async def uwu_command(
             ephemeral=False,
         )
         return
+    # The blacklist is GitHub-backed and may require network I/O after a restart.
+    # Defer before entering that path so Discord does not expire the interaction.
+    await interaction.response.defer(ephemeral=False)
 
     try:
         await set_uwu_target(interaction.channel, member)
