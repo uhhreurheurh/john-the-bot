@@ -37,6 +37,15 @@ UWU_WORD_BLACKLIST = {
 # Maximum number of unique people who can be actively UWUified at once.
 MAX_ACTIVE_UWU_TARGETS = 5
 
+# channel_id -> {"webhook": discord.Webhook, "timer": asyncio.Task | None}
+uwu_webhooks: dict[int, dict] = {}
+
+# channel_id -> set of target member IDs.
+uwu_targets: dict[int, set[int]] = {}
+
+# Protect the global UWUIFY target cap from simultaneous commands.
+uwu_target_lock = asyncio.Lock()
+
 # Use the package's optional flags so the transformation is more obvious
 # than the minimal default behavior.
 UWU_FLAGS = uwuify.SMILEY | uwuify.YU | uwuify.STUTTER
