@@ -2737,6 +2737,11 @@ import staff_strikes as staff_strikes_feature
 from hoodify_feature import *
 from uwuify_feature import *
 from reviews import *
+from reviews import (
+    _ensure_review_db_schema,
+    _ensure_shared_review_store,
+    _review_db_has_reviews,
+)
 from leaderboard import *
 from staff_strikes import *
 
