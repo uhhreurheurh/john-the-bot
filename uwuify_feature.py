@@ -3,7 +3,6 @@
 from bot import *
 
 _UWU_DATA = json.loads(Path(__file__).with_name("uwu_words.json").read_text(encoding="utf-8"))
-UWU_WORD_BLACKLIST = set(_UWU_DATA.get("word_blacklist", []))
 
 UWU_WEBHOOK_NAME = "Uwuify Relay"
 UWU_WEBHOOK_IDLE_SECONDS = 5 * 60
@@ -41,6 +40,8 @@ MAX_ACTIVE_UWU_TARGETS = 5
 # Use the package's optional flags so the transformation is more obvious
 # than the minimal default behavior.
 UWU_FLAGS = uwuify.SMILEY | uwuify.YU | uwuify.STUTTER
+# Load the editable blacklist after the legacy inline default is declared.
+UWU_WORD_BLACKLIST = set(_UWU_DATA.get("word_blacklist", []))
 
 def uwu_user_is_whitelisted(member: discord.Member | discord.User) -> bool:
     """Return True when the member has at least one allowed UWU role."""
