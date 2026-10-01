@@ -189,6 +189,7 @@ async def set_uwu_target(
 
     async with uwu_target_lock:
         channel_targets = uwu_targets.setdefault(channel.id, set())
+        added_here = False
 
         # Already active in this channel: no additional slot is needed.
         if target.id not in channel_targets:
@@ -207,15 +208,14 @@ async def set_uwu_target(
                 )
 
             channel_targets.add(target.id)
+            added_here = True
 
         # Keep target state and webhook creation synchronized so a failed
         # webhook creation cannot leave a phantom active target behind.
         try:
             webhook = await get_uwu_webhook(channel)
         except Exception:
-            if target.id in channel_targets and target.id not in (
-                get_active_uwu_target_ids(exclude_channel_id=channel.id)
-            ):
+            if added_here:
                 channel_targets.discard(target.id)
                 if not channel_targets:
                     uwu_targets.pop(channel.id, None)
