@@ -330,6 +330,43 @@ async def disable_hood_for_user(user_id: int) -> int:
     return removed
 
 
+async def remove_hood_user_from_channel(
+    channel_id: int,
+    user_id: int,
+) -> tuple[bool, bool]:
+    """Remove one target from one channel without racing another activation.
+
+    Returns (removed, channel_disabled).
+    """
+    entry = None
+
+    async with hood_target_lock:
+        target_ids = hood_targets.get(channel_id)
+        if target_ids is None or user_id not in target_ids:
+            return False, False
+
+        target_ids.discard(user_id)
+        if target_ids:
+            return True, False
+
+        hood_targets.pop(channel_id, None)
+        entry = hood_webhooks.pop(channel_id, None)
+
+    if entry is not None:
+        timer = entry.get("timer")
+        if timer is not None and not timer.done():
+            timer.cancel()
+
+        webhook = entry.get("webhook")
+        if webhook is not None:
+            try:
+                await webhook.delete(reason="HOODIFY channel target removed")
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
+
+    return True, True
+
+
 async def disable_all_hood_targets() -> int:
     channel_ids = list(hood_targets.keys() | hood_webhooks.keys())
     disabled_count = 0
