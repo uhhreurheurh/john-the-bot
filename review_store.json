@@ -400,6 +400,14 @@
       "rating": 3,
       "comment": "i like commands so far",
       "created_at": "2026-10-01 16:22:28"
+    },
+    {
+      "id": 55,
+      "target_id": 1426737306458652742,
+      "reviewer_id": 1341368821352497243,
+      "rating": 5,
+      "comment": "Good guy",
+      "created_at": "2026-10-01 16:22:34"
     }
   ],
   "review_update_requests": [
