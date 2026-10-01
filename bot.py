@@ -2153,7 +2153,6 @@ async def blacklist_status_command(
 uwuify_group.add_command(uwuify_hoodify_group)
 tree.add_command(textify_group)
 tree.add_command(blacklist_group)
-tree.add_command(review_blacklist_group)
 
 @tree.error
 async def on_app_command_error(
