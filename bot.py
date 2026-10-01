@@ -5877,7 +5877,8 @@ class ReviewPagination(discord.ui.View):
 
         embed.description = (
             f"🟢 **{stats['approved']}**  "
-            f"🔴 **{stats['total'] - stats['approved']}**\n"
+            f"🟠 **{stats['neutral']}**  "
+            f"🔴 **{stats['negative']}**\n"
         )
 
         for review in page_reviews:
@@ -5895,6 +5896,7 @@ class ReviewPagination(discord.ui.View):
 
             embed.add_field(
                 name=(
+                    f"{review_approval_emoji(int(review['rating']))} "
                     f"{review_stars(review['rating'])} — "
                     f"by {reviewer_name} · ID {review['id']}"
                 ),
@@ -6405,6 +6407,25 @@ async def leaderboard(interaction: discord.Interaction):
         embed.add_field(
             name="Most Reviewed",
             value=reviewed_text,
+            inline=False,
+        )
+
+        neutral_text = "**top 5 neutral users**\n\n"
+        if not neutral:
+            neutral_text += "No 3-star reviews yet."
+        else:
+            for index, row in enumerate(neutral, start=1):
+                target_id = row["target_id"]
+                member = members.get(target_id)
+                name = member.mention if member else f"<@{target_id}>"
+                username = member.name if member else "unknown"
+                neutral_text += (
+                    f"{index} {name} ({username}) 🟠 "
+                    f"**{row['neutral']} neutral reviews**\n"
+                )
+        embed.add_field(
+            name="Neutral (3 Stars)",
+            value=neutral_text,
             inline=False,
         )
 
