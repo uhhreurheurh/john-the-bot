@@ -1960,3 +1960,7 @@ async def savedb_command(interaction: discord.Interaction):
         )
 
 
+
+
+# Register the review blacklist group from the module that owns it.
+tree.add_command(review_blacklist_group)
