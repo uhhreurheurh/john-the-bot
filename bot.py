@@ -3002,10 +3002,11 @@ async def on_ready():
         main_guild_object = discord.Object(id=MAIN_SERVER)
 
         try:
-            # Commands decorated with @tree.command are already registered on
-            # the global CommandTree. Copy that complete tree to the main guild
-            # and sync it directly. Do not clear the global tree here: doing so
-            # can remove commands before Discord receives the payload.
+            # Sync the global tree first, then copy that exact tree into the
+            # main guild and sync it there. This avoids relying on stale guild
+            # command state and makes the commands available immediately.
+            await tree.sync()
+
             tree.clear_commands(guild=main_guild_object)
             tree.copy_global_to(guild=main_guild_object)
             synced_commands = await tree.sync(guild=main_guild_object)
