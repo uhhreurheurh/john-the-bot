@@ -3542,7 +3542,6 @@ if not BOT_TOKEN:
         "Set the BOT_TOKEN environment variable before starting the bot."
     )
 
-start_railway_health_server()
 
 # Stable pre-merge process lifecycle: discord.py owns one asyncio event loop.
 # Railway will restart the process if the worker exits.
