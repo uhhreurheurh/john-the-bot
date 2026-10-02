@@ -3059,7 +3059,124 @@ async def hoodify_root_command(
     member: discord.Member,
     message: str | None = None,
 ):
-    await hoodify_feature.hoodify_command.callback(interaction, member, message)
+    # Invoke the HOODIFY activation logic directly instead of depending on
+    # the feature module's AppCommand object existing at runtime.
+    textify_debug(
+        "HOOD-ROOT ENTER",
+        operator_id=interaction.user.id,
+        target_id=member.id,
+        channel_id=getattr(interaction.channel, "id", None),
+        one_time_message=message,
+    )
+
+    if uwu_hoodify_user_is_banned(interaction.user):
+        await interaction.response.send_message(
+            "❌ You are banned from using UWUIFY and HOODIFY.",
+            ephemeral=False,
+        )
+        return
+
+    if (
+        not isinstance(interaction.user, discord.Member)
+        or not hoodify_feature.hood_user_is_whitelisted(interaction.user)
+    ):
+        await interaction.response.send_message(
+            "❌ You need one of the allowed HOODIFY roles to use this command.",
+            ephemeral=False,
+        )
+        return
+
+    if not isinstance(interaction.channel, discord.TextChannel):
+        await interaction.response.send_message(
+            "❌ This command can only be used in a normal text channel.",
+            ephemeral=False,
+        )
+        return
+
+    bot_member = interaction.guild.me if interaction.guild is not None else None
+    permissions = (
+        interaction.channel.permissions_for(bot_member)
+        if bot_member is not None
+        else None
+    )
+
+    await interaction.response.defer(ephemeral=False)
+
+    if (
+        permissions is None
+        or not permissions.manage_messages
+        or not permissions.manage_webhooks
+    ):
+        await interaction.followup.send(
+            "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel.",
+            ephemeral=False,
+        )
+        return
+
+    try:
+        textify_debug("HOOD-ROOT SET_TARGET CALL")
+        await hoodify_feature.set_hood_target(interaction.channel, member)
+        textify_debug("HOOD-ROOT SET_TARGET RETURNED")
+
+        if message:
+            try:
+                textify_debug("HOOD-ROOT ONE_TIME SEND CALL")
+                await hoodify_feature.send_hood_message(
+                    interaction.channel,
+                    member,
+                    message,
+                )
+                textify_debug("HOOD-ROOT ONE_TIME SEND RETURNED")
+            except HoodMessageBlocked as blocked_error:
+                await interaction.followup.send(
+                    f"❌ HOODIFY was enabled, but the one-time message was not sent "
+                    f"because it contains a blacklisted word/phrase: {blocked_error}",
+                    ephemeral=False,
+                )
+                return
+
+        active_count = hoodify_feature.get_active_hood_target_count()
+        await interaction.followup.send(
+            f"✅ HOODIFY is active for {member.mention} in this channel. "
+            f"Active people: **{active_count}/{hoodify_feature.MAX_ACTIVE_HOOD_TARGETS}**.\n"
+            "You can add more people with another /hoodify command. "
+            "The temporary webhook will be deleted after 5 minutes without use.",
+            ephemeral=False,
+        )
+    except HoodUserBlacklisted:
+        await interaction.followup.send(
+            f"❌ {member.mention} is blacklisted from using HOODIFY.",
+            ephemeral=False,
+        )
+    except UserBlacklistStorageUnavailable as error:
+        await interaction.followup.send(
+            "❌ I could not verify the HOODIFY blacklist from GitHub, "
+            f"so I will not activate this target. Error: {error}",
+            ephemeral=False,
+        )
+    except HoodTargetLimitReached:
+        await interaction.followup.send(
+            f"❌ The global limit of {hoodify_feature.MAX_ACTIVE_HOOD_TARGETS} HOODIFIED people has been reached. "
+            "Use ,unhoodify @user or /unhoodify @user to disable HOODIFY for one member.",
+            ephemeral=False,
+        )
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel/server.",
+            ephemeral=False,
+        )
+    except discord.HTTPException as error:
+        await interaction.followup.send(
+            f"❌ Discord rejected the HOODIFY webhook request: {error}",
+            ephemeral=False,
+        )
+    except Exception as error:
+        textify_debug_exception("HOOD-ROOT ACTIVATION EXCEPTION", error)
+        await interaction.followup.send(
+            "❌ The HOODIFY mode could not be enabled. "
+            f"Error: {type(error).__name__}: {error}",
+            ephemeral=False,
+        )
 
 
 @tree.command(
