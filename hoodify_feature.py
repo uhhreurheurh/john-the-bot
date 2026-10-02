@@ -442,6 +442,12 @@ async def cleanup_stale_hood_webhooks() -> None:
             if webhook.user is None or webhook.user.id != bot_id:
                 continue
 
+            # Protect newly-created webhooks from overlapping bot instances.
+            if webhook.created_at is not None:
+                age = discord.utils.utcnow() - webhook.created_at
+                if age < datetime.timedelta(minutes=10):
+                    continue
+
             try:
                 await webhook.delete(reason="Stale Hoodify webhook cleanup")
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
@@ -449,6 +455,9 @@ async def cleanup_stale_hood_webhooks() -> None:
 
 @tasks.loop(seconds=HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS)
 async def hood_webhook_cleanup_loop():
+    # Wait one full interval before stale cleanup so startup cannot remove a
+    # webhook just created by another bot instance during a deploy.
+    await asyncio.sleep(HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS)
     await cleanup_stale_hood_webhooks()
 
 @hood_webhook_cleanup_loop.before_loop
