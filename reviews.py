@@ -206,7 +206,7 @@ def _sqlite_file_is_valid(path: Path) -> bool:
         if not path.exists() or path.stat().st_size < 16:
             return False
         with path.open("rb") as file:
-            if file.read(16) != b"SQLite format 3\\x00":
+            if file.read(16) != b"SQLite format 3\x00":
                 return False
         connection = sqlite3.connect(path, timeout=10)
         try:
@@ -1148,7 +1148,14 @@ async def review_blacklist_status_command(
 
 
 def review_stars(rating: int) -> str:
-    return "⭐" * rating + "☆" * (5 - rating)
+    """Render a 0-5 star row, clamping stored values that are out of range."""
+    try:
+        value = int(rating)
+    except (TypeError, ValueError):
+        return ""
+
+    value = max(0, min(5, value))
+    return "⭐" * value + "☆" * (5 - value)
 
 
 def review_approval_emoji(rating: int) -> str:

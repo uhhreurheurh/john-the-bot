@@ -3,6 +3,25 @@
 from bot import *
 from bot import _github_contents_url, _github_request_json
 
+# Strike tiers, counted in currently active (unexpired) strikes:
+#   1        no role consequence
+#   2        demoted one rank
+#   3+       every staff role removed. This is a permanent demotion: expiry
+#            does not restore the rank, an admin restores it by hand.
+# Three is also the cap, because a fully demoted member holds no staff role
+# and strike_command refuses members without one.
+STAFF_STRIKE_ACTIVATION_THRESHOLD = 2
+STAFF_STRIKE_DEMOTION_THRESHOLD = 3
+
+# Ranks that may only be held by one member at a time. Whenever the strike
+# system would place someone into one of these and another member already holds
+# it, the target falls through to the next rank down instead. Director is the
+# rank below Co Owner, so this is what stops a demoted Co Owner from creating a
+# second Director.
+SINGLE_HOLDER_STAFF_ROLE_IDS = {
+    1397677852056354948,  # Director
+}
+
 def load_staff_strikes() -> list[dict]:
     """Load all staff strikes from local disk."""
     if not STAFF_STRIKES_FILE.exists():
@@ -129,6 +148,55 @@ def get_original_staff_role_id(user_id: int) -> int | None:
     return None
 
 
+def _staff_role_is_held_by_another(member: discord.Member, role: discord.Role) -> bool:
+    """Return True when a single-holder staff rank is already occupied."""
+    if role.id not in SINGLE_HOLDER_STAFF_ROLE_IDS:
+        return False
+
+    return any(
+        other.id != member.id
+        and not other.bot
+        and role in other.roles
+        for other in member.guild.members
+    )
+
+
+def _fall_through_capped_staff_ranks(
+    member: discord.Member,
+    desired_role: discord.Role,
+    desired_name: str,
+    fallback_role: discord.Role | None,
+) -> tuple[discord.Role | None, str]:
+    """Move the target down while it is a capped rank another member holds.
+
+    Used for both demotions and restores, so a capped rank is never handed to a
+    second member by the strike system.
+    """
+    visited: set[int] = set()
+
+    while (
+        desired_role is not None
+        and desired_role.id not in visited
+        and _staff_role_is_held_by_another(member, desired_role)
+    ):
+        visited.add(desired_role.id)
+
+        next_rank = get_next_staff_role(desired_role.id)
+        lower_role = member.guild.get_role(next_rank[1]) if next_rank else None
+
+        if lower_role is None:
+            # Nothing left below the capped rank. Hold the rank the member
+            # already has rather than demoting past what a strike should do.
+            return fallback_role, (
+                fallback_role.name if fallback_role is not None else "No Staff Role"
+            )
+
+        desired_role = lower_role
+        desired_name = next_rank[0]
+
+    return desired_role, desired_name
+
+
 async def send_staff_strike_log(channel_id: int, content: str) -> bool:
     """Send a normal-text staff strike role-change message."""
     guild = bot.get_guild(MAIN_SERVER)
@@ -183,17 +251,17 @@ async def apply_staff_strike_consequences(
     log_two_strikes: bool = False,
     log_three_strikes: bool = False,
 ) -> tuple[str, str] | None:
-    """Apply the role consequence for the member's current active strike count."""
-    active_strikes = (
-        get_user_staff_strikes(member.id)
-        if active_count is None
-        else [
-            strike
-            for strike in staff_strikes
-            if int(strike.get("user_id", 0)) == int(member.id)
-        ]
-    )
-    active_count = len(active_strikes)
+    """Apply the role consequence for the member's current active strike count.
+
+    Pass active_count to apply the consequence for an explicit count rather than
+    the recorded one. handle_expired_staff_strikes depends on that: by the time
+    it runs, prune_expired_staff_strikes has already dropped the records, so
+    the recorded count is zero and a permanent demotion would otherwise be
+    undone on the spot.
+    """
+    active_strikes = get_user_staff_strikes(member.id)
+    if active_count is None:
+        active_count = len(active_strikes)
 
     original_role_id = (
         original_role_id_override
@@ -202,7 +270,13 @@ async def apply_staff_strike_consequences(
     )
     current_info = get_staff_role_for_member(member)
 
-    if original_role_id is None and current_info is not None and active_count > 0:
+    if original_role_id is None and current_info is not None:
+        # Fall back to the member's current rank whenever the recorded one is
+        # unavailable. This must not be gated on active_count: once the last
+        # strike expires, prune_expired_staff_strikes has already dropped the
+        # record that carried original_staff_role_id, so gating here resolved
+        # to None and stripped every staff role from a member whose only
+        # strike had simply lapsed.
         original_role_id = current_info[1].id
         for strike in active_strikes:
             strike["original_staff_role_id"] = original_role_id
@@ -210,41 +284,96 @@ async def apply_staff_strike_consequences(
     original_role = member.guild.get_role(original_role_id) if original_role_id else None
     original_role_name = original_role.name if original_role is not None else "No Staff Role"
 
-    if active_count < 2:
+    if original_role is None and current_info is not None:
+        # The recorded rank no longer exists in the guild. Never resolve to
+        # "remove every staff role" on a guess; hold the rank we can see.
+        original_role = current_info[1]
+        original_role_name = current_info[0]
+
+    if active_count < STAFF_STRIKE_ACTIVATION_THRESHOLD:
+        # No active consequence below the activation threshold.
         desired_role = original_role
         desired_name = original_role_name if desired_role is not None else "No Staff Role"
-    elif active_count == 2:
+    elif active_count < STAFF_STRIKE_DEMOTION_THRESHOLD:
         next_role_info = get_next_staff_role(original_role_id) if original_role_id else None
-        desired_role = (
+        next_role = (
             member.guild.get_role(next_role_info[1])
             if next_role_info is not None
             else None
         )
-        desired_name = (
-            next_role_info[0]
-            if next_role_info is not None
-            else "Suspended"
-        )
+        if next_role is not None:
+            desired_role = next_role
+            desired_name = next_role_info[0]
+        else:
+            # Already at the lowest configured rank, so there is nothing to
+            # demote to. Hold the rank here; full demotion belongs to the
+            # demotion threshold, not this one.
+            desired_role = original_role
+            desired_name = (
+                original_role_name if desired_role is not None else "No Staff Role"
+            )
     else:
+        # At the demotion threshold every staff role is removed. This is
+        # permanent: nothing here restores the rank when strikes expire.
         desired_role = None
         desired_name = "Suspended"
 
-    managed_staff_roles = [
-        member.guild.get_role(role_id)
+    if desired_role is not None:
+        # Never place a second member into a single-holder rank.
+        desired_role, desired_name = _fall_through_capped_staff_ranks(
+            member,
+            desired_role,
+            desired_name,
+            original_role,
+        )
+
+    managed_staff_roles = {
+        role_id: member.guild.get_role(role_id)
         for _, role_id in STAFF_ROLE_HIERARCHY
-    ]
-    managed_staff_roles = [role for role in managed_staff_roles if role is not None]
+    }
+    managed_staff_roles = {
+        role_id: role
+        for role_id, role in managed_staff_roles.items()
+        if role is not None
+    }
 
     current_staff_role = current_info[1] if current_info is not None else None
     current_name = current_info[0] if current_info is not None else (
-        "Suspended" if current_staff_role is None and active_count >= 3 else "No Staff Role"
+        "Suspended"
+        if current_staff_role is None and active_count >= STAFF_STRIKE_DEMOTION_THRESHOLD
+        else "No Staff Role"
     )
 
-    roles_to_remove = [
-        role
-        for role in managed_staff_roles
-        if desired_role is None or role.id != desired_role.id
-    ]
+    if desired_role is None:
+        # A permanent demotion clears every managed staff role.
+        roles_to_remove = list(managed_staff_roles.values())
+    else:
+        # Remove only the ranks above the target. A member holding Staff
+        # Manager, Head Admin, Admin, Head Mod and Trial Mod who is demoted
+        # one step loses Staff Manager alone; the ranks at or below the target
+        # are not consequences of the strike and must be left alone.
+        desired_index = next(
+            (
+                index
+                for index, (_, role_id) in enumerate(STAFF_ROLE_HIERARCHY)
+                if role_id == desired_role.id
+            ),
+            None,
+        )
+        if desired_index is None:
+            # The target is outside the configured hierarchy, so remove that one
+            # role rather than guessing a range of ranks.
+            roles_to_remove = [
+                role
+                for role_id, role in managed_staff_roles.items()
+                if role_id == desired_role.id
+            ]
+        else:
+            roles_to_remove = [
+                managed_staff_roles[role_id]
+                for index, (_, role_id) in enumerate(STAFF_ROLE_HIERARCHY)
+                if index < desired_index and role_id in managed_staff_roles
+            ]
 
     bot_member = member.guild.me
     can_manage = (
@@ -252,6 +381,14 @@ async def apply_staff_strike_consequences(
         and bot_member.guild_permissions.manage_roles
         and member.guild.owner_id != member.id
     )
+
+    # Only touch roles the member actually holds. Discord ignores removals for
+    # roles they do not have, but requesting them is needless work and puts
+    # ranks they never held into the audit-log reason.
+    held_role_ids = {role.id for role in member.roles}
+    roles_to_remove = [
+        role for role in roles_to_remove if role.id in held_role_ids
+    ]
 
     if can_manage:
         try:
@@ -288,26 +425,29 @@ async def apply_staff_strike_consequences(
         member = refreshed
         refreshed_info = get_staff_role_for_member(member)
         actual_name = refreshed_info[0] if refreshed_info is not None else (
-            "Suspended" if active_count >= 3 else "No Staff Role"
+            "Suspended"
+            if active_count >= STAFF_STRIKE_DEMOTION_THRESHOLD
+            else "No Staff Role"
         )
+        # Compare the member's effective top rank before and after rather than
+        # requiring the target rank itself. With several staff roles held at
+        # once the target is often not the top rank, and the strike still took
+        # effect by dropping the rank above it.
         role_changed = (
-            desired_role is not None
-            and refreshed_info is not None
-            and refreshed_info[1].id == desired_role.id
-        ) or (
-            desired_role is None and refreshed_info is None
+            (current_staff_role.id if current_staff_role is not None else None)
+            != (refreshed_info[1].id if refreshed_info is not None else None)
         )
     else:
         actual_name = desired_name
         role_changed = current_name != desired_name
 
     if role_changed and current_name != actual_name:
-        if log_two_strikes and active_count == 2:
+        if log_two_strikes and active_count == STAFF_STRIKE_ACTIVATION_THRESHOLD:
             await send_staff_strike_log(
                 STAFF_STRIKE_TWO_ACTIVE_CHANNEL_ID,
                 f"<@{member.id}> {current_name} to {actual_name}",
             )
-        elif log_three_strikes and active_count >= 3:
+        elif log_three_strikes and active_count >= STAFF_STRIKE_DEMOTION_THRESHOLD:
             await send_staff_strike_log(
                 STAFF_STRIKE_TWO_ACTIVE_CHANNEL_ID,
                 f"<@{member.id}> {current_name} to Suspended",
@@ -337,30 +477,63 @@ async def handle_expired_staff_strikes(
         active_count = len(get_user_staff_strikes(user_id))
         before_active_count = active_count + len(user_expired)
 
+        # Carry the pre-strike rank out of the expired batch. The records are
+        # already gone from staff_strikes by this point, so without this a
+        # member below the demotion threshold had no rank to be restored to.
+        original_role_id = None
+        for strike in user_expired:
+            recorded = strike.get("original_staff_role_id")
+            if recorded:
+                original_role_id = int(recorded)
+                break
+
+        permanently_demoted = before_active_count >= STAFF_STRIKE_DEMOTION_THRESHOLD
+
         before_info = get_staff_role_for_member(member)
         if before_info is not None:
             before_name = before_info[0]
-        elif before_active_count >= 3:
+        elif permanently_demoted:
             before_name = "Suspended"
         else:
             before_name = "No Staff Role"
 
-        await apply_staff_strike_consequences(
-            member,
-            active_count=active_count,
-        )
+        if permanently_demoted:
+            # Reaching the demotion threshold is a permanent demotion. Expiry
+            # must not hand the rank back, so enforce the demoted state instead
+            # of restoring, and leave reinstatement to a human. This also means
+            # a member who was demoted earlier and then wrongly kept a rank
+            # loses it when their strikes lapse.
+            await apply_staff_strike_consequences(
+                member,
+                active_count=STAFF_STRIKE_DEMOTION_THRESHOLD,
+                original_role_id_override=original_role_id,
+            )
+        else:
+            await apply_staff_strike_consequences(
+                member,
+                active_count=active_count,
+                original_role_id_override=original_role_id,
+            )
 
         refreshed = await resolve_main_guild_member(user_id) or member
         after_info = get_staff_role_for_member(refreshed)
         after_name = after_info[0] if after_info is not None else (
-            "Suspended" if active_count >= 3 else "No Staff Role"
+            "Suspended" if permanently_demoted else "No Staff Role"
         )
 
         if before_name != after_name:
-            await send_staff_strike_log(
-                STAFF_STRIKE_EXPIRED_CHANNEL_ID,
-                f"<@{user_id}> {before_name} to {after_name}",
-            )
+            if permanently_demoted:
+                await send_staff_strike_log(
+                    STAFF_STRIKE_EXPIRED_CHANNEL_ID,
+                    f"<@{user_id}> {before_name} to {after_name} "
+                    f"(permanent demotion at {STAFF_STRIKE_DEMOTION_THRESHOLD} strikes; "
+                    "reinstate by hand)",
+                )
+            else:
+                await send_staff_strike_log(
+                    STAFF_STRIKE_EXPIRED_CHANNEL_ID,
+                    f"<@{user_id}> {before_name} to {after_name}",
+                )
 
 
 def get_user_staff_strikes(user_id: int) -> list[dict]:
@@ -662,8 +835,8 @@ async def strike_command(
     consequence = await apply_staff_strike_consequences(
         member,
         active_count=active_count,
-        log_two_strikes=(active_count == 2),
-        log_three_strikes=(active_count >= 3),
+        log_two_strikes=(active_count == STAFF_STRIKE_ACTIVATION_THRESHOLD),
+        log_three_strikes=(active_count >= STAFF_STRIKE_DEMOTION_THRESHOLD),
     )
     synced = await save_staff_strikes()
 
@@ -723,7 +896,7 @@ async def strikes_command(
 
 @tree.command(
     name="removestrike",
-    description="Remove a specific active staff strike from a member.",
+    description="Remove a strike record. Does not change the member's roles.",
 )
 @app_commands.describe(
     member="The staff member whose strike you want to remove",
@@ -735,7 +908,13 @@ async def removestrike_command(
     member: discord.Member,
     strike_number: app_commands.Range[int, 1, 9999],
 ):
-    """Remove one active strike and immediately recalculate staff rank."""
+    """Remove one active strike record without changing the member's roles.
+
+Strikes can be issued in error or resolved by talking to the owner or a
+high-ranking staff member, so this corrects the record only. It never promotes
+or demotes anyone, and it never reverses a permanent demotion; reinstatement is
+a manual action in Discord.
+"""
     await interaction.response.defer(ephemeral=False)
 
     expired = prune_expired_staff_strikes()
@@ -760,25 +939,16 @@ async def removestrike_command(
         )
         return
 
-    original_role_id = (
-        int(matching["original_staff_role_id"])
-        if matching.get("original_staff_role_id") is not None
-        else get_original_staff_role_id(member.id)
-    )
-
     before_info = get_staff_role_for_member(member)
     before_role_name = before_info[0] if before_info is not None else (
-        "Suspended" if len(get_user_staff_strikes(member.id)) >= 3 else "No Staff Role"
+        "Suspended"
+        if len(get_user_staff_strikes(member.id)) >= STAFF_STRIKE_DEMOTION_THRESHOLD
+        else "No Staff Role"
     )
 
     staff_strikes.remove(matching)
 
     active_count = len(get_user_staff_strikes(member.id))
-    consequence = await apply_staff_strike_consequences(
-        member,
-        active_count=active_count,
-        original_role_id_override=original_role_id,
-    )
     synced = await save_staff_strikes()
 
     response = (
@@ -787,17 +957,16 @@ async def removestrike_command(
         f"Active strikes: **{active_count}**"
     )
 
-    if consequence is not None:
-        old_role, new_role = consequence
-        response += f"\nRole action: **{old_role} → {new_role}**"
-    elif original_role_id is not None:
-        refreshed = await resolve_main_guild_member(member.id) or member
-        after_info = get_staff_role_for_member(refreshed)
-        after_role_name = after_info[0] if after_info is not None else (
-            "Suspended" if active_count >= 3 else "No Staff Role"
+    # Roles are deliberately left alone here. Removing a strike corrects the
+    # record, it does not reinstate a rank: a strike can have been issued in
+    # error or resolved by talking to the owner or a high-ranking staff member,
+    # and those are human decisions. Reassigning a rank here would also undo a
+    # permanent demotion, so any reinstatement is done by hand in Discord.
+    if before_role_name in ("Suspended", "No Staff Role"):
+        response += (
+            f"\n\n{member.mention} currently has no staff role. "
+            "Reinstatement is manual and is not done by this command."
         )
-        if before_role_name != after_role_name:
-            response += f"\nRole action: **{before_role_name} → {after_role_name}**"
 
     if not synced:
         response += "\n⚠️ GitHub sync failed; the strike removal was saved locally."
