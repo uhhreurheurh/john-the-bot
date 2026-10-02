@@ -1016,6 +1016,14 @@
       "rating": 5,
       "comment": "ok",
       "created_at": "2026-10-02 18:19:59"
+    },
+    {
+      "id": 150,
+      "target_id": 1542311839210406029,
+      "reviewer_id": 1426737306458652742,
+      "rating": 2,
+      "comment": "black",
+      "created_at": "2026-10-02 18:20:05"
     }
   ],
   "review_update_requests": [
