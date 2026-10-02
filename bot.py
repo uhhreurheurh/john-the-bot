@@ -3219,6 +3219,18 @@ async def on_ready():
             # the decorators defined in the feature modules.
             global_commands = list(tree.get_commands())
 
+            # Remove any stale global registrations first. The bot now uses
+            # guild-scoped commands for this server, so an older global
+            # /textify (or another command) must not remain alongside the
+            # current guild command.
+            tree.clear_commands()
+            await tree.sync()
+
+            # Restore the current commands in memory, then replace the guild
+            # command set with exactly this list.
+            for command in global_commands:
+                tree.add_command(command)
+
             tree.clear_commands(guild=main_guild_object)
             for command in global_commands:
                 tree.add_command(command, guild=main_guild_object)
