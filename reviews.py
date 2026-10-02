@@ -269,6 +269,10 @@ class DuplicateReviewError(Exception):
     '''Raised when a reviewer already has an active review for a target.'''
 
 
+class ReviewTransferConflict(Exception):
+    """Raised when transferring reviews would create duplicate reviewer/target pairs."""
+
+
 class PendingReviewUpdateError(Exception):
     '''Raised when a review already has a pending update request.'''
 
@@ -720,6 +724,45 @@ def get_review(review_id: int):
         if int(review["id"]) == int(review_id):
             return review
     return None
+
+
+def transfer_reviews(old_target_id: int, new_target_id: int):
+    """Move all reviews received by one account to another account."""
+    old_target_id = int(old_target_id)
+    new_target_id = int(new_target_id)
+
+    if old_target_id == new_target_id:
+        raise ValueError("The source and destination accounts must be different.")
+
+    def mutator(store):
+        source_reviews = [
+            review for review in store["reviews"]
+            if int(review["target_id"]) == old_target_id
+        ]
+        if not source_reviews:
+            raise ValueError("The source account has no reviews to transfer.")
+
+        source_reviewer_ids = {int(review["reviewer_id"]) for review in source_reviews}
+        for review in store["reviews"]:
+            if (
+                int(review["target_id"]) == new_target_id
+                and int(review["reviewer_id"]) in source_reviewer_ids
+            ):
+                raise ReviewTransferConflict
+
+        moved_review_ids = {int(review["id"]) for review in source_reviews}
+        for review in source_reviews:
+            review["target_id"] = new_target_id
+
+        for request in store.get("review_update_requests", []):
+            if int(request.get("review_id", 0)) in moved_review_ids:
+                request["target_id"] = new_target_id
+
+        return len(source_reviews)
+
+    count, store = _github_update_review_store(mutator)
+    _mirror_review_store_to_sqlite(store)
+    return count
 
 
 def delete_review(review_id: int):
@@ -1204,6 +1247,13 @@ class ReviewModal(discord.ui.Modal):
             )
             return
 
+        if self.target.bot:
+            await interaction.followup.send(
+                "❌ Discord bot accounts cannot receive reviews.",
+                ephemeral=True
+            )
+            return
+
         try:
             async with review_db_lock:
                 await refresh_local_review_db_from_github()
@@ -1375,6 +1425,13 @@ async def review(
     if user.id == interaction.user.id:
         await interaction.response.send_message(
             "❌ You can't review yourself.",
+            ephemeral=True
+        )
+        return
+
+    if user.bot:
+        await interaction.response.send_message(
+            "❌ Discord bot accounts cannot receive reviews.",
             ephemeral=True
         )
         return
@@ -1720,6 +1777,9 @@ async def updatereview(interaction: discord.Interaction, user: discord.Member):
     if user.id == interaction.user.id:
         await interaction.response.send_message('❌ You cannot update a review for yourself.', ephemeral=True)
         return
+    if user.bot:
+        await interaction.response.send_message('❌ Discord bot accounts cannot receive reviews.', ephemeral=True)
+        return
     current = get_user_review(user.id, interaction.user.id)
     if not current:
         await interaction.response.send_message('❌ You have not reviewed this user yet. Use `/review` first.', ephemeral=True)
@@ -1781,6 +1841,104 @@ async def register_pending_review_update_views():
             )
         except Exception:
             pass
+
+# ============================================================
+# /transferreviews
+# ============================================================
+
+def review_transfer_allowed(interaction: discord.Interaction, source_id: int) -> bool:
+    if interaction.user.id == int(source_id):
+        return True
+    if not isinstance(interaction.user, discord.Member):
+        return False
+    return any(
+        role.id in DELETE_REVIEW_ALLOWED_ROLE_IDS
+        for role in interaction.user.roles
+    )
+
+
+@tree.command(
+    name="transferreviews",
+    description="Transfer all reviews received by one account to another account."
+)
+@app_commands.describe(
+    from_account="The account currently receiving the reviews.",
+    to_account="The account that should receive the transferred reviews.",
+)
+async def transferreviews(
+    interaction: discord.Interaction,
+    from_account: discord.Member,
+    to_account: discord.Member,
+):
+    if from_account.id == to_account.id:
+        await interaction.response.send_message(
+            "❌ The source and destination accounts must be different.",
+            ephemeral=True,
+        )
+        return
+
+    if not review_transfer_allowed(interaction, from_account.id):
+        await interaction.response.send_message(
+            "❌ Only the account receiving the reviews or authorized review staff can transfer them.",
+            ephemeral=True,
+        )
+        return
+
+    if from_account.bot:
+        await interaction.response.send_message(
+            "❌ Bot accounts cannot be review-transfer sources.",
+            ephemeral=True,
+        )
+        return
+
+    if to_account.bot:
+        await interaction.response.send_message(
+            "❌ Bot accounts cannot receive reviews.",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        count = transfer_reviews(from_account.id, to_account.id)
+        await sync_review_db_to_github_locked()
+    except ValueError as error:
+        await interaction.followup.send(f"❌ {error}", ephemeral=True)
+        return
+    except ReviewTransferConflict:
+        await interaction.followup.send(
+            "❌ The transfer would create duplicate reviews because at least one reviewer "
+            "has already reviewed the destination account. No reviews were moved.",
+            ephemeral=True,
+        )
+        return
+    except Exception as error:
+        print(f"Review transfer error: {type(error).__name__}: {error}")
+        await interaction.followup.send(
+            "❌ I couldn't transfer those reviews.",
+            ephemeral=True,
+        )
+        return
+
+    await log_review_event(
+        "Reviews Transferred",
+        f"{interaction.user.mention} transferred reviews from {from_account.mention} to {to_account.mention}.",
+        fields=[
+            ("Transferred By", f"{interaction.user.mention} / {interaction.user.id}", False),
+            ("From", f"{from_account.mention} / {from_account.id}", True),
+            ("To", f"{to_account.mention} / {to_account.id}", True),
+            ("Reviews Moved", str(count), True),
+        ],
+        color=discord.Color.blurple(),
+    )
+
+    await interaction.followup.send(
+        f"✅ Transferred **{count}** review(s) from {from_account.mention} to {to_account.mention}. "
+        "The existing review IDs and reviewer accounts were preserved.",
+        ephemeral=True,
+    )
+
 
 # ============================================================
 # /reviews
