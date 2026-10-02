@@ -376,7 +376,15 @@ uwu_target_lock = asyncio.Lock()
 
 
 
-async def unhoodify_command(interaction: discord.Interaction, member: discord.Member):
+@tree.command(
+    name="unhoodify",
+    description="Disable HOODIFY for a selected member.",
+)
+@app_commands.describe(member="The member to stop HOODIFYING")
+async def unhoodify_command(
+    interaction: discord.Interaction,
+    member: discord.Member,
+):
     if uwu_hoodify_user_is_banned(interaction.user):
         await interaction.response.send_message(
             "❌ You are banned from using UWUIFY and HOODIFY.",
