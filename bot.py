@@ -1544,9 +1544,18 @@ async def on_message(message: discord.Message):
 
         target = message.mentions[0]
         bot_member = message.guild.me if message.guild is not None else None
-        if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
+        permissions = (
+            message.channel.permissions_for(bot_member)
+            if bot_member is not None
+            else None
+        )
+        if (
+            permissions is None
+            or not permissions.manage_messages
+            or not permissions.manage_webhooks
+        ):
             await message.reply(
-                "❌ I need **Manage Messages** permission in this channel to replace messages.",
+                "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel.",
                 mention_author=False,
             )
             return
