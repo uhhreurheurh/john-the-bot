@@ -3409,16 +3409,13 @@ async def on_ready():
         main_guild_object = discord.Object(id=MAIN_SERVER)
 
         try:
-            # Feature modules use decorators during import. Re-register their
-            # command objects explicitly as a safety net in case a module was
-            # imported while bot.py was still initializing and its decorator
-            # did not land on the live CommandTree.
+            # Ensure imported feature commands are attached to the live CommandTree.
             feature_commands = (
                 globals().get("uwu_command"),
                 globals().get("unuwuify_command"),
                 globals().get("uwucount_root_command"),
-                globals().get("hoodify_root_command"),
-                globals().get("unhoodify_root_command"),
+                globals().get("hoodify_command"),
+                globals().get("unhoodify_command"),
                 globals().get("hoodcount_root_command"),
                 globals().get("blackjack_command"),
                 globals().get("balance_command"),
@@ -3430,27 +3427,21 @@ async def on_ready():
                     tree.add_command(command)
                     registered_names.add(command.name)
 
-            # Register the complete current CommandTree directly into the
-            # main guild. This avoids guild copy state getting out of sync with
-            # the decorators defined in the feature modules.
-            global_commands = list(tree.get_commands())
+            # Explicitly register command groups owned by feature modules.
+            feature_groups = (
+                globals().get("review_blacklist_group"),
+            )
+            registered_names = {command.name for command in tree.get_commands()}
+            for group in feature_groups:
+                if isinstance(group, app_commands.Group) and group.name not in registered_names:
+                    tree.add_command(group)
+                    registered_names.add(group.name)
 
-            # Remove any stale global registrations first. The bot now uses
-            # guild-scoped commands for this server, so an older global
-            # /textify (or another command) must not remain alongside the
-            # current guild command.
-            tree.clear_commands(guild=None)
-            await tree.sync()
-
-            # Restore the current commands in memory, then replace the guild
-            # command set with exactly this list.
-            for command in global_commands:
-                tree.add_command(command)
-
+            # Sync the complete command tree directly to the main server.
+            # Do not clear/sync the global tree first, because doing so can
+            # leave Discord with only a subset of the imported commands.
             tree.clear_commands(guild=main_guild_object)
-            for command in global_commands:
-                tree.add_command(command, guild=main_guild_object)
-
+            tree.copy_global_to(guild=main_guild_object)
             synced_commands = await tree.sync(guild=main_guild_object)
 
             synced_names = {command.name for command in synced_commands}
