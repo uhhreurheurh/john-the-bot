@@ -1254,32 +1254,102 @@ async def on_message(message: discord.Message):
         if message.author.id in hood_user_blacklist:
             await disable_hood_for_user(message.author.id)
             return
+
         bot_member = message.guild.me if message.guild is not None else None
-        if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
+        permissions = (
+            message.channel.permissions_for(bot_member)
+            if bot_member is not None
+            else None
+        )
+        if permissions is None or not permissions.manage_messages or not permissions.manage_webhooks:
+            await disable_hood_for_user(message.author.id)
+            try:
+                await message.reply(
+                    "❌ HOODIFY was disabled because I need **Manage Messages** "
+                    "and **Manage Webhooks** permissions in this channel.",
+                    mention_author=False,
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                pass
             return
+
         try:
-            await send_hood_message(message.channel, message.author, content)
-            await delete_original_message(message)
+            sent_messages = await send_hood_message(message.channel, message.author, content)
+            deleted = await delete_original_message(message)
+            if not deleted:
+                for sent in sent_messages:
+                    try:
+                        await sent.delete()
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                        pass
+                await disable_hood_for_user(message.author.id)
+                try:
+                    await message.reply(
+                        "❌ I could not delete your original message. "
+                        "Please give me **Manage Messages** permission in this channel.",
+                        mention_author=False,
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+        except HoodUserBlacklisted:
+            await disable_hood_for_user(message.author.id)
         except HoodMessageBlocked:
-            pass
+            return
+        except (discord.Forbidden, discord.HTTPException):
+            await disable_hood_for_user(message.author.id)
         except Exception:
-            pass
+            return
         return
 
     if message.author.id in uwu_target_ids and content:
         if message.author.id in uwu_user_blacklist:
             await disable_uwu_for_user(message.author.id)
             return
+
         bot_member = message.guild.me if message.guild is not None else None
-        if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
+        permissions = (
+            message.channel.permissions_for(bot_member)
+            if bot_member is not None
+            else None
+        )
+        if permissions is None or not permissions.manage_messages or not permissions.manage_webhooks:
+            await disable_uwu_for_user(message.author.id)
+            try:
+                await message.reply(
+                    "❌ UWUIFY was disabled because I need **Manage Messages** "
+                    "and **Manage Webhooks** permissions in this channel.",
+                    mention_author=False,
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                pass
             return
+
         try:
-            await send_uwu_message(message.channel, message.author, content)
-            await delete_original_message(message)
+            sent_messages = await send_uwu_message(message.channel, message.author, content)
+            deleted = await delete_original_message(message)
+            if not deleted:
+                for sent in sent_messages:
+                    try:
+                        await sent.delete()
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                        pass
+                await disable_uwu_for_user(message.author.id)
+                try:
+                    await message.reply(
+                        "❌ I could not delete your original message. "
+                        "Please give me **Manage Messages** permission in this channel.",
+                        mention_author=False,
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+        except UwuUserBlacklisted:
+            await disable_uwu_for_user(message.author.id)
         except UwuMessageBlocked:
-            pass
+            return
+        except (discord.Forbidden, discord.HTTPException):
+            await disable_uwu_for_user(message.author.id)
         except Exception:
-            pass
+            return
         return
 
     # Only non-target users continue into the command parser.
@@ -1389,9 +1459,12 @@ async def on_message(message: discord.Message):
         target = message.mentions[0]
 
         bot_member = message.guild.me if message.guild is not None else None
-        if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
+        if bot_member is None or not (
+            message.channel.permissions_for(bot_member).manage_messages
+            and message.channel.permissions_for(bot_member).manage_webhooks
+        ):
             await message.reply(
-                "❌ I need **Manage Messages** permission in this channel to replace messages.",
+                "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel to replace messages.",
                 mention_author=False,
             )
             return
