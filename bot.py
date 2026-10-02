@@ -3006,13 +3006,15 @@ async def on_ready():
             # command objects explicitly as a safety net in case a module was
             # imported while bot.py was still initializing and its decorator
             # did not land on the live CommandTree.
+            # Read the command objects directly from their imported feature
+            # modules. This bypasses wildcard-import timing/collision issues.
             feature_commands = (
-                globals().get("uwu_command"),
-                globals().get("unuwuify_command"),
-                globals().get("uwucount_root_command"),
-                globals().get("hoodify_command"),
-                globals().get("unhoodify_command"),
-                globals().get("hoodcount_root_command"),
+                getattr(uwuify_feature, "uwu_command", None),
+                getattr(uwuify_feature, "unuwuify_command", None),
+                getattr(uwuify_feature, "uwucount_root_command", None),
+                getattr(hoodify_feature, "hoodify_command", None),
+                getattr(hoodify_feature, "unhoodify_command", None),
+                getattr(hoodify_feature, "hoodcount_root_command", None),
             )
             registered_names = {command.name for command in tree.get_commands()}
             for command in feature_commands:
