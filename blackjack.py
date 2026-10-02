@@ -198,9 +198,15 @@ def _github_save_sync() -> None:
     serialized = json.dumps(data, indent=2, sort_keys=True) + "\n"
 
     encoded_branch = urllib.parse.quote(GITHUB_BRANCH, safe="")
-    response = _github_request(
-        f"{_github_url()}?ref={encoded_branch}"
-    )
+    try:
+        response = _github_request(
+            f"{_github_url()}?ref={encoded_branch}"
+        )
+    except RuntimeError as error:
+        # Create the economy file automatically on its first save.
+        if "GitHub API HTTP 404:" not in str(error):
+            raise
+        response = {}
 
     payload = {
         "message": f"Update {DATA_FILE.name}",
