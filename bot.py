@@ -3356,7 +3356,7 @@ async def on_ready():
             # guild-scoped commands for this server, so an older global
             # /textify (or another command) must not remain alongside the
             # current guild command.
-            tree.clear_commands()
+            tree.clear_commands(guild=None)
             await tree.sync()
 
             # Restore the current commands in memory, then replace the guild
@@ -3379,6 +3379,9 @@ async def on_ready():
             required_commands = {
                 "uwuify",
                 "uwufy",
+                "blackjack",
+                "balance",
+                "daily",
                 "unuwuify",
                 "uwucount",
                 "hoodify",
