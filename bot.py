@@ -2308,6 +2308,61 @@ async def uwuify_hoodify_unban_command(interaction: discord.Interaction, member:
 
 
 @tree.command(
+    name="jelp",
+    description="Show John the Bot's available slash commands.",
+)
+async def jelp_command(interaction: discord.Interaction):
+    """Show the available slash commands, including Blackjack."""
+    embed = discord.Embed(
+        title="John the Bot — Slash Commands",
+        description="Here are the available slash commands.",
+        color=discord.Color.blurple(),
+    )
+
+    embed.add_field(
+        name="General",
+        value=(
+            "`/jelp` — Show this help menu\n"
+            "`/ping` — Check bot latency"
+        ),
+        inline=False,
+    )
+
+    embed.add_field(
+        name="Blackjack",
+        value=(
+            "`/blackjack <bet>` — Play Blackjack with Kevin Bucks\n"
+            "`/balance` — Check your Kevin Bucks balance\n"
+            "`/daily` — Claim your daily Kevin Bucks"
+        ),
+        inline=False,
+    )
+
+    embed.add_field(
+        name="UWUIFY",
+        value=(
+            "`/uwuify @user` — Enable UWUIFY for a member\n"
+            "`/unuwuify @user` — Disable UWUIFY\n"
+            "`/uwucount` — Show active UWUIFY count"
+        ),
+        inline=False,
+    )
+
+    embed.add_field(
+        name="HOODIFY",
+        value=(
+            "`/hoodify @user` — Enable HOODIFY for a member\n"
+            "`/unhoodify @user` — Disable HOODIFY\n"
+            "`/hoodcount` — Show active HOODIFY count"
+        ),
+        inline=False,
+    )
+
+    embed.set_footer(text="Some commands are restricted to specific roles or the main server.")
+    await interaction.response.send_message(embed=embed, ephemeral=False)
+
+
+@tree.command(
     name="ping",
     description="Show the bot's current Discord latency.",
 )
