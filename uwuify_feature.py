@@ -3,6 +3,7 @@
 from bot import *
 
 _UWU_DATA = json.loads(Path(__file__).with_name("uwu_words.json").read_text(encoding="utf-8"))
+UWU_WORD_BLACKLIST = set(_UWU_DATA.get("word_blacklist", []))
 
 UWU_WEBHOOK_NAME = "Uwuify Relay"
 UWU_WEBHOOK_IDLE_SECONDS = 5 * 60
@@ -11,7 +12,6 @@ UWU_WEBHOOK_IDLE_SECONDS = 5 * 60
 UWU_ALLOWED_ROLE_IDS = {
     1518416402141417472,
     1378810715611336914,
-    1377468541779050636,
 }
 
 # External proxy bots whose output should be checked for active UWU/HOODIFY targets.
@@ -37,20 +37,9 @@ UWU_WORD_BLACKLIST = {
 # Maximum number of unique people who can be actively UWUified at once.
 MAX_ACTIVE_UWU_TARGETS = 5
 
-# channel_id -> {"webhook": discord.Webhook, "timer": asyncio.Task | None}
-uwu_webhooks: dict[tuple[int, int], dict] = {}
-
-# channel_id -> set of target member IDs.
-uwu_targets: dict[int, set[int]] = {}
-
-# Protect the global UWUIFY target cap from simultaneous commands.
-uwu_target_lock = asyncio.Lock()
-
 # Use the package's optional flags so the transformation is more obvious
 # than the minimal default behavior.
 UWU_FLAGS = uwuify.SMILEY | uwuify.YU | uwuify.STUTTER
-# Load the editable blacklist after the legacy inline default is declared.
-UWU_WORD_BLACKLIST = set(_UWU_DATA.get("word_blacklist", []))
 
 def uwu_user_is_whitelisted(member: discord.Member | discord.User) -> bool:
     """Return True when the member has at least one allowed UWU role."""
@@ -109,77 +98,26 @@ def ensure_uwu_message_is_allowed(content: str) -> None:
         raise UwuMessageBlocked(blocked)
 
 
-async def _delete_uwu_webhook_after_idle(
-    channel_id: int,
-    user_id: int,
-    webhook: discord.Webhook,
-) -> None:
-    """Delete one target's temporary UWU webhook after 5 minutes without use."""
+async def _delete_uwu_webhook_after_idle(channel_id: int, webhook: discord.Webhook) -> None:
+    """Delete the temporary UWU webhook after 5 minutes without use."""
     try:
         await asyncio.sleep(UWU_WEBHOOK_IDLE_SECONDS)
 
-        should_delete = False
-        async with uwu_target_lock:
-            key = (channel_id, user_id)
-            entry = uwu_webhooks.get(key)
-            if entry is not None and entry.get("webhook") is webhook:
-                uwu_webhooks.pop(key, None)
-                target_ids = uwu_targets.get(channel_id)
-                if target_ids is not None:
-                    target_ids.discard(user_id)
-                    if not target_ids:
-                        uwu_targets.pop(channel_id, None)
-                should_delete = True
-
-        if should_delete:
-            channel = bot.get_channel(channel_id)
-            if channel is None:
-                try:
-                    fetched = await bot.fetch_channel(channel_id)
-                    channel = fetched if isinstance(fetched, discord.TextChannel) else None
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    channel = None
-
-            # A different Railway instance may have used this same webhook.
-            # Confirm there was no recent webhook message before deleting it.
-            if channel is not None:
-                cutoff = discord.utils.utcnow() - datetime.timedelta(
-                    seconds=UWU_WEBHOOK_IDLE_SECONDS
-                )
-                try:
-                    async for recent in channel.history(
-                        limit=100,
-                        after=cutoff,
-                        oldest_first=False,
-                    ):
-                        if recent.webhook_id == webhook.id:
-                            async with uwu_target_lock:
-                                entry = uwu_webhooks.get((channel_id, user_id))
-                                if entry is not None and entry.get("webhook") is webhook:
-                                    _reset_uwu_webhook_timer(channel_id, user_id, webhook)
-                            return
-                except (discord.Forbidden, discord.HTTPException):
-                    # Do not delete a webhook when we cannot verify recent use.
-                    async with uwu_target_lock:
-                        entry = uwu_webhooks.get((channel_id, user_id))
-                        if entry is not None and entry.get("webhook") is webhook:
-                            _reset_uwu_webhook_timer(channel_id, user_id, webhook)
-                    return
-
+        entry = uwu_webhooks.get(channel_id)
+        if entry is not None and entry.get("webhook") is webhook:
             try:
                 await webhook.delete(reason="Uwu webhook unused for 5 minutes")
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 pass
+            finally:
+                uwu_webhooks.pop(channel_id, None)
+                uwu_targets.pop(channel_id, None)
     except asyncio.CancelledError:
         return
 
 
-def _reset_uwu_webhook_timer(
-    channel_id: int,
-    user_id: int,
-    webhook: discord.Webhook,
-) -> None:
-    entry = uwu_webhooks.get((channel_id, user_id))
+def _reset_uwu_webhook_timer(channel_id: int, webhook: discord.Webhook) -> None:
+    entry = uwu_webhooks.get(channel_id)
     if entry is None or entry.get("webhook") is not webhook:
         return
 
@@ -188,87 +126,38 @@ def _reset_uwu_webhook_timer(
         old_timer.cancel()
 
     entry["timer"] = asyncio.create_task(
-        _delete_uwu_webhook_after_idle(channel_id, user_id, webhook)
+        _delete_uwu_webhook_after_idle(channel_id, webhook)
     )
 
 
-def _uwu_webhook_name(user_id: int) -> str:
-    return f"{UWU_WEBHOOK_NAME} | {user_id}"
-
-
-async def get_uwu_webhook(
-    channel: discord.TextChannel,
-    target: discord.Member,
-) -> discord.Webhook:
-    """Get/create the temporary webhook dedicated to one UWU target."""
-    key = (channel.id, target.id)
-    entry = uwu_webhooks.get(key)
+async def get_uwu_webhook(channel: discord.TextChannel) -> discord.Webhook:
+    """Get or create the temporary UWU webhook for a channel."""
+    channel_id = channel.id
+    entry = uwu_webhooks.get(channel_id)
 
     if entry is not None:
         webhook = entry.get("webhook")
         if webhook is not None:
             try:
                 await webhook.fetch()
-                _reset_uwu_webhook_timer(channel.id, target.id, webhook)
+                _reset_uwu_webhook_timer(channel_id, webhook)
                 return webhook
             except (discord.NotFound, discord.HTTPException):
-                uwu_webhooks.pop(key, None)
+                uwu_webhooks.pop(channel_id, None)
 
     webhook = await channel.create_webhook(
-        name=_uwu_webhook_name(target.id),
+        name=UWU_WEBHOOK_NAME,
         reason="Temporary webhook for the ,uwuify /uwuify command",
     )
 
-    uwu_webhooks[key] = {
+    uwu_webhooks[channel_id] = {
         "webhook": webhook,
         "timer": None,
-        "user_id": target.id,
     }
-    _reset_uwu_webhook_timer(channel.id, target.id, webhook)
+    _reset_uwu_webhook_timer(channel_id, webhook)
     return webhook
 
 
-async def recover_uwu_targets_from_channel(
-    channel: discord.TextChannel,
-) -> set[int]:
-    """Recover active UWU target IDs from bot-created Discord webhooks."""
-    if bot.user is None:
-        return set()
-
-    try:
-        webhooks = await channel.webhooks()
-    except (discord.Forbidden, discord.HTTPException):
-        return set()
-
-    recovered: set[int] = set()
-    prefix = f"{UWU_WEBHOOK_NAME} | "
-
-    for webhook in webhooks:
-        if webhook.user is None or webhook.user.id != bot.user.id:
-            continue
-        if not webhook.name.startswith(prefix):
-            continue
-
-        raw_id = webhook.name[len(prefix):].strip()
-        try:
-            user_id = int(raw_id)
-        except ValueError:
-            continue
-
-        recovered.add(user_id)
-        uwu_targets.setdefault(channel.id, set()).add(user_id)
-        key = (channel.id, user_id)
-        if key not in uwu_webhooks:
-            uwu_webhooks[key] = {
-                "webhook": webhook,
-                "timer": None,
-                "user_id": user_id,
-            }
-            _reset_uwu_webhook_timer(channel.id, user_id, webhook)
-
-    return recovered
-
-
 async def set_uwu_target(
     channel: discord.TextChannel,
     target: discord.Member,
@@ -284,52 +173,6 @@ async def set_uwu_target(
 
     async with uwu_target_lock:
         channel_targets = uwu_targets.setdefault(channel.id, set())
-        added_here = False
-
-        if target.id not in channel_targets:
-            active_target_ids = get_active_uwu_target_ids()
-            if (
-                target.id not in active_target_ids
-                and len(active_target_ids) >= MAX_ACTIVE_UWU_TARGETS
-            ):
-                if not channel_targets:
-                    uwu_targets.pop(channel.id, None)
-                raise UwuTargetLimitReached(
-                    f"The maximum of {MAX_ACTIVE_UWU_TARGETS} active UWU targets has been reached."
-                )
-
-            channel_targets.add(target.id)
-            added_here = True
-
-        try:
-            webhook = await get_uwu_webhook(channel, target)
-        except Exception:
-            if added_here:
-                channel_targets.discard(target.id)
-                if not channel_targets:
-                    uwu_targets.pop(channel.id, None)
-            raise
-
-        _reset_uwu_webhook_timer(channel.id, target.id, webhook)
-        return webhook
-
-
-async def set_uwu_target(
-    channel: discord.TextChannel,
-    target: discord.Member,
-) -> discord.Webhook:
-    """Add a target to UWU mode while enforcing a global 5-person cap."""
-    try:
-        await ensure_user_blacklists_ready()
-    except RuntimeError as error:
-        raise UserBlacklistStorageUnavailable(str(error)) from error
-
-    if target.id in uwu_user_blacklist:
-        raise UwuUserBlacklisted
-
-    async with uwu_target_lock:
-        channel_targets = uwu_targets.setdefault(channel.id, set())
-        added_here = False
 
         # Already active in this channel: no additional slot is needed.
         if target.id not in channel_targets:
@@ -340,6 +183,7 @@ async def set_uwu_target(
                 target.id not in active_target_ids
                 and len(active_target_ids) >= MAX_ACTIVE_UWU_TARGETS
             ):
+                # Don't leave an empty set behind when the command is rejected.
                 if not channel_targets:
                     uwu_targets.pop(channel.id, None)
 
@@ -348,89 +192,38 @@ async def set_uwu_target(
                 )
 
             channel_targets.add(target.id)
-            added_here = True
 
-        # Keep target state and webhook creation synchronized so a failed
-        # webhook creation cannot leave a phantom active target behind.
-        try:
-            webhook = await get_uwu_webhook(channel, target)
-        except Exception:
-            if added_here:
-                channel_targets.discard(target.id)
-                if not channel_targets:
-                    uwu_targets.pop(channel.id, None)
-            raise
-
-        _reset_uwu_webhook_timer(channel.id, target.id, webhook)
-        return webhook
+    # Create/reuse the webhook outside the cap lock so webhook API calls do not
+    # block another target from being checked against the cap.
+    webhook = await get_uwu_webhook(channel)
+    _reset_uwu_webhook_timer(channel.id, webhook)
+    return webhook
 
 
 async def disable_uwu_target(channel_id: int) -> bool:
-    """Disable UWU mode in a channel and delete its target webhooks."""
-    async with uwu_target_lock:
-        uwu_targets.pop(channel_id, None)
-        entries = [
-            uwu_webhooks.pop(key)
-            for key in list(uwu_webhooks)
-            if key[0] == channel_id
-        ]
-
-    if not entries:
+    """Disable UWU mode and delete its temporary webhook immediately."""
+    uwu_targets.pop(channel_id, None)
+    entry = uwu_webhooks.pop(channel_id, None)
+    if entry is None:
         return False
 
-    for entry in entries:
-        timer = entry.get("timer")
-        if timer is not None and not timer.done():
-            timer.cancel()
+    timer = entry.get("timer")
+    if timer is not None and not timer.done():
+        timer.cancel()
 
-        webhook = entry.get("webhook")
-        if webhook is not None:
-            try:
-                await webhook.delete(reason="Uwu mode disabled")
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                pass
+    webhook = entry.get("webhook")
+    if webhook is not None:
+        try:
+            await webhook.delete(reason="Uwu mode disabled")
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
 
     return True
 
 
-async def remove_uwu_user_from_channel(
-    channel_id: int,
-    user_id: int,
-) -> tuple[bool, bool]:
-    """Remove one target from one channel and its dedicated webhook."""
-    entry = None
-
-    async with uwu_target_lock:
-        target_ids = uwu_targets.get(channel_id)
-        if target_ids is None or user_id not in target_ids:
-            return False, False
-
-        target_ids.discard(user_id)
-        if not target_ids:
-            uwu_targets.pop(channel_id, None)
-
-        entry = uwu_webhooks.pop((channel_id, user_id), None)
-        channel_disabled = not target_ids
-
-    if entry is not None:
-        timer = entry.get("timer")
-        if timer is not None and not timer.done():
-            timer.cancel()
-
-        webhook = entry.get("webhook")
-        if webhook is not None:
-            try:
-                await webhook.delete(reason="UWUIFY channel target removed")
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                pass
-
-    return True, channel_disabled
-
-
 async def disable_all_uwu_targets() -> int:
-    """Disable UWU mode in every tracked channel."""
-    channel_ids = set(uwu_targets)
-    channel_ids.update(channel_id for channel_id, _ in uwu_webhooks)
+    """Disable UWU mode in every currently tracked channel and delete its webhooks."""
+    channel_ids = list(uwu_targets.keys() | uwu_webhooks.keys())
     disabled_count = 0
 
     for channel_id in channel_ids:
@@ -457,7 +250,7 @@ async def send_uwu_message(
     # Never send a blacklisted word/phrase.
     ensure_uwu_message_is_allowed(content)
 
-    webhook = await get_uwu_webhook(channel, target)
+    webhook = await get_uwu_webhook(channel)
 
     # Protect Discord mentions before uwuify transforms the text.
     # This keeps @users, @roles, and #channels intact and clickable.
@@ -515,7 +308,7 @@ async def send_uwu_message(
             )
         )
 
-    _reset_uwu_webhook_timer(channel.id, target.id, webhook)
+    _reset_uwu_webhook_timer(channel.id, webhook)
     return sent_messages
 
 
@@ -529,8 +322,7 @@ async def cleanup_stale_uwu_webhooks() -> None:
         return
 
     bot_id = bot.user.id
-    tracked_ids = {
-        entry["webhook"].id
+    tracked_ids = {        entry["webhook"].id
         for entry in uwu_webhooks.values()
         if entry.get("webhook") is not None
     }
@@ -549,37 +341,28 @@ async def cleanup_stale_uwu_webhooks() -> None:
             if webhook.id in tracked_ids:
                 continue
 
-            # Only delete webhooks with our target-specific name and created by this bot.
-            if not webhook.name.startswith(f"{UWU_WEBHOOK_NAME} | "):
+            # Only delete webhooks with our exact name and created by this bot.
+            if webhook.name != UWU_WEBHOOK_NAME:
                 continue
             if webhook.user is None or webhook.user.id != bot_id:
                 continue
 
-            # Never let a newly-created webhook from another running bot
-            # instance get deleted immediately during startup. Only consider
-            # webhooks that are at least 10 minutes old; the normal 5-minute
-            # idle timer handles current webhooks.
-            raw_id = webhook.name[len(f"{UWU_WEBHOOK_NAME} | "):].strip()
-            try:
-                recovered_user_id = int(raw_id)
-            except ValueError:
-                continue
 
-            uwu_targets.setdefault(webhook.channel_id, set()).add(recovered_user_id)
-            key = (webhook.channel_id, recovered_user_id)
-            uwu_webhooks.setdefault(
-                key,
-                {"webhook": webhook, "timer": None, "user_id": recovered_user_id},
-            )
-            _reset_uwu_webhook_timer(webhook.channel_id, recovered_user_id, webhook)
-            continue
+            try:
+                await webhook.delete(reason="Stale UWU webhook cleanup")
+                pass
+            except discord.NotFound:
+                pass
+            except discord.Forbidden as e:
+                pass
+            except discord.HTTPException as e:
+                pass
+            except Exception as e:
+                pass
 
 
 @tasks.loop(seconds=UWU_WEBHOOK_CLEANUP_INTERVAL_SECONDS)
 async def uwu_webhook_cleanup_loop():
-    # Give the normal 5-minute idle timers first chance to clean up. The
-    # background stale cleanup begins after one interval.
-    await asyncio.sleep(UWU_WEBHOOK_CLEANUP_INTERVAL_SECONDS)
     await cleanup_stale_uwu_webhooks()
 
 
@@ -590,43 +373,29 @@ async def before_uwu_webhook_cleanup():
 
 async def disable_uwu_for_user(user_id: int) -> int:
     """Remove one user from every active UWUIFY channel."""
-    entries_to_delete = []
+    affected_channels = [
+        channel_id
+        for channel_id, target_ids in uwu_targets.items()
+        if user_id in target_ids
+    ]
+
     removed = 0
+    for channel_id in affected_channels:
+        target_ids = uwu_targets.get(channel_id)
+        if target_ids is None or user_id not in target_ids:
+            continue
 
-    async with uwu_target_lock:
-        for channel_id, target_ids in list(uwu_targets.items()):
-            if user_id not in target_ids:
-                continue
+        target_ids.discard(user_id)
+        removed += 1
 
-            target_ids.discard(user_id)
-            removed += 1
-
-            if not target_ids:
-                uwu_targets.pop(channel_id, None)
-                entry = None
-                if entry is not None:
-                    entries_to_delete.append(entry)
-
-    for entry in entries_to_delete:
-        timer = entry.get("timer")
-        if timer is not None and not timer.done():
-            timer.cancel()
-        webhook = entry.get("webhook")
-        if webhook is not None:
-            try:
-                await webhook.delete(reason="UWUIFY disabled for user")
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                pass
+        if not target_ids:
+            await disable_uwu_target(channel_id)
 
     return removed
 
 
-async def disable_hood_targets_for_user(user_id: int) -> int:
-    """Remove one user from every active HOODIFY channel without a module import cycle."""
-    # Import lazily: bot.py loads HOODIFY before UWUIFY, so importing HOODIFY
-    # at module import time would create a circular import during startup.
-    from hoodify_feature import hood_targets, disable_hood_target
-
+async def disable_hood_for_user(user_id: int) -> int:
+    """Remove one user from every active HOODIFY channel."""
     affected_channels = [
         channel_id
         for channel_id, target_ids in hood_targets.items()
@@ -715,8 +484,6 @@ async def uwucount_root_command(interaction: discord.Interaction):
         f"This channel: **{channel_count}** people",
         ephemeral=False,
     )
-
-
 @tree.command(
     name="uwuify",
     description="Add a member to this channel's automatic UWU mode.",
@@ -752,18 +519,12 @@ async def uwu_command(
         return
 
     bot_member = interaction.guild.me if interaction.guild is not None else None
-    if bot_member is None or not (
-        interaction.channel.permissions_for(bot_member).manage_messages
-        and interaction.channel.permissions_for(bot_member).manage_webhooks
-    ):
+    if bot_member is None or not interaction.channel.permissions_for(bot_member).manage_messages:
         await interaction.response.send_message(
-            "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel to replace messages.",
+            "❌ I need **Manage Messages** permission in this channel to replace messages.",
             ephemeral=False,
         )
         return
-    # The blacklist is GitHub-backed and may require network I/O after a restart.
-    # Defer before entering that path so Discord does not expire the interaction.
-    await interaction.response.defer(ephemeral=False)
 
     try:
         await set_uwu_target(interaction.channel, member)
@@ -772,14 +533,14 @@ async def uwu_command(
             try:
                 await send_uwu_message(interaction.channel, member, message)
             except UwuMessageBlocked as blocked_error:
-                await interaction.followup.send(
+                await interaction.response.send_message(
                     f"❌ The UWU mode was enabled, but the one-time message was not sent because it contains a blacklisted word/phrase: `{blocked_error}`",
                     ephemeral=False,
                 )
                 return
 
         active_count = get_active_uwu_target_count()
-        await interaction.followup.send(
+        await interaction.response.send_message(
             f"✅ Uwu mode is active for {member.mention} in this channel. "
             f"Active people: **{active_count}/{MAX_ACTIVE_UWU_TARGETS}**.\n"
             "You can add more people with another `/uwuify` command. "
@@ -787,36 +548,34 @@ async def uwu_command(
             ephemeral=False,
         )
     except UwuUserBlacklisted:
-        await interaction.followup.send(
-            f"❌ {member.mention} is blacklisted from using UWUIFY.",
+        await interaction.response.send_message(            f"❌ {member.mention} is blacklisted from using UWUIFY.",
             ephemeral=False,
         )
     except UserBlacklistStorageUnavailable as error:
-        await interaction.followup.send(
+        await interaction.response.send_message(
             "❌ I could not verify the UWUIFY blacklist from GitHub, "
             f"so I will not activate this target. Error: `{error}`",
             ephemeral=False,
         )
     except UwuTargetLimitReached:
-        await interaction.followup.send(
+        await interaction.response.send_message(
             f"❌ The global limit of {MAX_ACTIVE_UWU_TARGETS} UWUified people has been reached. "
             "Use `,unuwuify @user` or `/unuwuify @user` to disable UWU for one member, or wait for a slot to expire.",
             ephemeral=False,
         )
     except discord.Forbidden:
-        await interaction.followup.send(
+        await interaction.response.send_message(
             "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel/server.",
             ephemeral=False,
         )
     except discord.HTTPException as e:
-        await interaction.followup.send(
+        await interaction.response.send_message(
             f"❌ Discord rejected the uwu webhook request: `{e}`",
             ephemeral=False,
         )
-    except Exception as error:
-        await interaction.followup.send(
-            "❌ The UWUIFY mode could not be enabled. "
-            f"Error: `{type(error).__name__}: {error}`",
+    except Exception:
+        await interaction.response.send_message(
+            "❌ The uwu mode could not be enabled.",
             ephemeral=False,
         )
 
