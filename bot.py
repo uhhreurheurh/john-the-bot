@@ -534,6 +534,23 @@ review_db_restore_checked = False
 
 
 # =========================
+# MESSAGE CONTENT HELPER
+# =========================
+
+async def get_target_message_content(message: discord.Message) -> str:
+    """Return message text, falling back to a REST fetch when Gateway content is empty."""
+    content = (message.content or "").strip()
+    if content:
+        return content
+
+    try:
+        fresh_message = await message.channel.fetch_message(message.id)
+        return (fresh_message.content or "").strip()
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        return ""
+
+
+# =========================
 # MESSAGE DELETION HELPER
 # =========================
 
@@ -1251,7 +1268,13 @@ async def on_message(message: discord.Message):
     hood_target_ids = hood_targets.get(message.channel.id, set())
     uwu_target_ids = uwu_targets.get(message.channel.id, set())
 
-    if message.author.id in hood_target_ids and content:
+    if message.author.id in hood_target_ids:
+        target_content = await get_target_message_content(message)
+
+        # Ignore empty/attachment-only messages.
+        if not target_content:
+            return
+
         if message.author.id in hood_user_blacklist:
             await disable_hood_for_user(message.author.id)
             return
@@ -1275,7 +1298,7 @@ async def on_message(message: discord.Message):
             return
 
         try:
-            sent_messages = await send_hood_message(message.channel, message.author, content)
+            sent_messages = await send_hood_message(message.channel, message.author, target_content)
             deleted = await delete_original_message(message)
             if not deleted:
                 try:
@@ -1300,7 +1323,13 @@ async def on_message(message: discord.Message):
             return
         return
 
-    if message.author.id in uwu_target_ids and content:
+    if message.author.id in uwu_target_ids:
+        target_content = await get_target_message_content(message)
+
+        # Ignore empty/attachment-only messages.
+        if not target_content:
+            return
+
         if message.author.id in uwu_user_blacklist:
             await disable_uwu_for_user(message.author.id)
             return
@@ -1324,7 +1353,7 @@ async def on_message(message: discord.Message):
             return
 
         try:
-            sent_messages = await send_uwu_message(message.channel, message.author, content)
+            sent_messages = await send_uwu_message(message.channel, message.author, target_content)
             deleted = await delete_original_message(message)
             if not deleted:
                 try:
