@@ -440,7 +440,7 @@ async def save_user_blacklist(
 
 async def sync_user_blacklists_from_github() -> bool:
     """Load the Textify blacklist and command-ban list from GitHub."""
-    global textify_blacklist, uwu_user_blacklist, hood_user_blacklist, uwu_hoodify_ban, review_blacklist, github_blacklist_sync_error
+    global textify_blacklist, uwu_user_blacklist, hood_user_blacklist, uwu_hoodify_ban, review_blacklist, second_role_blacklist, github_blacklist_sync_error
 
     if not GITHUB_TOKEN:
         github_blacklist_sync_error = (
@@ -454,6 +454,7 @@ async def sync_user_blacklists_from_github() -> bool:
                 (TEXTIFY_BLACKLIST_FILE, "textify"),
                 (TEXTIFY_BAN_FILE, "ban"),
                 (REVIEW_BLACKLIST_FILE, "review"),
+                (BLACKLIST_FILE, "second_role"),
             ):
                 exists, github_ids, _ = await asyncio.to_thread(
                     _github_get_user_blacklist,
@@ -467,6 +468,8 @@ async def sync_user_blacklists_from_github() -> bool:
                         else uwu_hoodify_ban
                         if name == "ban"
                         else review_blacklist
+                        if name == "review"
+                        else second_role_blacklist
                     )
                     target.clear()
                     target.update(github_ids)
@@ -479,6 +482,8 @@ async def sync_user_blacklists_from_github() -> bool:
                         else uwu_hoodify_ban
                         if name == "ban"
                         else review_blacklist
+                        if name == "review"
+                        else second_role_blacklist
                     )
                     await asyncio.to_thread(
                         _github_save_user_blacklist,
@@ -1255,14 +1260,14 @@ async def on_message(message: discord.Message):
         action = spaced_parts[1].lower()
         if action == "add":
             second_role_blacklist.add(target.id)
-            save_blacklist(second_role_blacklist)
+            await save_user_blacklist(BLACKLIST_FILE, second_role_blacklist)
             await message.reply(f"✅ {target.mention} has been added to the second-role blacklist.", mention_author=False)
         elif action == "remove":
             if target.id not in second_role_blacklist:
                 response = f"ℹ️ {target.mention} is not currently on the second-role blacklist."
             else:
                 second_role_blacklist.remove(target.id)
-                save_blacklist(second_role_blacklist)
+                await save_user_blacklist(BLACKLIST_FILE, second_role_blacklist)
                 response = f"✅ {target.mention} has been removed from the second-role blacklist."
             await message.reply(response, mention_author=False)
         else:
@@ -2403,8 +2408,9 @@ async def blacklist_command(
     member: discord.Member,
 ):
     """Add a member to the second-role blacklist."""
+    await interaction.response.defer(ephemeral=False)
     second_role_blacklist.add(member.id)
-    save_blacklist(second_role_blacklist)
+    github_synced = await save_user_blacklist(BLACKLIST_FILE, second_role_blacklist)
 
     # If they already have the second role, remove it so the blacklist
     # takes effect immediately instead of waiting for the next assignment.
@@ -2437,8 +2443,13 @@ async def blacklist_command(
 
     role_text = " The second role was also removed." if removed_role else ""
 
-    await interaction.response.send_message(
-        f"✅ {member.mention} has been added to the second-role blacklist.{role_text}",
+    response = f"✅ {member.mention} has been added to the second-role blacklist.{role_text}"
+    if not github_synced:
+        response += "\n⚠️ GitHub sync FAILED."
+        response += f"\n{github_blacklist_sync_error}"
+
+    await interaction.followup.send(
+        response,
         ephemeral=False,
     )
 
@@ -2466,18 +2477,24 @@ async def unblacklist_command(
     member: discord.Member,
 ):
     """Remove a member from the second-role blacklist."""
+    await interaction.response.defer(ephemeral=False)
     if member.id not in second_role_blacklist:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"ℹ️ {member.mention} is not currently on the second-role blacklist.",
             ephemeral=False,
         )
         return
 
     second_role_blacklist.remove(member.id)
-    save_blacklist(second_role_blacklist)
+    github_synced = await save_user_blacklist(BLACKLIST_FILE, second_role_blacklist)
 
-    await interaction.response.send_message(
-        f"✅ {member.mention} has been removed from the second-role blacklist.",
+    response = f"✅ {member.mention} has been removed from the second-role blacklist."
+    if not github_synced:
+        response += "\n⚠️ GitHub sync FAILED."
+        response += f"\n{github_blacklist_sync_error}"
+
+    await interaction.followup.send(
+        response,
         ephemeral=False,
     )
 
