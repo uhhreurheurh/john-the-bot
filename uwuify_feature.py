@@ -25,17 +25,14 @@ PROXY_REQUEST_TTL_SECONDS = 15
 # Safety cleanup interval for leftover UWU webhooks.
 UWU_WEBHOOK_CLEANUP_INTERVAL_SECONDS = 60
 
-# Words/phrases that the UWU webhook is NEVER allowed to send.
-# Matching is case-insensitive and uses word boundaries, so for example
-# "badword" also matches "BADWORD" and "badword!" but not "badwording".
-# Add whatever words/phrases you want blocked to this set.
-UWU_WORD_BLACKLIST = {
-    # "nagger",
-    # "rape",
-}
-
 # Maximum number of unique people who can be actively UWUified at once.
 MAX_ACTIVE_UWU_TARGETS = 5
+
+# UWUIFY owns its own state. The previous merged file accidentally relied on
+# variables that only existed in HOODIFY, causing NameError during activation.
+uwu_webhooks: dict[int, dict] = {}
+uwu_targets: dict[int, set[int]] = {}
+uwu_target_lock = asyncio.Lock()
 
 # Use the package's optional flags so the transformation is more obvious
 # than the minimal default behavior.
@@ -494,9 +491,18 @@ async def uwu_command(
         return
 
     bot_member = interaction.guild.me if interaction.guild is not None else None
-    if bot_member is None or not interaction.channel.permissions_for(bot_member).manage_messages:
+    permissions = (
+        interaction.channel.permissions_for(bot_member)
+        if bot_member is not None
+        else None
+    )
+    if (
+        permissions is None
+        or not permissions.manage_messages
+        or not permissions.manage_webhooks
+    ):
         await interaction.response.send_message(
-            "❌ I need **Manage Messages** permission in this channel to replace messages.",
+            "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel.",
             ephemeral=False,
         )
         return
