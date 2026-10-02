@@ -1748,6 +1748,10 @@ async def on_message(message: discord.Message):
                 mention_author=False,
             )
         return
+    # Kevin Bucks / Blackjack prefix commands.
+    if await blackjack_feature.handle_prefix(message):
+        return
+
     # Review, leaderboard, and remaining staff prefix commands.
     try:
         if await handle_prefix_review_command(message, content):
@@ -3087,6 +3091,7 @@ import uwuify_feature
 import reviews as reviews_feature
 import leaderboard as leaderboard_feature
 import staff_strikes as staff_strikes_feature
+import blackjack as blackjack_feature
 from hoodify_feature import *
 from uwuify_feature import *
 from reviews import *
@@ -3098,6 +3103,7 @@ from reviews import (
 )
 from leaderboard import *
 from staff_strikes import *
+from blackjack import *
 
 # =========================
 # HOODIFY ROOT COMMANDS
@@ -3331,6 +3337,9 @@ async def on_ready():
                 globals().get("hoodify_root_command"),
                 globals().get("unhoodify_root_command"),
                 globals().get("hoodcount_root_command"),
+                globals().get("blackjack_command"),
+                globals().get("balance_command"),
+                globals().get("daily_command"),
             )
             registered_names = {command.name for command in tree.get_commands()}
             for command in feature_commands:
@@ -3446,6 +3455,8 @@ async def on_ready():
     if not user_blacklists_synced:
         if await sync_user_blacklists_from_github():
             user_blacklists_synced = True
+
+    await blackjack_feature.initialize()
 
     if not kick_loop.is_running():
         kick_loop.start()
