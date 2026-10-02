@@ -192,6 +192,39 @@ async def _delete_hood_webhook_after_idle(
                 should_delete = True
 
         if should_delete:
+            channel = bot.get_channel(channel_id)
+            if channel is None:
+                try:
+                    fetched = await bot.fetch_channel(channel_id)
+                    channel = fetched if isinstance(fetched, discord.TextChannel) else None
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    channel = None
+
+            # A different Railway instance may have used this same webhook.
+            # Confirm there was no recent webhook message before deleting it.
+            if channel is not None:
+                cutoff = discord.utils.utcnow() - datetime.timedelta(
+                    seconds=HOOD_WEBHOOK_IDLE_SECONDS
+                )
+                try:
+                    async for recent in channel.history(
+                        limit=100,
+                        after=cutoff,
+                        oldest_first=False,
+                    ):
+                        if recent.webhook_id == webhook.id:
+                            async with hood_target_lock:
+                                entry = hood_webhooks.get((channel_id, user_id))
+                                if entry is not None and entry.get("webhook") is webhook:
+                                    _reset_hood_webhook_timer(channel_id, user_id, webhook)
+                            return
+                except (discord.Forbidden, discord.HTTPException):
+                    async with hood_target_lock:
+                        entry = hood_webhooks.get((channel_id, user_id))
+                        if entry is not None and entry.get("webhook") is webhook:
+                            _reset_hood_webhook_timer(channel_id, user_id, webhook)
+                    return
+
             try:
                 await webhook.delete(reason="Hoodify webhook unused for 5 minutes")
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
@@ -294,7 +327,7 @@ async def recover_hood_targets_from_channel(
                 "timer": None,
                 "user_id": user_id,
             }
-        _reset_hood_webhook_timer(channel.id, user_id, webhook)
+            _reset_hood_webhook_timer(channel.id, user_id, webhook)
 
     return recovered
 
