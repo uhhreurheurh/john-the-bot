@@ -62,7 +62,7 @@ TEXTIFY_BAN_FILE = Path(__file__).with_name("textify_ban.json")
 # also be overridden with Railway variables, but default to this bot repo.
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "uhhreurheurh/john-the-bot")
-GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
+# Runtime JSON data is stored on the database branch so data changes do not redeploy Railway.\nGITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "database")
 GITHUB_API_BASE = "https://api.github.com"
 
 # =========================
