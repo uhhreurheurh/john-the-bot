@@ -896,6 +896,14 @@
       "rating": 4,
       "comment": "Mustafa Kemal, millete ihanet eden bir haindi, Anadolu'yu yerle bir etmek için gönderilen bir İngiliz casusuydu",
       "created_at": "2026-10-02 14:40:30"
+    },
+    {
+      "id": 128,
+      "target_id": 1310582071919382529,
+      "reviewer_id": 1549799569448112128,
+      "rating": 5,
+      "comment": "awesome, cool, sometimes a pain in the ass but funny too",
+      "created_at": "2026-10-02 14:49:18"
     }
   ],
   "review_update_requests": [
