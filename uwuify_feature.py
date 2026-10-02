@@ -548,9 +548,21 @@ async def uwu_command(
             f"❌ Discord rejected the uwu webhook request: `{e}`",
             ephemeral=False,
         )
-    except Exception:
-        await interaction.response.send_message(
-            "❌ The uwu mode could not be enabled.",
-            ephemeral=False,
+    except Exception as error:
+        print(
+            "UWUIFY slash activation failed: "
+            f"{type(error).__name__}: {error}"
         )
+        if interaction.response.is_done():
+            await interaction.followup.send(
+                "❌ The UWUIFY mode could not be enabled. "
+                f"Error: `{type(error).__name__}: {error}`",
+                ephemeral=False,
+            )
+        else:
+            await interaction.response.send_message(
+                "❌ The UWUIFY mode could not be enabled. "
+                f"Error: `{type(error).__name__}: {error}`",
+                ephemeral=False,
+            )
 
