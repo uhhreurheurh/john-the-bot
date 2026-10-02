@@ -1290,17 +1290,13 @@ async def on_message(message: discord.Message):
         spaced_action = spaced_parts[1].lower()
         if spaced_root == ",uwu" and spaced_action == "count":
             content = ",uwucount"
-        elif spaced_root == ",uwu" and spaced_action in {"on", "off"}:
-            rest = spaced_parts[2] if len(spaced_parts) >= 3 else ""
-            content = ",uwuify " + spaced_action + (f" {rest}" if rest else "")
+        if spaced_root == ",uwu" and spaced_action == "count":
+            content = ",uwucount"
         elif spaced_root == ",uwu" and message.mentions:
             rest = spaced_parts[2] if len(spaced_parts) >= 3 else ""
             content = ",uwuify " + spaced_action + (f" {rest}" if rest else "")
         elif spaced_root == ",hood" and spaced_action == "count":
             content = ",hoodcount"
-        elif spaced_root == ",hood" and spaced_action in {"on", "off"}:
-            rest = spaced_parts[2] if len(spaced_parts) >= 3 else ""
-            content = ",hoodify " + spaced_action + (f" {rest}" if rest else "")
         elif spaced_root == ",hood" and message.mentions:
             rest = spaced_parts[2] if len(spaced_parts) >= 3 else ""
             content = ",hoodify " + spaced_action + (f" {rest}" if rest else "")
@@ -1368,7 +1364,9 @@ async def on_message(message: discord.Message):
         )
         return
 
-    # Prefix UWU setup/disable command.
+    # Prefix UWUIFY enable command.
+    # Use ,unuwuify @user to disable a member. The old ,uwuify on/off forms
+    # are intentionally removed.
     if content.lower().startswith(",uwuify"):
         if not uwu_user_is_whitelisted(message.author):
             try:
@@ -1381,78 +1379,9 @@ async def on_message(message: discord.Message):
             return
 
         parts = content.split(maxsplit=2)
-
-        if len(parts) >= 2 and parts[1].lower() in {"on", "off"}:
-            # ",uwuify off @user" removes only that target.
-            if parts[1].lower() == "off" and len(parts) >= 3 and message.mentions:
-                target = message.mentions[0]
-                removed, channel_disabled = await remove_uwu_user_from_channel(
-                    message.channel.id,
-                    target.id,
-                )
-
-                if removed and channel_disabled:
-                    response = "✅ Uwu mode disabled for this channel."
-                elif removed:
-                    response = f"✅ {target.mention} is no longer being UWUified in this channel."
-                else:
-                    response = f"ℹ️ {target.mention} was not being UWUified in this channel."
-
-                await message.reply(response, mention_author=False)
-                return
-
-            if parts[1].lower() == "on":
-                if len(parts) < 3 or not message.mentions:
-                    await message.reply(
-                        "Usage: ,uwuify on @user",
-                        mention_author=False,
-                    )
-                    return
-
-                target = message.mentions[0]
-                try:
-                    await set_uwu_target(message.channel, target)
-                    await message.reply(
-                        f"✅ Uwu mode is active for {target.mention} in this channel. "
-                        f"Active people: **{get_active_uwu_target_count()}/{MAX_ACTIVE_UWU_TARGETS}**.",
-                        mention_author=False,
-                    )
-                except UwuUserBlacklisted:
-                    await message.reply(
-                        f"❌ {target.mention} is blacklisted from using UWUIFY.",
-                        mention_author=False,
-                    )
-                except UserBlacklistStorageUnavailable as error:
-                    await message.reply(
-                        "❌ I could not verify the UWUIFY blacklist from GitHub, "
-                        f"so I will not activate this target. Error: `{error}`",
-                        mention_author=False,
-                    )
-                except UwuTargetLimitReached:
-                    await message.reply(
-                        f"❌ The global limit of {MAX_ACTIVE_UWU_TARGETS} UWUified people has been reached.",
-                        mention_author=False,
-                    )
-                except (discord.Forbidden, discord.HTTPException) as error:
-                    await message.reply(
-                        f"❌ Discord rejected the UWUIFY setup: `{error}`",
-                        mention_author=False,
-                    )
-                return
-
-            # ",uwuify off" disables every target in this channel.
-            disabled = await disable_uwu_target(message.channel.id)
-            response = (
-                "✅ Uwu mode disabled for this channel."
-                if disabled
-                else "ℹ️ Uwu mode is not active in this channel."
-            )
-            await message.reply(response, mention_author=False)
-            return
-
         if len(parts) < 2 or not message.mentions:
             await message.reply(
-                "Usage: `,uwuify @user`, `,uwuify off`, or `,uwuify off @user`",
+                "Usage: `,uwuify @user`",
                 mention_author=False,
             )
             return
@@ -1478,8 +1407,8 @@ async def on_message(message: discord.Message):
                         f"❌ That message was not sent through the UWU webhook because it contains a blacklisted word/phrase: `{blocked_error}`",
                         mention_author=False,
                     )
-
                     return
+
             await message.reply(
                 f"✅ Uwu mode is active for {target.mention} in this channel. "
                 f"Active people: **{get_active_uwu_target_count()}/{MAX_ACTIVE_UWU_TARGETS}**.",
@@ -1498,8 +1427,8 @@ async def on_message(message: discord.Message):
             )
         except UwuTargetLimitReached:
             await message.reply(
-                f"❌ The global limit of {MAX_ACTIVE_UWU_TARGETS} UWUified people has been reached. "+
-                "Use `,unuwuify @user` or `/unuwuify @user` to disable UWU for one member, or wait for a slot to expire.",
+                f"❌ The global limit of {MAX_ACTIVE_UWU_TARGETS} UWUified people has been reached. "
+                "Use `,unuwuify @user` or `/unuwuify @user` to disable UWU for one member.",
                 mention_author=False,
             )
         except discord.Forbidden:
@@ -1518,7 +1447,6 @@ async def on_message(message: discord.Message):
                 mention_author=False,
             )
         return
-
     # -------------------------
     # HOODIFY COMMANDS / AUTOMATIC MODE
     # -------------------------
@@ -1576,6 +1504,9 @@ async def on_message(message: discord.Message):
         )
         return
 
+    # Prefix HOODIFY enable command.
+    # Use ,unhoodify @user to disable a member. The old ,hoodify on/off forms
+    # are intentionally removed.
     if content.lower().startswith(",hoodify"):
         if not hood_user_is_whitelisted(message.author):
             try:
@@ -1588,83 +1519,9 @@ async def on_message(message: discord.Message):
             return
 
         parts = content.split(maxsplit=2)
-
-        if len(parts) >= 2 and parts[1].lower() in {"on", "off"}:
-            if parts[1].lower() == "off" and len(parts) >= 3 and message.mentions:
-                target = message.mentions[0]
-                removed, channel_disabled = await remove_hood_user_from_channel(
-                    message.channel.id,
-                    target.id,
-                )
-
-                if removed and channel_disabled:
-                    response = "✅ Hoodify mode disabled for this channel."
-                elif removed:
-                    response = (
-                        f"✅ {target.mention} is no longer being HOODIFIED "
-                        "in this channel."
-                    )
-                else:
-                    response = (
-                        f"ℹ️ {target.mention} was not being HOODIFIED "
-                        "in this channel."
-                    )
-
-                await message.reply(response, mention_author=False)
-                return
-
-            if parts[1].lower() == "on":
-                if len(parts) < 3 or not message.mentions:
-                    await message.reply(
-                        "Usage: ,hoodify on @user",
-                        mention_author=False,
-                    )
-                    return
-
-                target = message.mentions[0]
-                try:
-                    await set_hood_target(message.channel, target)
-                    await message.reply(
-                        f"✅ HOODIFY is active for {target.mention} in this channel. "
-                        f"Active people: **{get_active_hood_target_count()}/{MAX_ACTIVE_HOOD_TARGETS}**.",
-                        mention_author=False,
-                    )
-                except HoodUserBlacklisted:
-                    await message.reply(
-                        f"❌ {target.mention} is blacklisted from using HOODIFY.",
-                        mention_author=False,
-                    )
-                except UserBlacklistStorageUnavailable as error:
-                    await message.reply(
-                        "❌ I could not verify the HOODIFY blacklist from GitHub, "
-                        f"so I will not activate this target. Error: `{error}`",
-                        mention_author=False,
-                    )
-                except HoodTargetLimitReached:
-                    await message.reply(
-                        f"❌ The global limit of {MAX_ACTIVE_HOOD_TARGETS} HOODIFIED people has been reached.",
-                        mention_author=False,
-                    )
-                except (discord.Forbidden, discord.HTTPException) as error:
-                    await message.reply(
-                        f"❌ Discord rejected the HOODIFY setup: `{error}`",
-                        mention_author=False,
-                    )
-                return
-
-            disabled = await disable_hood_target(message.channel.id)
-            response = (
-                "✅ Hoodify mode disabled for this channel."
-                if disabled
-                else "ℹ️ Hoodify mode is not active in this channel."
-            )
-            await message.reply(response, mention_author=False)
-            return
-
         if len(parts) < 2 or not message.mentions:
             await message.reply(
-                "Usage: `,hoodify @user`, `,hoodify off`, or "
-                "`,hoodify off @user`",
+                "Usage: `,hoodify @user`",
                 mention_author=False,
             )
             return
@@ -1673,8 +1530,7 @@ async def on_message(message: discord.Message):
         bot_member = message.guild.me if message.guild is not None else None
         if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
             await message.reply(
-                "❌ I need **Manage Messages** permission in this channel "
-                "to replace messages.",
+                "❌ I need **Manage Messages** permission in this channel to replace messages.",
                 mention_author=False,
             )
             return
@@ -1687,17 +1543,14 @@ async def on_message(message: discord.Message):
                     await send_hood_message(message.channel, target, parts[2])
                 except HoodMessageBlocked as blocked_error:
                     await message.reply(
-                        f"❌ That message was not sent through the HOODIFY webhook "
-                        f"because it contains a blacklisted word/phrase: "
-                        f"`{blocked_error}`",
+                        f"❌ That message was not sent through the HOODIFY webhook because it contains a blacklisted word/phrase: `{blocked_error}`",
                         mention_author=False,
                     )
                     return
 
             await message.reply(
                 f"✅ HOODIFY is active for {target.mention} in this channel. "
-                f"Active people: **{get_active_hood_target_count()}/"
-                f"{MAX_ACTIVE_HOOD_TARGETS}**.",
+                f"Active people: **{get_active_hood_target_count()}/{MAX_ACTIVE_HOOD_TARGETS}**.",
                 mention_author=False,
             )
         except HoodUserBlacklisted:
@@ -1713,15 +1566,13 @@ async def on_message(message: discord.Message):
             )
         except HoodTargetLimitReached:
             await message.reply(
-                f"❌ The global limit of {MAX_ACTIVE_HOOD_TARGETS} HOODIFIED "
-                "people has been reached. Use `,unhoodify` or `/unhoodify` "
-                "to disable all HOODIFY modes.",
+                f"❌ The global limit of {MAX_ACTIVE_HOOD_TARGETS} HOODIFIED people has been reached. "
+                "Use `,unhoodify @user` or `/unhoodify @user` to disable HOODIFY for one member.",
                 mention_author=False,
             )
         except discord.Forbidden:
             await message.reply(
-                "❌ I need **Manage Messages** and **Manage Webhooks** "
-                "permission in this channel/server.",
+                "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel/server.",
                 mention_author=False,
             )
         except discord.HTTPException as e:
@@ -1735,7 +1586,6 @@ async def on_message(message: discord.Message):
                 mention_author=False,
             )
         return
-
     # Review, leaderboard, and remaining staff prefix commands.
     try:
         if await handle_prefix_review_command(message, content):
