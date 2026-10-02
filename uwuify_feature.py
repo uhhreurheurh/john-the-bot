@@ -221,11 +221,6 @@ async def recover_uwu_targets_from_channel(
         except ValueError:
             continue
 
-        if webhook.created_at is not None:
-            age = discord.utils.utcnow() - webhook.created_at
-            if age >= datetime.timedelta(minutes=10):
-                continue
-
         recovered.add(user_id)
         uwu_targets.setdefault(channel.id, set()).add(user_id)
         key = (channel.id, user_id)
@@ -530,22 +525,20 @@ async def cleanup_stale_uwu_webhooks() -> None:
             # instance get deleted immediately during startup. Only consider
             # webhooks that are at least 10 minutes old; the normal 5-minute
             # idle timer handles current webhooks.
-            if webhook.created_at is not None:
-                age = discord.utils.utcnow() - webhook.created_at
-                if age < datetime.timedelta(minutes=10):
-                    raw_id = webhook.name[len(f"{UWU_WEBHOOK_NAME} | "):].strip()
-                    try:
-                        recovered_user_id = int(raw_id)
-                    except ValueError:
-                        continue
-                    uwu_targets.setdefault(webhook.channel_id, set()).add(recovered_user_id)
-                    key = (webhook.channel_id, recovered_user_id)
-                    uwu_webhooks.setdefault(
-                        key,
-                        {"webhook": webhook, "timer": None, "user_id": recovered_user_id},
-                    )
-                    _reset_uwu_webhook_timer(webhook.channel_id, recovered_user_id, webhook)
-                    continue
+            raw_id = webhook.name[len(f"{UWU_WEBHOOK_NAME} | "):].strip()
+            try:
+                recovered_user_id = int(raw_id)
+            except ValueError:
+                continue
+
+            uwu_targets.setdefault(webhook.channel_id, set()).add(recovered_user_id)
+            key = (webhook.channel_id, recovered_user_id)
+            uwu_webhooks.setdefault(
+                key,
+                {"webhook": webhook, "timer": None, "user_id": recovered_user_id},
+            )
+            _reset_uwu_webhook_timer(webhook.channel_id, recovered_user_id, webhook)
+            continue
 
             try:
                 await webhook.delete(reason="Stale UWU webhook cleanup")
