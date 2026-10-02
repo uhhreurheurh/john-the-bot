@@ -496,7 +496,7 @@ async def send_hood_message(
 
     ensure_hood_message_is_allowed(content)
 
-    webhook = await get_hood_webhook(channel)
+    webhook = await get_hood_webhook(channel, target)
     hood_text = hoodify_text(content)
 
     if not hood_text:
@@ -526,7 +526,7 @@ async def send_hood_message(
             )
         )
 
-    _reset_hood_webhook_timer(channel.id, webhook)
+    _reset_hood_webhook_timer(channel.id, target.id, webhook)
     return sent_messages
 
 async def cleanup_stale_hood_webhooks() -> None:
