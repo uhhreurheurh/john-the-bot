@@ -540,18 +540,6 @@ async def cleanup_stale_uwu_webhooks() -> None:
             _reset_uwu_webhook_timer(webhook.channel_id, recovered_user_id, webhook)
             continue
 
-            try:
-                await webhook.delete(reason="Stale UWU webhook cleanup")
-                pass
-            except discord.NotFound:
-                pass
-            except discord.Forbidden as e:
-                pass
-            except discord.HTTPException as e:
-                pass
-            except Exception as e:
-                pass
-
 
 @tasks.loop(seconds=UWU_WEBHOOK_CLEANUP_INTERVAL_SECONDS)
 async def uwu_webhook_cleanup_loop():
