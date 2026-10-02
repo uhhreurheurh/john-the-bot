@@ -546,6 +546,39 @@ intents.message_content = True
 
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
+
+@tree.interaction_check
+async def reject_external_app_interactions(interaction: discord.Interaction) -> bool:
+    """
+    Reject application-command interactions when John the Bot is being used
+    as a Discord External App instead of being installed in the server.
+
+    An external-app interaction can contain a guild_id even though the bot
+    itself is not a member of that guild. Checking the bot's guild cache lets
+    us distinguish that case from a normal installed-bot interaction.
+    """
+    guild_id = interaction.guild_id
+
+    # Never allow application commands from DMs.
+    if guild_id is None:
+        return False
+
+    # If the bot is not actually installed/member of the guild, this is an
+    # External App interaction. Do not execute any command.
+    if bot.get_guild(guild_id) is None:
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "❌ John the Bot must be installed in this server to use its commands.",
+                    ephemeral=True,
+                )
+        except Exception:
+            pass
+        return False
+
+    return True
+
+
 commands_synced = False
 user_blacklists_synced = False
 review_update_views_registered = False
