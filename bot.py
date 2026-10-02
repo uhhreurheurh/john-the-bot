@@ -7,9 +7,7 @@ import json
 import re
 import random
 import logging
-import time
 from pathlib import Path
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime, timedelta, timezone
 import urllib.error
 import urllib.parse
@@ -3538,54 +3536,6 @@ async def before_kick():
     await bot.wait_until_ready()
 
 
-# =========================
-# RAILWAY HEALTH SERVER
-# =========================
-
-class RailwayHealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path in {"/", "/health"}:
-            body = b"ok"
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-            return
-
-        self.send_response(404)
-        self.end_headers()
-
-    def log_message(self, format, *args):
-        # Keep Railway terminal output quiet.
-        return
-
-
-def start_railway_health_server() -> None:
-    port_value = os.getenv("PORT")
-    if not port_value:
-        return
-
-    try:
-        port = int(port_value)
-        server = ThreadingHTTPServer(("0.0.0.0", port), RailwayHealthHandler)
-        thread = threading.Thread(
-            target=server.serve_forever,
-            name="railway-health-server",
-            daemon=True,
-        )
-        thread.start()
-    except Exception as error:
-        print(
-            "Railway health server failed to start: "
-            f"{type(error).__name__}: {error}"
-        )
-
-
-# =========================
-# START BOT
-# =========================
-
 if not BOT_TOKEN:
     raise RuntimeError(
         "BOT_TOKEN is not configured. "
@@ -3594,17 +3544,6 @@ if not BOT_TOKEN:
 
 start_railway_health_server()
 
-# Keep the Discord worker alive if bot.run() ever returns cleanly.
-# Railway only restarts crashed processes, so a clean return would otherwise
-# leave the service stopped.
-while True:
-    try:
-        bot.run(BOT_TOKEN, reconnect=True)
-        print("Bot run returned; restarting Discord connection in 5 seconds.")
-    except Exception as error:
-        print(
-            "Discord connection stopped: "
-            f"{type(error).__name__}: {error}"
-        )
-
-    time.sleep(5)
+# Stable pre-merge process lifecycle: discord.py owns one asyncio event loop.
+# Railway will restart the process if the worker exits.
+bot.run(BOT_TOKEN)
