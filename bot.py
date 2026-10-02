@@ -45,6 +45,14 @@ TAG_ROLE_ID_2 = 1551382001221632010
 # The user must have this role in the MAIN_SERVER.
 BLACKLIST_ALLOWED_ROLE_ID = 1306082718060384399  # <-- put the whitelisted role ID here
 
+# Shared role whitelist for all Textify commands (UWUIFY + HOODIFY).
+# Both features use this exact same set for slash and prefix commands.
+textify_whitelist = {
+    1518416402141417472,
+    1378810715611336914,
+    1377468541779050636,
+}
+
 # File used to save the second-role blacklist.
 # This survives bot restarts.
 BLACKLIST_FILE = Path(__file__).with_name("second_role_blacklist.json")
