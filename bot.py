@@ -879,7 +879,7 @@ async def on_message(message: discord.Message):
 
             try:
                 textify_debug("BOT-L15 HOOD EARLY SEND CALL")
-                await hoodify_feature.send_hood_message(message.channel, message.author, content)
+                await send_hood_message(message.channel, message.author, content)
                 textify_debug("BOT-L16 HOOD EARLY SEND SUCCESS")
                 deleted = await delete_original_message(message)
                 textify_debug("BOT-L17 HOOD EARLY DELETE RESULT", deleted=deleted)
@@ -913,7 +913,7 @@ async def on_message(message: discord.Message):
 
             try:
                 textify_debug("BOT-L15 UWU EARLY SEND CALL")
-                await uwuify_feature.send_uwu_message(message.channel, message.author, content)
+                await send_uwu_message(message.channel, message.author, content)
                 textify_debug("BOT-L16 UWU EARLY SEND SUCCESS")
                 deleted = await delete_original_message(message)
                 textify_debug("BOT-L17 UWU EARLY DELETE RESULT", deleted=deleted)
@@ -3078,7 +3078,7 @@ async def hoodify_root_command(
 
     if (
         not isinstance(interaction.user, discord.Member)
-        or not hoodify_feature.hood_user_is_whitelisted(interaction.user)
+        or not hood_user_is_whitelisted(interaction.user)
     ):
         await interaction.response.send_message(
             "❌ You need one of the allowed HOODIFY roles to use this command.",
@@ -3115,13 +3115,13 @@ async def hoodify_root_command(
 
     try:
         textify_debug("HOOD-ROOT SET_TARGET CALL")
-        await hoodify_feature.set_hood_target(interaction.channel, member)
+        await set_hood_target(interaction.channel, member)
         textify_debug("HOOD-ROOT SET_TARGET RETURNED")
 
         if message:
             try:
                 textify_debug("HOOD-ROOT ONE_TIME SEND CALL")
-                await hoodify_feature.send_hood_message(
+                await send_hood_message(
                     interaction.channel,
                     member,
                     message,
@@ -3135,10 +3135,10 @@ async def hoodify_root_command(
                 )
                 return
 
-        active_count = hoodify_feature.get_active_hood_target_count()
+        active_count = get_active_hood_target_count()
         await interaction.followup.send(
             f"✅ HOODIFY is active for {member.mention} in this channel. "
-            f"Active people: **{active_count}/{hoodify_feature.MAX_ACTIVE_HOOD_TARGETS}**.\n"
+            f"Active people: **{active_count}/{MAX_ACTIVE_HOOD_TARGETS}**.\n"
             "You can add more people with another /hoodify command. "
             "The temporary webhook will be deleted after 5 minutes without use.",
             ephemeral=False,
@@ -3156,7 +3156,7 @@ async def hoodify_root_command(
         )
     except HoodTargetLimitReached:
         await interaction.followup.send(
-            f"❌ The global limit of {hoodify_feature.MAX_ACTIVE_HOOD_TARGETS} HOODIFIED people has been reached. "
+            f"❌ The global limit of {MAX_ACTIVE_HOOD_TARGETS} HOODIFIED people has been reached. "
             "Use ,unhoodify @user or /unhoodify @user to disable HOODIFY for one member.",
             ephemeral=False,
         )
@@ -3188,7 +3188,7 @@ async def unhoodify_root_command(
     interaction: discord.Interaction,
     member: discord.Member,
 ):
-    await hoodify_feature.unhoodify_command.callback(interaction, member)
+    await unhoodify_command.callback(interaction, member)
 
 
 @tree.command(
@@ -3198,7 +3198,7 @@ async def unhoodify_root_command(
 async def hoodcount_root_command(
     interaction: discord.Interaction,
 ):
-    await hoodify_feature.hoodcount_root_command.callback(interaction)
+    await hoodcount_root_command.callback(interaction)
 
 
 # BOT READY
