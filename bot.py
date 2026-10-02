@@ -3194,7 +3194,29 @@ async def unhoodify_root_command(
     interaction: discord.Interaction,
     member: discord.Member,
 ):
-    await unhoodify_command.callback(interaction, member)
+    if uwu_hoodify_user_is_banned(interaction.user):
+        await interaction.response.send_message(
+            "❌ You are banned from using UWUIFY and HOODIFY.",
+            ephemeral=False,
+        )
+        return
+
+    if (
+        not isinstance(interaction.user, discord.Member)
+        or not hood_user_is_whitelisted(interaction.user)
+    ):
+        await interaction.response.send_message(
+            "❌ You need one of the allowed HOODIFY roles to use this command.",
+            ephemeral=False,
+        )
+        return
+
+    disabled_count = await disable_hood_for_user(member.id)
+    await interaction.response.send_message(
+        f"✅ HOODIFY disabled for {member.mention}. "
+        f"Removed them from **{disabled_count}** active channel(s).",
+        ephemeral=False,
+    )
 
 
 @tree.command(
@@ -3204,7 +3226,17 @@ async def unhoodify_root_command(
 async def hoodcount_root_command(
     interaction: discord.Interaction,
 ):
-    await hoodcount_root_command.callback(interaction)
+    global_count = get_active_hood_target_count()
+    channel_count = 0
+    if isinstance(interaction.channel, discord.TextChannel):
+        channel_count = len(hood_targets.get(interaction.channel.id, set()))
+
+    await interaction.response.send_message(
+        f"🖤 **HOODIFY count**\n"
+        f"Global: **{global_count}/{MAX_ACTIVE_HOOD_TARGETS}** people\n"
+        f"This channel: **{channel_count}** people",
+        ephemeral=False,
+    )
 
 
 # BOT READY
