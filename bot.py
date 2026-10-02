@@ -2986,6 +2986,23 @@ tree.remove_command("hoodcount")
 
 
 @tree.command(
+    name="uwufy",
+    description="Compatibility alias for /uwuify.",
+)
+@app_commands.describe(
+    member="The member whose messages should be automatically uwuified",
+    message="Optional one-time message to send through the uwu webhook",
+)
+async def uwufy_compat_command(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    message: str | None = None,
+):
+    # Keep /uwufy as an alias of the canonical /uwuify implementation.
+    await uwu_command.callback(interaction, member, message)
+
+
+@tree.command(
     name="hoodify",
     description="Add a member to this channel's automatic HOODIFY mode.",
 )
@@ -3216,6 +3233,7 @@ async def on_ready():
             )
             required_commands = {
                 "uwuify",
+                "uwufy",
                 "unuwuify",
                 "uwucount",
                 "hoodify",
