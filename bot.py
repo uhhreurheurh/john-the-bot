@@ -1270,137 +1270,59 @@ async def on_message(message: discord.Message):
         return
 
     # Enforce active transformations BEFORE parsing any prefix command.
-    # Recover target state from Discord's target-specific webhooks so another
-    # overlapping Railway instance cannot lose the active target state.
-    now = time.monotonic()
-    if (
-        now - uwu_webhook_recovery_cache.get(message.channel.id, 0.0)
-        >= WEBHOOK_RECOVERY_CACHE_SECONDS
-    ):
-        await recover_uwu_targets_from_channel(message.channel)
-        uwu_webhook_recovery_cache[message.channel.id] = now
-
-    if (
-        now - hood_webhook_recovery_cache.get(message.channel.id, 0.0)
-        >= WEBHOOK_RECOVERY_CACHE_SECONDS
-    ):
-        await recover_hood_targets_from_channel(message.channel)
-        hood_webhook_recovery_cache[message.channel.id] = now
-
+    # This is the original pre-merge flow: the selected user is checked against
+    # the in-memory target set, transformed through the temporary webhook, then
+    # the original user message is deleted.
     hood_target_ids = hood_targets.get(message.channel.id, set())
     uwu_target_ids = uwu_targets.get(message.channel.id, set())
 
-    if message.author.id in hood_target_ids:
-        target_content = await get_target_message_content(message)
-
-        # Ignore empty/attachment-only messages.
-        if not target_content:
-            return
-
+    if message.author.id in hood_target_ids and content:
         if message.author.id in hood_user_blacklist:
             await disable_hood_for_user(message.author.id)
             return
 
         bot_member = message.guild.me if message.guild is not None else None
-        permissions = (
-            message.channel.permissions_for(bot_member)
-            if bot_member is not None
-            else None
-        )
-        if permissions is None or not permissions.manage_messages or not permissions.manage_webhooks:
-            await disable_hood_for_user(message.author.id)
-            try:
-                await message.reply(
-                    "❌ HOODIFY was disabled because I need **Manage Messages** "
-                    "and **Manage Webhooks** permissions in this channel.",
-                    mention_author=False,
-                )
-            except (discord.Forbidden, discord.HTTPException):
-                pass
+        if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
             return
 
         try:
-            sent_messages = await send_hood_message(message.channel, message.author, target_content)
-            deleted = await delete_original_message(message)
-            if not deleted:
-                try:
-                    await message.reply(
-                        "⚠️ HOODIFY transformed your message, but I could not delete "
-                        "the original. Check that I have **Manage Messages** in this channel.",
-                        mention_author=False,
-                    )
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
-        except HoodUserBlacklisted:
-            await disable_hood_for_user(message.author.id)
-        except HoodMessageBlocked:
-            return
-        except (discord.Forbidden, discord.HTTPException):
-            await disable_hood_for_user(message.author.id)
-        except Exception as error:
-            print(
-                "HOODIFY automatic message error: "
-                f"{type(error).__name__}: {error}"
+            await send_hood_message(
+                message.channel,
+                message.author,
+                content,
             )
-            return
+            await delete_original_message(message)
+        except HoodMessageBlocked:
+            pass
+        except Exception:
+            pass
         return
 
-    if message.author.id in uwu_target_ids:
-        target_content = await get_target_message_content(message)
-
-        # Ignore empty/attachment-only messages.
-        if not target_content:
-            return
-
+    if message.author.id in uwu_target_ids and content:
         if message.author.id in uwu_user_blacklist:
             await disable_uwu_for_user(message.author.id)
             return
 
         bot_member = message.guild.me if message.guild is not None else None
-        permissions = (
-            message.channel.permissions_for(bot_member)
-            if bot_member is not None
-            else None
-        )
-        if permissions is None or not permissions.manage_messages or not permissions.manage_webhooks:
-            await disable_uwu_for_user(message.author.id)
-            try:
-                await message.reply(
-                    "❌ UWUIFY was disabled because I need **Manage Messages** "
-                    "and **Manage Webhooks** permissions in this channel.",
-                    mention_author=False,
-                )
-            except (discord.Forbidden, discord.HTTPException):
-                pass
+        if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
             return
 
         try:
-            sent_messages = await send_uwu_message(message.channel, message.author, target_content)
-            deleted = await delete_original_message(message)
-            if not deleted:
-                try:
-                    await message.reply(
-                        "⚠️ UWUIFY transformed your message, but I could not delete "
-                        "the original. Check that I have **Manage Messages** in this channel.",
-                        mention_author=False,
-                    )
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
-        except UwuUserBlacklisted:
-            await disable_uwu_for_user(message.author.id)
-        except UwuMessageBlocked:
-            return
-        except (discord.Forbidden, discord.HTTPException):
-            await disable_uwu_for_user(message.author.id)
-        except Exception as error:
-            print(
-                "UWUIFY automatic message error: "
-                f"{type(error).__name__}: {error}"
+            await send_uwu_message(
+                message.channel,
+                message.author,
+                content,
             )
-            return
+            await delete_original_message(message)
+        except UwuMessageBlocked:
+            pass
+        except Exception:
+            pass
         return
 
     # Only non-target users continue into the command parser.
+    remember_proxy_request(message, content)
+
 
     # Translate readable mode/count prefixes to the existing command parser.
     if len(spaced_parts) >= 2:
