@@ -231,29 +231,35 @@ async def set_hood_target(
     if target.id in hood_user_blacklist:
         raise HoodUserBlacklisted
 
+    # Use one shared lock for both text modes so two simultaneous commands
+    # cannot put the same member into UWUIFY and HOODIFY.
     async with TEXTIFY_MODE_LOCK:
         async with hood_target_lock:
             if any(target.id in target_ids for target_ids in uwu_targets.values()):
                 raise HoodUwuConflict
+
             channel_targets = hood_targets.setdefault(channel.id, set())
 
             if target.id not in channel_targets:
                 active_target_ids = get_active_hood_target_ids()
+
                 if (
                     target.id not in active_target_ids
                     and len(active_target_ids) >= MAX_ACTIVE_HOOD_TARGETS
                 ):
                     if not channel_targets:
                         hood_targets.pop(channel.id, None)
+
                     raise HoodTargetLimitReached(
-                    f"The maximum of {MAX_ACTIVE_HOOD_TARGETS} active HOODIFY "
-                    "targets has been reached."
-                )
-            channel_targets.add(target.id)
+                        f"The maximum of {MAX_ACTIVE_HOOD_TARGETS} active HOODIFY "
+                        "targets has been reached."
+                    )
+
+                channel_targets.add(target.id)
 
     try:
         webhook = await get_hood_webhook(channel)
-    except Exception as error:
+    except Exception:
         async with hood_target_lock:
             channel_targets = hood_targets.get(channel.id)
             if channel_targets is not None:
