@@ -696,6 +696,14 @@
       "rating": 5,
       "comment": "really awesome, sometimes annoying, but very coolio",
       "created_at": "2026-10-02 01:50:48"
+    },
+    {
+      "id": 94,
+      "target_id": 1289416451114930256,
+      "reviewer_id": 1348469829425959022,
+      "rating": 5,
+      "comment": "Ronaldo🤤🤤🍆✊🏿",
+      "created_at": "2026-10-02 01:50:52"
     }
   ],
   "review_update_requests": [
