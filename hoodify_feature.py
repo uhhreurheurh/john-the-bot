@@ -571,9 +571,6 @@ async def cleanup_stale_hood_webhooks() -> None:
             _reset_hood_webhook_timer(channel_id, recovered_user_id, webhook)
             continue
 
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                pass
-
 @tasks.loop(seconds=HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS)
 async def hood_webhook_cleanup_loop():
     # Wait one full interval before stale cleanup so startup cannot remove a
