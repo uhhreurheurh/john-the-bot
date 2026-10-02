@@ -12,17 +12,13 @@ HOOD_WORD_BLACKLIST = set(_HOODIFY_DATA.get("word_blacklist", []))
 
 HOOD_WEBHOOK_NAME = "Hoodify Relay"
 HOOD_WEBHOOK_IDLE_SECONDS = 5 * 60
+HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS = 60
 
 # Members with one of these roles may enable/disable HOODIFY.
 # Set to the same roles as UWU, or change them independently.
 HOOD_ALLOWED_ROLE_IDS = {
     1518416402141417472,
     1378810715611336914,
-}
-
-# Separate blacklist for HOODIFY messages.
-HOOD_WORD_BLACKLIST = {
-    # "example",
 }
 
 # Maximum number of unique people who can be actively HOODIFIED at once.
@@ -356,25 +352,13 @@ async def cleanup_stale_hood_webhooks() -> None:
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 pass
 
-@tasks.loop(seconds=HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS if "HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS" in globals() else 60)
+@tasks.loop(seconds=HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS)
 async def hood_webhook_cleanup_loop():
     await cleanup_stale_hood_webhooks()
 
 @hood_webhook_cleanup_loop.before_loop
 async def before_hood_webhook_cleanup():
     await bot.wait_until_ready()
-
-# channel_id -> {"webhook": discord.Webhook, "timer": asyncio.Task | None}
-uwu_webhooks: dict[int, dict] = {}
-
-# channel_id -> set of target member IDs.
-# Multiple people can be UWUified in the same channel at once.
-uwu_targets: dict[int, set[int]] = {}
-
-# Protect the global 5-person cap from simultaneous commands.
-uwu_target_lock = asyncio.Lock()
-
-
 
 @tree.command(
     name="unhoodify",
@@ -475,9 +459,18 @@ async def hoodify_command(
         return
 
     bot_member = interaction.guild.me if interaction.guild is not None else None
-    if bot_member is None or not interaction.channel.permissions_for(bot_member).manage_messages:
+    permissions = (
+        interaction.channel.permissions_for(bot_member)
+        if bot_member is not None
+        else None
+    )
+    if (
+        permissions is None
+        or not permissions.manage_messages
+        or not permissions.manage_webhooks
+    ):
         await interaction.response.send_message(
-            "❌ I need **Manage Messages** permission in this channel to replace messages.",
+            "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel.",
             ephemeral=False,
         )
         return
