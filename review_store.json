@@ -888,6 +888,23 @@
       "reviewed_by": 191233879175200768,
       "created_at": "2026-10-02 01:52:10",
       "reviewed_at": "2026-10-02 02:13:41"
+    },
+    {
+      "id": 7,
+      "review_id": 22,
+      "target_id": 1485649466928402486,
+      "reviewer_id": 1512484378050302053,
+      "old_rating": 5,
+      "old_comment": "Somalian beauty 🥰",
+      "new_rating": 1,
+      "new_comment": "You bitch ass rasict nigger! Burn in hell! You deserve to be dominated by a Greek man",
+      "update_reason": "rasict. mean.",
+      "status": "pending",
+      "approval_message_id": null,
+      "approval_channel_id": null,
+      "reviewed_by": null,
+      "created_at": "2026-10-02 04:43:44",
+      "reviewed_at": null
     }
   ],
   "review_id_sequence": 6
