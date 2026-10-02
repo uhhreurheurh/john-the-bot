@@ -555,26 +555,22 @@ async def cleanup_stale_hood_webhooks() -> None:
                 continue
 
             # Protect newly-created webhooks from overlapping bot instances.
-            if webhook.created_at is not None:
-                age = discord.utils.utcnow() - webhook.created_at
-                if age < datetime.timedelta(minutes=10):
-                    raw_id = webhook.name[len(f"{HOOD_WEBHOOK_NAME} | "):].strip()
-                    try:
-                        recovered_user_id = int(raw_id)
-                    except ValueError:
-                        continue
-                    channel_id = webhook.channel_id
-                    hood_targets.setdefault(channel_id, set()).add(recovered_user_id)
-                    key = (channel_id, recovered_user_id)
-                    hood_webhooks.setdefault(
-                        key,
-                        {"webhook": webhook, "timer": None, "user_id": recovered_user_id},
-                    )
-                    _reset_hood_webhook_timer(channel_id, recovered_user_id, webhook)
-                    continue
-
+            raw_id = webhook.name[len(f"{HOOD_WEBHOOK_NAME} | "):].strip()
             try:
-                await webhook.delete(reason="Stale Hoodify webhook cleanup")
+                recovered_user_id = int(raw_id)
+            except ValueError:
+                continue
+
+            channel_id = webhook.channel_id
+            hood_targets.setdefault(channel_id, set()).add(recovered_user_id)
+            key = (channel_id, recovered_user_id)
+            hood_webhooks.setdefault(
+                key,
+                {"webhook": webhook, "timer": None, "user_id": recovered_user_id},
+            )
+            _reset_hood_webhook_timer(channel_id, recovered_user_id, webhook)
+            continue
+
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 pass
 
