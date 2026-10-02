@@ -1175,6 +1175,35 @@ async def get_review_member_or_user(
 
 
 # ============================================================
+# DISCORD EMBED LIMITS
+# ============================================================
+
+EMBED_FIELD_VALUE_LIMIT = 1024
+
+
+def clamp_embed_field_value(value, limit: int = EMBED_FIELD_VALUE_LIMIT) -> str:
+    """Clamp text to Discord's embed field value limit.
+
+    Discord rejects embed field values longer than 1024 characters, which is
+    easy to hit because the review modal allows a 1000 character comment and
+    the display wraps it in a mention plus a blockquote prefix. Discord counts
+    UTF-16 code units rather than code points, so len() undercounts characters
+    outside the basic multilingual plane; measuring and clipping the encoded
+    form keeps astral characters from pushing a valid string over the limit.
+    """
+    text = "" if value is None else str(value)
+    encoded = text.encode("utf-16-le")
+
+    if len(encoded) <= limit * 2:
+        return text
+
+    # Reserve one UTF-16 code unit for the ellipsis.
+    clipped = encoded[: (limit - 1) * 2].decode("utf-16-le", errors="ignore")
+
+    return clipped.rstrip() + "…"
+
+
+# ============================================================
 # REVIEW LOGGING
 # ============================================================
 
@@ -1193,7 +1222,11 @@ async def log_review_event(title, description, fields=None, color=None):
         )
 
         for name, value, inline in fields or []:
-            embed.add_field(name=name, value=value, inline=inline)
+            embed.add_field(
+                name=name,
+                value=clamp_embed_field_value(value),
+                inline=inline,
+            )
 
         await channel.send(embed=embed)
     except Exception:
@@ -1530,7 +1563,7 @@ class ReviewPagination(discord.ui.View):
                     f"{review_stars(review['rating'])} — "
                     f"by {reviewer_name} · ID {review['id']}"
                 ),
-                value=(
+                value=clamp_embed_field_value(
                     f"{reviewer_mention}\n"
                     f"> {review['comment']}"
                 ),
@@ -1608,17 +1641,23 @@ def review_update_embed(request, status=None, moderator_id=None):
     )
     embed.add_field(
         name='Current Vote',
-        value=f'{review_stars(request["old_rating"])}\n> {request["old_comment"]}',
+        value=clamp_embed_field_value(
+            f'{review_stars(request["old_rating"])}\n> {request["old_comment"]}'
+        ),
         inline=False,
     )
     embed.add_field(
         name='Proposed Vote',
-        value=f'{review_stars(request["new_rating"])}\n> {request["new_comment"]}',
+        value=clamp_embed_field_value(
+            f'{review_stars(request["new_rating"])}\n> {request["new_comment"]}'
+        ),
         inline=False,
     )
     embed.add_field(
         name='Reason for Update',
-        value=str(request.get("update_reason") or "No reason provided."),
+        value=clamp_embed_field_value(
+            request.get("update_reason") or "No reason provided."
+        ),
         inline=False,
     )
     if status:
