@@ -168,9 +168,16 @@ async def set_uwu_target(
     if target.id in uwu_user_blacklist:
         raise UwuUserBlacklisted
 
+    # hood_targets lives in hoodify_feature. Import it lazily because both
+    # textify modules import shared bot state during startup.
+    import hoodify_feature
+
     async with TEXTIFY_MODE_LOCK:
         async with uwu_target_lock:
-            if any(target.id in target_ids for target_ids in hood_targets.values()):
+            if any(
+                target.id in target_ids
+                for target_ids in hoodify_feature.hood_targets.values()
+            ):
                 raise UwuHoodifyConflict
             channel_targets = uwu_targets.setdefault(channel.id, set())
 
