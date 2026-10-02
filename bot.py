@@ -1415,6 +1415,16 @@ async def on_message(message: discord.Message):
         )
 
         embed.add_field(
+            name="Blackjack",
+            value=(
+                "`,blackjack <bet>` — Play Blackjack with Kevin Bucks\n"
+                "`,balance` — Check your Kevin Bucks balance\n"
+                "`,daily` — Claim your daily Kevin Bucks"
+            ),
+            inline=False,
+        )
+
+        embed.add_field(
             name="Reviews",
             value=(
                 "`,review @user` — Leave a review\n"
