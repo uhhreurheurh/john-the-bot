@@ -394,31 +394,6 @@ async def disable_uwu_for_user(user_id: int) -> int:
     return removed
 
 
-async def disable_hood_for_user(user_id: int) -> int:
-    """Remove one user from every active HOODIFY channel."""
-    affected_channels = [
-        channel_id
-        for channel_id, target_ids in hood_targets.items()
-        if user_id in target_ids
-    ]
-
-    removed = 0
-    for channel_id in affected_channels:
-        target_ids = hood_targets.get(channel_id)
-        if target_ids is None or user_id not in target_ids:
-            continue
-
-        target_ids.discard(user_id)
-        removed += 1
-
-        if not target_ids:
-            await disable_hood_target(channel_id)
-
-    return removed
-
-
-
-
 @tree.command(
     name="unuwuify",
     description="Disable UWU mode for a selected member.",
