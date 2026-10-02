@@ -233,9 +233,18 @@ async def set_hood_target(
 
     # Use one shared lock for both text modes so two simultaneous commands
     # cannot put the same member into UWUIFY and HOODIFY.
+    #
+    # uwu_targets lives in uwuify_feature. It is intentionally imported lazily
+    # here because hoodify_feature is imported before uwuify_feature during bot
+    # startup; importing it at module scope would create a circular import.
+    import uwuify_feature
+
     async with TEXTIFY_MODE_LOCK:
         async with hood_target_lock:
-            if any(target.id in target_ids for target_ids in uwu_targets.values()):
+            if any(
+                target.id in target_ids
+                for target_ids in uwuify_feature.uwu_targets.values()
+            ):
                 raise HoodUwuConflict
 
             channel_targets = hood_targets.setdefault(channel.id, set())
