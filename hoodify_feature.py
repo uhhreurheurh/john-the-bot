@@ -448,21 +448,21 @@ async def hoodify_command(
     message: str | None = None,
 ):
     if uwu_hoodify_user_is_banned(interaction.user):
-        await interaction.followup.send(
+        await interaction.response.send_message(
             "❌ You are banned from using UWUIFY and HOODIFY.",
             ephemeral=False,
         )
         return
 
     if not isinstance(interaction.user, discord.Member) or not hood_user_is_whitelisted(interaction.user):
-        await interaction.followup.send(
+        await interaction.response.send_message(
             "❌ You need one of the allowed HOODIFY roles to use this command.",
             ephemeral=False,
         )
         return
 
     if not isinstance(interaction.channel, discord.TextChannel):
-        await interaction.followup.send(
+        await interaction.response.send_message(
             "❌ This command can only be used in a normal text channel.",
             ephemeral=False,
         )
