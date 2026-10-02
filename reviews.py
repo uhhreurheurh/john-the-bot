@@ -2045,12 +2045,15 @@ async def deletereview(
     interaction: discord.Interaction,
     review_id: int
 ):
+    # Discord requires an initial response within ~3 seconds. The GitHub/database
+    # refresh can take longer, so acknowledge the interaction immediately.
+    await interaction.response.defer(ephemeral=False)
 
     await refresh_local_review_db_from_github()
     review = get_review(review_id)
 
     if not review:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "❌ Review not found.",
             ephemeral=False
         )
@@ -2073,7 +2076,7 @@ async def deletereview(
         color=discord.Color.red(),
     )
 
-    await interaction.response.send_message(
+    await interaction.followup.send(
         f"✅ Review `{review_id}` deleted.",
         ephemeral=False
     )
@@ -2090,10 +2093,11 @@ async def deletereview_error(
 ):
 
     if isinstance(error, app_commands.errors.CheckFailure):
-        await interaction.response.send_message(
-            "❌ You do not have one of the required roles to use `/deletereview`.",
-            ephemeral=False
-        )
+        message = "❌ You do not have one of the required roles to use `/deletereview`."
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=False)
+        else:
+            await interaction.response.send_message(message, ephemeral=False)
     else:
         raise error
 
