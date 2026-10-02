@@ -1823,6 +1823,23 @@ async def handle_prefix_review_command(message, content):
     parts = content.split(maxsplit=2)
     command = parts[0].lower() if parts else ""
 
+    # Prefix review commands are restricted to the main server as well.
+    review_prefix_commands = {
+        ",review",
+        ",updatereview",
+        ",reviews",
+        ",deletereview",
+        ",reviewblacklist",
+    }
+    if command in review_prefix_commands and (
+        message.guild is None or message.guild.id != MAIN_SERVER
+    ):
+        await message.reply(
+            "❌ The review system can only be used in the main server.",
+            mention_author=False,
+        )
+        return True
+
     if command == ",review":
         if not message.mentions:
             await message.reply("Usage: ,review @user", mention_author=False)
