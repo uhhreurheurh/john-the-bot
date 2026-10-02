@@ -63,6 +63,10 @@ class UwuTargetLimitReached(Exception):
     """Raised when adding a new target would exceed the global UWU limit."""
 
 
+class UwuHoodifyConflict(Exception):
+    """Raised when a target is already active in HOODIFY."""
+
+
 class UwuMessageBlocked(Exception):
     """Raised when a message contains text that the UWU webhook must not send."""
 
@@ -164,27 +168,28 @@ async def set_uwu_target(
     if target.id in uwu_user_blacklist:
         raise UwuUserBlacklisted
 
-    async with uwu_target_lock:
-        channel_targets = uwu_targets.setdefault(channel.id, set())
+    async with TEXTIFY_MODE_LOCK:
+        async with uwu_target_lock:
+            if any(target.id in target_ids for target_ids in hood_targets.values()):
+                raise UwuHoodifyConflict
+            channel_targets = uwu_targets.setdefault(channel.id, set())
 
-        # Already active in this channel: no additional slot is needed.
-        if target.id not in channel_targets:
-            active_target_ids = get_active_uwu_target_ids()
+            # Already active in this channel: no additional slot is needed.
+            if target.id not in channel_targets:
+                active_target_ids = get_active_uwu_target_ids()
 
-            # A person already active anywhere does not consume another slot.
-            if (
-                target.id not in active_target_ids
-                and len(active_target_ids) >= MAX_ACTIVE_UWU_TARGETS
-            ):
-                # Don't leave an empty set behind when the command is rejected.
-                if not channel_targets:
-                    uwu_targets.pop(channel.id, None)
+                # A person already active anywhere does not consume another slot.
+                if (
+                    target.id not in active_target_ids
+                    and len(active_target_ids) >= MAX_ACTIVE_UWU_TARGETS
+                ):
+                    if not channel_targets:
+                        uwu_targets.pop(channel.id, None)
+                    raise UwuTargetLimitReached(
+                        f"The maximum of {MAX_ACTIVE_UWU_TARGETS} active UWU targets has been reached."
+                    )
 
-                raise UwuTargetLimitReached(
-                    f"The maximum of {MAX_ACTIVE_UWU_TARGETS} active UWU targets has been reached."
-                )
-
-            channel_targets.add(target.id)
+                channel_targets.add(target.id)
 
     # Create/reuse the webhook outside the cap lock so webhook API calls do not
     # block another target from being checked against the cap.
