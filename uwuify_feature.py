@@ -599,9 +599,12 @@ async def uwu_command(
         return
 
     bot_member = interaction.guild.me if interaction.guild is not None else None
-    if bot_member is None or not interaction.channel.permissions_for(bot_member).manage_messages:
+    if bot_member is None or not (
+        interaction.channel.permissions_for(bot_member).manage_messages
+        and interaction.channel.permissions_for(bot_member).manage_webhooks
+    ):
         await interaction.response.send_message(
-            "❌ I need **Manage Messages** permission in this channel to replace messages.",
+            "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel to replace messages.",
             ephemeral=False,
         )
         return
