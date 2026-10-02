@@ -985,6 +985,1148 @@
         "hold up for me",
         "wait on me"
       ]
+    },
+    {
+      "pattern": "\\\\bwhat happened\\\\b",
+      "replacement": [
+        "what went down",
+        "what happened fr",
+        "what's the word"
+      ]
+    },
+    {
+      "pattern": "\\\\bwhere are you\\\\b",
+      "replacement": [
+        "where you at",
+        "where you posted",
+        "where you at rn"
+      ]
+    },
+    {
+      "pattern": "\\\\bwhere is\\\\b",
+      "replacement": [
+        "where's",
+        "where that at"
+      ]
+    },
+    {
+      "pattern": "\\\\bwhen are you coming\\\\b",
+      "replacement": [
+        "when you pulling up",
+        "when you sliding"
+      ]
+    },
+    {
+      "pattern": "\\\\bcome over\\\\b",
+      "replacement": [
+        "pull up",
+        "slide thru",
+        "come thru"
+      ]
+    },
+    {
+      "pattern": "\\\\bgo away\\\\b",
+      "replacement": [
+        "move around",
+        "get outta here",
+        "dip"
+      ]
+    },
+    {
+      "pattern": "\\\\bleave me alone\\\\b",
+      "replacement": [
+        "let me be",
+        "leave me be",
+        "give me space"
+      ]
+    },
+    {
+      "pattern": "\\\\bhold on\\\\b",
+      "replacement": [
+        "hold up",
+        "wait up",
+        "gimme a sec"
+      ]
+    },
+    {
+      "pattern": "\\\\bone second\\\\b",
+      "replacement": [
+        "one sec",
+        "gimme a sec",
+        "hold up"
+      ]
+    },
+    {
+      "pattern": "\\\\bwait\\\\b",
+      "replacement": [
+        "hold up",
+        "wait up",
+        "lemme see"
+      ]
+    },
+    {
+      "pattern": "\\\\blook at this\\\\b",
+      "replacement": [
+        "peep this",
+        "look at this real quick",
+        "check this"
+      ]
+    },
+    {
+      "pattern": "\\\\blook at that\\\\b",
+      "replacement": [
+        "peep that",
+        "check that out",
+        "look at that"
+      ]
+    },
+    {
+      "pattern": "\\\\bcheck it out\\\\b",
+      "replacement": [
+        "peep this",
+        "look at this",
+        "check this"
+      ]
+    },
+    {
+      "pattern": "\\\\bI know\\\\b",
+      "replacement": [
+        "I know fr",
+        "I got you",
+        "say less"
+      ]
+    },
+    {
+      "pattern": "\\\\bI think\\\\b",
+      "replacement": [
+        "I feel like",
+        "lowkey think",
+        "I ain't gonna lie"
+      ]
+    },
+    {
+      "pattern": "\\\\bI guess\\\\b",
+      "replacement": [
+        "I suppose",
+        "I mean",
+        "I guess fr"
+      ]
+    },
+    {
+      "pattern": "\\\\bI hope\\\\b",
+      "replacement": [
+        "hopefully",
+        "I'm hoping",
+        "praying"
+      ]
+    },
+    {
+      "pattern": "\\\\bI want\\\\b",
+      "replacement": [
+        "I need",
+        "I'm tryna get",
+        "I need that"
+      ]
+    },
+    {
+      "pattern": "\\\\bI need\\\\b",
+      "replacement": [
+        "I need",
+        "I gotta have",
+        "I need that"
+      ]
+    },
+    {
+      "pattern": "\\\\bI like\\\\b",
+      "replacement": [
+        "I'm rockin with",
+        "I fw",
+        "I mess with"
+      ]
+    },
+    {
+      "pattern": "\\\\bI love\\\\b",
+      "replacement": [
+        "I'm rockin with heavy",
+        "I fw heavy",
+        "that's fire"
+      ]
+    },
+    {
+      "pattern": "\\\\bI hate\\\\b",
+      "replacement": [
+        "I can't stand",
+        "I'm not rockin with",
+        "nah I ain't fw"
+      ]
+    },
+    {
+      "pattern": "\\\\bI understand\\\\b",
+      "replacement": [
+        "I got you",
+        "I hear you",
+        "say less"
+      ]
+    },
+    {
+      "pattern": "\\\\bI forgot\\\\b",
+      "replacement": [
+        "I blanked",
+        "that slipped my mind",
+        "I forgot fr"
+      ]
+    },
+    {
+      "pattern": "\\\\bI remember\\\\b",
+      "replacement": [
+        "I remember that",
+        "I ain't forget",
+        "I got that"
+      ]
+    },
+    {
+      "pattern": "\\\\bI promise\\\\b",
+      "replacement": [
+        "I swear",
+        "on god",
+        "deadass"
+      ]
+    },
+    {
+      "pattern": "\\\\bI swear\\\\b",
+      "replacement": [
+        "on god",
+        "deadass",
+        "no cap"
+      ]
+    },
+    {
+      "pattern": "\\\\byou should\\\\b",
+      "replacement": [
+        "you gotta",
+        "you might wanna",
+        "you need to"
+      ]
+    },
+    {
+      "pattern": "\\\\byou need to\\\\b",
+      "replacement": [
+        "you gotta",
+        "you needa",
+        "you should"
+      ]
+    },
+    {
+      "pattern": "\\\\byou can\\\\b",
+      "replacement": [
+        "you could",
+        "you can fs",
+        "you good to"
+      ]
+    },
+    {
+      "pattern": "\\\\byou cannot\\\\b",
+      "replacement": [
+        "you can't",
+        "you ain't able to",
+        "nah you can't"
+      ]
+    },
+    {
+      "pattern": "\\\\byou have to\\\\b",
+      "replacement": [
+        "you gotta",
+        "you needa",
+        "you got to"
+      ]
+    },
+    {
+      "pattern": "\\\\byou want to\\\\b",
+      "replacement": [
+        "you wanna",
+        "you tryna",
+        "you looking to"
+      ]
+    },
+    {
+      "pattern": "\\\\bdo you want\\\\b",
+      "replacement": [
+        "you want",
+        "you tryna",
+        "you down for"
+      ]
+    },
+    {
+      "pattern": "\\\\bdo you know\\\\b",
+      "replacement": [
+        "you know",
+        "you know about",
+        "you hip to"
+      ]
+    },
+    {
+      "pattern": "\\\\bcan you\\\\b",
+      "replacement": [
+        "you able to",
+        "you mind",
+        "can you real quick"
+      ]
+    },
+    {
+      "pattern": "\\\\bcould you\\\\b",
+      "replacement": [
+        "you mind",
+        "can you",
+        "you able to"
+      ]
+    },
+    {
+      "pattern": "\\\\bshould I\\\\b",
+      "replacement": [
+        "I should",
+        "should I really",
+        "you think I should"
+      ]
+    },
+    {
+      "pattern": "\\\\bwhat should I do\\\\b",
+      "replacement": [
+        "what I supposed to do",
+        "what should I do fr",
+        "what's the move"
+      ]
+    },
+    {
+      "pattern": "\\\\bwhat do we do\\\\b",
+      "replacement": [
+        "what's the move",
+        "what we doing",
+        "what's the play"
+      ]
+    },
+    {
+      "pattern": "\\\\blet's go\\\\b",
+      "replacement": [
+        "we outside",
+        "we gone",
+        "say less, let's get it"
+      ]
+    },
+    {
+      "pattern": "\\\\blet us go\\\\b",
+      "replacement": [
+        "let's get it",
+        "we gone",
+        "we out"
+      ]
+    },
+    {
+      "pattern": "\\\\bgo ahead\\\\b",
+      "replacement": [
+        "bet, go ahead",
+        "you good",
+        "run it"
+      ]
+    },
+    {
+      "pattern": "\\\\btry again\\\\b",
+      "replacement": [
+        "run it back",
+        "try that again",
+        "run it again"
+      ]
+    },
+    {
+      "pattern": "\\\\bdo it again\\\\b",
+      "replacement": [
+        "run it back",
+        "do that again",
+        "run it again"
+      ]
+    },
+    {
+      "pattern": "\\\\bthat is funny\\\\b",
+      "replacement": [
+        "that's hilarious",
+        "that's wild",
+        "nah that's funny"
+      ]
+    },
+    {
+      "pattern": "\\\\bthat was funny\\\\b",
+      "replacement": [
+        "that was hilarious",
+        "nah that was wild",
+        "you got me weak"
+      ]
+    },
+    {
+      "pattern": "\\\\bthat is good\\\\b",
+      "replacement": [
+        "that's solid",
+        "that's fire",
+        "that's clean"
+      ]
+    },
+    {
+      "pattern": "\\\\bthat is bad\\\\b",
+      "replacement": [
+        "that's rough",
+        "that's chalked",
+        "that's cooked"
+      ]
+    },
+    {
+      "pattern": "\\\\bthis is good\\\\b",
+      "replacement": [
+        "this valid",
+        "this fire",
+        "this clean"
+      ]
+    },
+    {
+      "pattern": "\\\\bthis is bad\\\\b",
+      "replacement": [
+        "this rough",
+        "this chalked",
+        "this ain't it"
+      ]
+    },
+    {
+      "pattern": "\\\\bI am ready\\\\b",
+      "replacement": [
+        "I'm locked in",
+        "I'm set",
+        "I'm ready fr"
+      ]
+    },
+    {
+      "pattern": "\\\\bI am busy\\\\b",
+      "replacement": [
+        "I'm tied up",
+        "I'm busy rn",
+        "I'm on the grind"
+      ]
+    },
+    {
+      "pattern": "\\\\bI am done\\\\b",
+      "replacement": [
+        "I'm cooked",
+        "I'm finished",
+        "I'm out"
+      ]
+    },
+    {
+      "pattern": "\\\\bI am leaving\\\\b",
+      "replacement": [
+        "I'm dipping",
+        "I'm bouncing",
+        "I'm out"
+      ]
+    },
+    {
+      "pattern": "\\\\bI am coming\\\\b",
+      "replacement": [
+        "I'm pulling up",
+        "I'm sliding",
+        "I'm on the way"
+      ]
+    },
+    {
+      "pattern": "\\\\bI am serious\\\\b",
+      "replacement": [
+        "I'm dead serious",
+        "deadass",
+        "I'm not playing"
+      ]
+    },
+    {
+      "pattern": "\\\\bI am joking\\\\b",
+      "replacement": [
+        "I'm trolling",
+        "I'm playing",
+        "I'm just messing"
+      ]
+    },
+    {
+      "pattern": "\\\\bbe quiet\\\\b",
+      "replacement": [
+        "chill out",
+        "hold up",
+        "relax"
+      ]
+    },
+    {
+      "pattern": "\\\\bstop talking\\\\b",
+      "replacement": [
+        "chill with that",
+        "hold up",
+        "relax bro"
+      ]
+    },
+    {
+      "pattern": "\\\\bstop\\\\b",
+      "replacement": [
+        "chill",
+        "cut it out",
+        "relax"
+      ]
+    },
+    {
+      "pattern": "\\\\bcalm\\\\b",
+      "replacement": [
+        "chill",
+        "cool out",
+        "relax"
+      ]
+    },
+    {
+      "pattern": "\\\\btrue\\\\b",
+      "replacement": [
+        "facts",
+        "real",
+        "no cap"
+      ]
+    },
+    {
+      "pattern": "\\\\bfalse\\\\b",
+      "replacement": [
+        "cap",
+        "nah",
+        "that's not it"
+      ]
+    },
+    {
+      "pattern": "\\\\bmaybe\\\\b",
+      "replacement": [
+        "might be",
+        "lowkey maybe",
+        "possibly"
+      ]
+    },
+    {
+      "pattern": "\\\\bdefinitely\\\\b",
+      "replacement": [
+        "for sure",
+        "fs",
+        "100%"
+      ]
+    },
+    {
+      "pattern": "\\\\bprobably not\\\\b",
+      "replacement": [
+        "prolly not",
+        "I doubt it",
+        "nah probably not"
+      ]
+    },
+    {
+      "pattern": "\\\\bof course\\\\b",
+      "replacement": [
+        "ofc",
+        "bet",
+        "yeah fs"
+      ]
+    },
+    {
+      "pattern": "\\\\bof course not\\\\b",
+      "replacement": [
+        "hell nah",
+        "nah fs not",
+        "no shot"
+      ]
+    },
+    {
+      "pattern": "\\\\bno problem\\\\b",
+      "replacement": [
+        "no worries",
+        "you good",
+        "all good"
+      ]
+    },
+    {
+      "pattern": "\\\\byou're welcome\\\\b",
+      "replacement": [
+        "no problem",
+        "ofc",
+        "anytime"
+      ]
+    },
+    {
+      "pattern": "\\\\bgood job\\\\b",
+      "replacement": [
+        "W work",
+        "you cooked",
+        "good stuff"
+      ]
+    },
+    {
+      "pattern": "\\\\bnice job\\\\b",
+      "replacement": [
+        "you cooked",
+        "W",
+        "solid work"
+      ]
+    },
+    {
+      "pattern": "\\\\bgood luck\\\\b",
+      "replacement": [
+        "gl",
+        "good luck gang",
+        "hope you clutch"
+      ]
+    },
+    {
+      "pattern": "\\\\bcongratulations\\\\b",
+      "replacement": [
+        "congrats",
+        "W",
+        "big W"
+      ]
+    },
+    {
+      "pattern": "\\\\bcongrats\\\\b",
+      "replacement": [
+        "W",
+        "big W",
+        "good stuff"
+      ]
+    },
+    {
+      "pattern": "\\\\bthat sucks\\\\b",
+      "replacement": [
+        "that's rough",
+        "that's tough",
+        "damn that's rough"
+      ]
+    },
+    {
+      "pattern": "\\\\btoo bad\\\\b",
+      "replacement": [
+        "that's tough",
+        "rough",
+        "unfortunate"
+      ]
+    },
+    {
+      "pattern": "\\\\bI am sorry\\\\b",
+      "replacement": [
+        "my bad",
+        "that's on me",
+        "I apologize fr"
+      ]
+    },
+    {
+      "pattern": "\\\\bsorry\\\\b",
+      "replacement": [
+        "my bad",
+        "my fault",
+        "that's on me"
+      ]
+    },
+    {
+      "pattern": "\\\\bmy bad\\\\b",
+      "replacement": [
+        "my fault",
+        "that's on me",
+        "I gotchu"
+      ]
+    },
+    {
+      "pattern": "\\\\bmy fault\\\\b",
+      "replacement": [
+        "my bad",
+        "that's on me",
+        "I gotchu"
+      ]
+    },
+    {
+      "pattern": "\\\\bwhat happened to\\\\b",
+      "replacement": [
+        "what happened with",
+        "what went down with",
+        "what's up with"
+      ]
+    },
+    {
+      "pattern": "\\\\bhow did you\\\\b",
+      "replacement": [
+        "how you",
+        "how'd you",
+        "how you manage to"
+      ]
+    },
+    {
+      "pattern": "\\\\bwhy are you\\\\b",
+      "replacement": [
+        "why you",
+        "what you on with",
+        "how come you"
+      ]
+    },
+    {
+      "pattern": "\\\\bwhy did you\\\\b",
+      "replacement": [
+        "why you",
+        "how come you",
+        "what made you"
+      ]
+    },
+    {
+      "pattern": "\\\\bwhere did you\\\\b",
+      "replacement": [
+        "where you",
+        "where'd you",
+        "where you go"
+      ]
+    },
+    {
+      "pattern": "\\\\bwhat are we doing\\\\b",
+      "replacement": [
+        "what we on",
+        "what's the move",
+        "what we doing"
+      ]
+    },
+    {
+      "pattern": "\\\\bwhat time\\\\b",
+      "replacement": [
+        "what time we on",
+        "what time is it",
+        "when we doing this"
+      ]
+    },
+    {
+      "pattern": "\\\\bright here\\\\b",
+      "replacement": [
+        "right here fr",
+        "here",
+        "I'm right here"
+      ]
+    },
+    {
+      "pattern": "\\\\bright there\\\\b",
+      "replacement": [
+        "over there",
+        "right there fr",
+        "there"
+      ]
+    },
+    {
+      "pattern": "\\\\bfar away\\\\b",
+      "replacement": [
+        "way out",
+        "far as hell",
+        "mad far"
+      ]
+    },
+    {
+      "pattern": "\\\\bclose by\\\\b",
+      "replacement": [
+        "nearby",
+        "right around here",
+        "close"
+      ]
+    },
+    {
+      "pattern": "\\\\bvery fast\\\\b",
+      "replacement": [
+        "mad quick",
+        "quick as hell",
+        "real fast"
+      ]
+    },
+    {
+      "pattern": "\\\\bvery slow\\\\b",
+      "replacement": [
+        "mad slow",
+        "slow as hell",
+        "taking forever"
+      ]
+    },
+    {
+      "pattern": "\\\\bquickly\\\\b",
+      "replacement": [
+        "quick",
+        "real quick",
+        "ASAP"
+      ]
+    },
+    {
+      "pattern": "\\\\bslowly\\\\b",
+      "replacement": [
+        "slow",
+        "take your time",
+        "easy"
+      ]
+    },
+    {
+      "pattern": "\\\\bcurrently\\\\b",
+      "replacement": [
+        "rn",
+        "right now",
+        "as we speak"
+      ]
+    },
+    {
+      "pattern": "\\\\blater\\\\b",
+      "replacement": [
+        "later on",
+        "in a bit",
+        "after a minute"
+      ]
+    },
+    {
+      "pattern": "\\\\bsoon\\\\b",
+      "replacement": [
+        "in a bit",
+        "shortly",
+        "real soon"
+      ]
+    },
+    {
+      "pattern": "\\\\btoday\\\\b",
+      "replacement": [
+        "today fr",
+        "rn",
+        "this day"
+      ]
+    },
+    {
+      "pattern": "\\\\btomorrow\\\\b",
+      "replacement": [
+        "tmrw",
+        "tomorrow fr",
+        "next day"
+      ]
+    },
+    {
+      "pattern": "\\\\byesterday\\\\b",
+      "replacement": [
+        "yesterday fr",
+        "the other day",
+        "last day"
+      ]
+    },
+    {
+      "pattern": "\\\\bweekend\\\\b",
+      "replacement": [
+        "the weekend",
+        "this weekend fr",
+        "the break"
+      ]
+    },
+    {
+      "pattern": "\\\\btonight\\\\b",
+      "replacement": [
+        "tonight fr",
+        "later tonight",
+        "tn"
+      ]
+    },
+    {
+      "pattern": "\\\\bparty\\\\b",
+      "replacement": [
+        "function",
+        "kickback",
+        "function fr"
+      ]
+    },
+    {
+      "pattern": "\\\\bhang out\\\\b",
+      "replacement": [
+        "chill",
+        "kick it",
+        "link up"
+      ]
+    },
+    {
+      "pattern": "\\\\bhanging out\\\\b",
+      "replacement": [
+        "chillin",
+        "kickin it",
+        "posted up"
+      ]
+    },
+    {
+      "pattern": "\\\\bmeet me\\\\b",
+      "replacement": [
+        "link with me",
+        "pull up on me",
+        "slide thru"
+      ]
+    },
+    {
+      "pattern": "\\\\bmeeting\\\\b",
+      "replacement": [
+        "link up",
+        "meetup",
+        "link"
+      ]
+    },
+    {
+      "pattern": "\\\\bfriend group\\\\b",
+      "replacement": [
+        "the homies",
+        "the gang",
+        "the crew"
+      ]
+    },
+    {
+      "pattern": "\\\\bgroup\\\\b",
+      "replacement": [
+        "the squad",
+        "the crew",
+        "the gang"
+      ]
+    },
+    {
+      "pattern": "\\\\bteam\\\\b",
+      "replacement": [
+        "squad",
+        "crew",
+        "the boys"
+      ]
+    },
+    {
+      "pattern": "\\\\bgame\\\\b",
+      "replacement": [
+        "match",
+        "game",
+        "session"
+      ]
+    },
+    {
+      "pattern": "\\\\bplaying\\\\b",
+      "replacement": [
+        "running it",
+        "on the game",
+        "locked in"
+      ]
+    },
+    {
+      "pattern": "\\\\bplay\\\\b",
+      "replacement": [
+        "run it",
+        "hop on",
+        "run a game"
+      ]
+    },
+    {
+      "pattern": "\\\\bwinning streak\\\\b",
+      "replacement": [
+        "on a run",
+        "cooking",
+        "hot streak"
+      ]
+    },
+    {
+      "pattern": "\\\\bwinning\\\\b",
+      "replacement": [
+        "cooking",
+        "on a run",
+        "going crazy"
+      ]
+    },
+    {
+      "pattern": "\\\\bdefeat\\\\b",
+      "replacement": [
+        "L",
+        "loss",
+        "took an L"
+      ]
+    },
+    {
+      "pattern": "\\\\bscore\\\\b",
+      "replacement": [
+        "score",
+        "numbers",
+        "the tally"
+      ]
+    },
+    {
+      "pattern": "\\\\blevel up\\\\b",
+      "replacement": [
+        "rank up",
+        "upgrade",
+        "level up fr"
+      ]
+    },
+    {
+      "pattern": "\\\\bstrong\\\\b",
+      "replacement": [
+        "built",
+        "solid",
+        "tough"
+      ]
+    },
+    {
+      "pattern": "\\\\bweak\\\\b",
+      "replacement": [
+        "soft",
+        "frail",
+        "not sturdy"
+      ]
+    },
+    {
+      "pattern": "\\\\bsmart\\\\b",
+      "replacement": [
+        "sharp",
+        "locked in",
+        "big brain"
+      ]
+    },
+    {
+      "pattern": "\\\\bstupid\\\\b",
+      "replacement": [
+        "wild",
+        "buggin",
+        "not thinking"
+      ]
+    },
+    {
+      "pattern": "\\\\bweird\\\\b",
+      "replacement": [
+        "strange",
+        "wild",
+        "different"
+      ]
+    },
+    {
+      "pattern": "\\\\beasy\\\\b",
+      "replacement": [
+        "light work",
+        "free",
+        "no sweat"
+      ]
+    },
+    {
+      "pattern": "\\\\bhard\\\\b",
+      "replacement": [
+        "tough",
+        "no joke",
+        "challenging"
+      ]
+    },
+    {
+      "pattern": "\\\\bdifficult\\\\b",
+      "replacement": [
+        "tough",
+        "rough",
+        "no joke"
+      ]
+    },
+    {
+      "pattern": "\\\\bexpensive\\\\b",
+      "replacement": [
+        "pricey",
+        "costly",
+        "mad expensive"
+      ]
+    },
+    {
+      "pattern": "\\\\bcheap\\\\b",
+      "replacement": [
+        "low cost",
+        "budget",
+        "cheap fr"
+      ]
+    },
+    {
+      "pattern": "\\\\bsmall\\\\b",
+      "replacement": [
+        "lil",
+        "tiny",
+        "small lil"
+      ]
+    },
+    {
+      "pattern": "\\\\bbig\\\\b",
+      "replacement": [
+        "huge",
+        "mad big",
+        "big as hell"
+      ]
+    },
+    {
+      "pattern": "\\\\bhuge\\\\b",
+      "replacement": [
+        "massive",
+        "mad big",
+        "huge fr"
+      ]
+    },
+    {
+      "pattern": "\\\\bbeautiful\\\\b",
+      "replacement": [
+        "clean",
+        "fire",
+        "looking good"
+      ]
+    },
+    {
+      "pattern": "\\\\bugly\\\\b",
+      "replacement": [
+        "rough",
+        "not it",
+        "ain't lookin right"
+      ]
+    },
+    {
+      "pattern": "\\\\bboring\\\\b",
+      "replacement": [
+        "dry",
+        "dead",
+        "not hittin"
+      ]
+    },
+    {
+      "pattern": "\\\\binteresting\\\\b",
+      "replacement": [
+        "kinda fire",
+        "intriguing",
+        "that's something"
+      ]
+    },
+    {
+      "pattern": "\\\\bfunny as hell\\\\b",
+      "replacement": [
+        "weak",
+        "crying",
+        "I'm dead"
+      ]
+    },
+    {
+      "pattern": "\\\\bI am laughing\\\\b",
+      "replacement": [
+        "I'm crying",
+        "I'm weak",
+        "I'm dead"
+      ]
+    },
+    {
+      "pattern": "\\\\blaughing\\\\b",
+      "replacement": [
+        "crying",
+        "weak",
+        "dead"
+      ]
+    },
+    {
+      "pattern": "\\\\bcrying\\\\b",
+      "replacement": [
+        "I'm weak",
+        "tears",
+        "cryin"
+      ]
+    },
+    {
+      "pattern": "\\\\bno joke\\\\b",
+      "replacement": [
+        "deadass",
+        "fr",
+        "I'm serious"
+      ]
     }
   ],
   "openers": [
@@ -994,7 +2136,12 @@
     "bruh",
     "nah",
     "ight",
-    "look"
+    "look",
+    "yo gang",
+    "aye",
+    "look here",
+    "listen",
+    "my guy"
   ],
   "mid_phrases": [
     "lowkey",
@@ -1006,7 +2153,17 @@
     "say less",
     "you feel me",
     "I'm sayin",
-    "type shi"
+    "type shi",
+    "for sure",
+    "on me",
+    "you already know",
+    "straight up",
+    "real spill",
+    "ain't even gonna lie",
+    "that's the move",
+    "we outside",
+    "locked in",
+    "off rip"
   ],
   "closers": [
     "fr",
@@ -1017,7 +2174,12 @@
     "bet",
     "on god",
     "😭",
-    "💀"
+    "💀",
+    "stay solid",
+    "you know the vibes",
+    "that's the word",
+    "we good",
+    "straight up"
   ],
   "extras": [
     "bro",
@@ -1030,7 +2192,22 @@
     "highkey",
     "deadass",
     "no cap",
-    "bet"
+    "bet",
+    "crew",
+    "squad",
+    "my guy",
+    "my boy",
+    "my girl",
+    "you feel me",
+    "say less",
+    "for sure",
+    "on me",
+    "locked in",
+    "we outside",
+    "light work",
+    "big W",
+    "tough",
+    "wild"
   ],
   "word_blacklist": []
 }
