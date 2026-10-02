@@ -680,10 +680,8 @@ async def strike_command(
         extra = f"\nRole action: **{old_role} → {new_role}**"
 
     await interaction.followup.send(
-        format_staff_strike(member, strike)
-        + f"\n\nActive strikes: **{active_count}**"
-        + extra,
-        ephemeral=False,
+        "✅ Strike issued successfully.",
+        ephemeral=True,
     )
 
 
