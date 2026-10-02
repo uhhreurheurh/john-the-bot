@@ -834,8 +834,10 @@ async def on_message(message: discord.Message):
     # command parser below. This keeps ordinary target messages from getting
     # swallowed by unrelated command handlers.
     if not proxy_message:
-        hood_target_ids = hood_targets.get(message.channel.id, set())
-        uwu_target_ids = uwu_targets.get(message.channel.id, set())
+        # Read the authoritative live state directly from the feature modules.
+        # Do not rely on star-imported copies in this critical message path.
+        hood_target_ids = hoodify_feature.hood_targets.get(message.channel.id, set())
+        uwu_target_ids = uwuify_feature.uwu_targets.get(message.channel.id, set())
 
         textify_debug(
             "BOT-L09 TARGET STATE EARLY",
@@ -844,8 +846,8 @@ async def on_message(message: discord.Message):
             uwu_targets=sorted(uwu_target_ids),
             in_hood=message.author.id in hood_target_ids,
             in_uwu=message.author.id in uwu_target_ids,
-            uwu_blacklisted=message.author.id in uwu_user_blacklist,
-            hood_blacklisted=message.author.id in hood_user_blacklist,
+            uwu_blacklisted=message.author.id in uwuify_feature.uwu_user_blacklist,
+            hood_blacklisted=message.author.id in hoodify_feature.hood_user_blacklist,
             ban_listed=message.author.id in uwu_hoodify_ban,
         )
 
@@ -853,7 +855,7 @@ async def on_message(message: discord.Message):
         # same channel, matching the existing routing order.
         if message.author.id in hood_target_ids and content:
             textify_debug("BOT-L10 HOOD EARLY TARGET MATCH")
-            if message.author.id in hood_user_blacklist:
+            if message.author.id in hoodify_feature.hood_user_blacklist:
                 textify_debug("BOT-L11 HOOD EARLY BLACKLIST HIT - disabling")
                 await disable_hood_for_user(message.author.id)
                 return
@@ -875,7 +877,7 @@ async def on_message(message: discord.Message):
 
             try:
                 textify_debug("BOT-L15 HOOD EARLY SEND CALL")
-                await send_hood_message(message.channel, message.author, content)
+                await hoodify_feature.send_hood_message(message.channel, message.author, content)
                 textify_debug("BOT-L16 HOOD EARLY SEND SUCCESS")
                 deleted = await delete_original_message(message)
                 textify_debug("BOT-L17 HOOD EARLY DELETE RESULT", deleted=deleted)
@@ -887,7 +889,7 @@ async def on_message(message: discord.Message):
 
         if message.author.id in uwu_target_ids and content:
             textify_debug("BOT-L10 UWU EARLY TARGET MATCH")
-            if message.author.id in uwu_user_blacklist:
+            if message.author.id in uwuify_feature.uwu_user_blacklist:
                 textify_debug("BOT-L11 UWU EARLY BLACKLIST HIT - disabling")
                 await disable_uwu_for_user(message.author.id)
                 return
@@ -909,7 +911,7 @@ async def on_message(message: discord.Message):
 
             try:
                 textify_debug("BOT-L15 UWU EARLY SEND CALL")
-                await send_uwu_message(message.channel, message.author, content)
+                await uwuify_feature.send_uwu_message(message.channel, message.author, content)
                 textify_debug("BOT-L16 UWU EARLY SEND SUCCESS")
                 deleted = await delete_original_message(message)
                 textify_debug("BOT-L17 UWU EARLY DELETE RESULT", deleted=deleted)
