@@ -14,13 +14,8 @@ HOOD_WEBHOOK_NAME = "Hoodify Relay"
 HOOD_WEBHOOK_IDLE_SECONDS = 5 * 60
 HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS = 60
 
-# Members with one of these roles may enable/disable HOODIFY.
-# Set to the same roles as UWU, or change them independently.
-HOOD_ALLOWED_ROLE_IDS = {
-    1518416402141417472,
-    1378810715611336914,
-    1377468541779050636,
-}
+# Backward-compatible alias. The actual whitelist is shared in bot.py.
+HOOD_ALLOWED_ROLE_IDS = textify_whitelist
 
 # Maximum number of unique people who can be actively HOODIFIED at once.
 MAX_ACTIVE_HOOD_TARGETS = 5
