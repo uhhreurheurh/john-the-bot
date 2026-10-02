@@ -1080,6 +1080,14 @@
       "rating": 5,
       "comment": "hes chill, good to hang with, SOME times an asshole, but funny",
       "created_at": "2026-10-02 21:00:00"
+    },
+    {
+      "id": 158,
+      "target_id": 1341368821352497243,
+      "reviewer_id": 1122664970841247814,
+      "rating": 5,
+      "comment": "🥰🥰😳😍",
+      "created_at": "2026-10-02 21:25:30"
     }
   ],
   "review_update_requests": [
