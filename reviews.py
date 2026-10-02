@@ -1059,12 +1059,11 @@ async def review_blacklist_add_command(
     interaction: discord.Interaction,
     member: discord.Member,
 ):
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer()
 
     if member.id in review_blacklist:
         await interaction.followup.send(
             f"ℹ️ {member.mention} is already blacklisted from reviews.",
-            ephemeral=True,
         )
         return
 
@@ -1082,9 +1081,13 @@ async def review_blacklist_add_command(
     )
 
     message = f"✅ {member.mention} can no longer submit or update reviews."
+    await interaction.followup.send(message)
+
     if not synced:
-        message += f"\n⚠️ GitHub sync failed: {github_blacklist_sync_error}"
-    await interaction.followup.send(message, ephemeral=True)
+        await interaction.followup.send(
+            f"⚠️ GitHub sync failed: {github_blacklist_sync_error}",
+            ephemeral=True,
+        )
 
 
 @review_blacklist_group.command(
@@ -1097,12 +1100,11 @@ async def review_blacklist_remove_command(
     interaction: discord.Interaction,
     member: discord.Member,
 ):
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer()
 
     if member.id not in review_blacklist:
         await interaction.followup.send(
             f"ℹ️ {member.mention} is not currently blacklisted from reviews.",
-            ephemeral=True,
         )
         return
 
@@ -1120,9 +1122,13 @@ async def review_blacklist_remove_command(
     )
 
     message = f"✅ {member.mention} can submit and update reviews again."
+    await interaction.followup.send(message)
+
     if not synced:
-        message += f"\n⚠️ GitHub sync failed: {github_blacklist_sync_error}"
-    await interaction.followup.send(message, ephemeral=True)
+        await interaction.followup.send(
+            f"⚠️ GitHub sync failed: {github_blacklist_sync_error}",
+            ephemeral=True,
+        )
 
 
 @review_blacklist_group.command(
@@ -1138,7 +1144,6 @@ async def review_blacklist_status_command(
     status = member.id in review_blacklist
     await interaction.response.send_message(
         f"ℹ️ {member.mention} is **{'blacklisted' if status else 'not blacklisted'}** from the review system.",
-        ephemeral=True,
     )
 
 
