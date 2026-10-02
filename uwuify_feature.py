@@ -8,12 +8,8 @@ UWU_WORD_BLACKLIST = set(_UWU_DATA.get("word_blacklist", []))
 UWU_WEBHOOK_NAME = "Uwuify Relay"
 UWU_WEBHOOK_IDLE_SECONDS = 5 * 60
 
-# Only members with one of these role IDs may enable/disable UWU mode.
-UWU_ALLOWED_ROLE_IDS = {
-    1518416402141417472,
-    1378810715611336914,
-    1377468541779050636,
-}
+# Backward-compatible alias. The actual whitelist is shared in bot.py.
+UWU_ALLOWED_ROLE_IDS = textify_whitelist
 
 # External proxy bots whose output should be checked for active UWU/HOODIFY targets.
 # Use the bot name here so we do not rely on an unverified application ID.
@@ -42,7 +38,7 @@ UWU_FLAGS = uwuify.SMILEY | uwuify.YU | uwuify.STUTTER
 def uwu_user_is_whitelisted(member: discord.Member | discord.User) -> bool:
     """Return True when the member has at least one allowed UWU role."""
     role_ids = [role.id for role in getattr(member, "roles", ())]
-    result = any(role_id in UWU_ALLOWED_ROLE_IDS for role_id in role_ids)
+    result = any(role_id in textify_whitelist for role_id in role_ids)
     return result
 
 
