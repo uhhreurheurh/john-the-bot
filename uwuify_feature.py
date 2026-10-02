@@ -332,7 +332,7 @@ async def set_uwu_target(
                     uwu_targets.pop(channel.id, None)
             raise
 
-        _reset_uwu_webhook_timer(channel.id, webhook)
+        _reset_uwu_webhook_timer(channel.id, target.id, webhook)
         return webhook
 
 
@@ -428,7 +428,7 @@ async def send_uwu_message(
     # Never send a blacklisted word/phrase.
     ensure_uwu_message_is_allowed(content)
 
-    webhook = await get_uwu_webhook(channel)
+    webhook = await get_uwu_webhook(channel, target)
 
     # Protect Discord mentions before uwuify transforms the text.
     # This keeps @users, @roles, and #channels intact and clickable.
@@ -486,7 +486,7 @@ async def send_uwu_message(
             )
         )
 
-    _reset_uwu_webhook_timer(channel.id, webhook)
+    _reset_uwu_webhook_timer(channel.id, target.id, webhook)
     return sent_messages
 
 
@@ -500,7 +500,8 @@ async def cleanup_stale_uwu_webhooks() -> None:
         return
 
     bot_id = bot.user.id
-    tracked_ids = {        entry["webhook"].id
+    tracked_ids = {
+        entry["webhook"].id
         for entry in uwu_webhooks.values()
         if entry.get("webhook") is not None
     }
@@ -519,8 +520,8 @@ async def cleanup_stale_uwu_webhooks() -> None:
             if webhook.id in tracked_ids:
                 continue
 
-            # Only delete webhooks with our exact name and created by this bot.
-            if webhook.name != UWU_WEBHOOK_NAME:
+            # Only delete webhooks with our target-specific name and created by this bot.
+            if not webhook.name.startswith(f"{UWU_WEBHOOK_NAME} | "):
                 continue
             if webhook.user is None or webhook.user.id != bot_id:
                 continue
@@ -532,6 +533,18 @@ async def cleanup_stale_uwu_webhooks() -> None:
             if webhook.created_at is not None:
                 age = discord.utils.utcnow() - webhook.created_at
                 if age < datetime.timedelta(minutes=10):
+                    raw_id = webhook.name[len(f"{UWU_WEBHOOK_NAME} | "):].strip()
+                    try:
+                        recovered_user_id = int(raw_id)
+                    except ValueError:
+                        continue
+                    uwu_targets.setdefault(webhook.channel_id, set()).add(recovered_user_id)
+                    key = (webhook.channel_id, recovered_user_id)
+                    uwu_webhooks.setdefault(
+                        key,
+                        {"webhook": webhook, "timer": None, "user_id": recovered_user_id},
+                    )
+                    _reset_uwu_webhook_timer(webhook.channel_id, recovered_user_id, webhook)
                     continue
 
             try:
