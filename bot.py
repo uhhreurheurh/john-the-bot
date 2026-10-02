@@ -3002,6 +3002,24 @@ async def on_ready():
         main_guild_object = discord.Object(id=MAIN_SERVER)
 
         try:
+            # Feature modules use decorators during import. Re-register their
+            # command objects explicitly as a safety net in case a module was
+            # imported while bot.py was still initializing and its decorator
+            # did not land on the live CommandTree.
+            feature_commands = (
+                globals().get("uwu_command"),
+                globals().get("unuwuify_command"),
+                globals().get("uwucount_root_command"),
+                globals().get("hoodify_command"),
+                globals().get("unhoodify_command"),
+                globals().get("hoodcount_root_command"),
+            )
+            registered_names = {command.name for command in tree.get_commands()}
+            for command in feature_commands:
+                if isinstance(command, app_commands.Command) and command.name not in registered_names:
+                    tree.add_command(command)
+                    registered_names.add(command.name)
+
             # Register the complete current CommandTree directly into the
             # main guild. This avoids guild copy state getting out of sync with
             # the decorators defined in the feature modules.
