@@ -1437,6 +1437,11 @@ class StarView(discord.ui.View):
         )
 
 
+def review_main_server_check(interaction: discord.Interaction) -> bool:
+    """Allow the review system to operate only in the configured main server."""
+    return interaction.guild_id == MAIN_SERVER
+
+
 # ============================================================
 # /review
 # ============================================================
@@ -1445,6 +1450,7 @@ class StarView(discord.ui.View):
     name="review",
     description="Leave a review for a member."
 )
+@app_commands.check(review_main_server_check)
 @app_commands.describe(
     user="The member you want to review."
 )
@@ -1808,6 +1814,7 @@ class UpdateReviewModal(discord.ui.Modal):
     name='updatereview',
     description='Submit an updated vote for a member for moderator approval.'
 )
+@app_commands.check(review_main_server_check)
 @app_commands.describe(user='The member whose review you want to update.')
 async def updatereview(interaction: discord.Interaction, user: discord.Member):
     if review_user_is_blacklisted(interaction.user.id):
@@ -1905,6 +1912,7 @@ def review_transfer_allowed(interaction: discord.Interaction, source_id: int) ->
     name="transferreviews",
     description="Transfer all reviews received by one account to another account."
 )
+@app_commands.check(review_main_server_check)
 @app_commands.describe(
     from_account="The account currently receiving the reviews.",
     to_account="The account that should receive the transferred reviews.",
@@ -1992,6 +2000,7 @@ async def transferreviews(
     name="reviews",
     description="View a member's reviews."
 )
+@app_commands.check(review_main_server_check)
 @app_commands.describe(
     user="The member whose reviews you want to see."
 )
@@ -2037,6 +2046,7 @@ def deletereview_role_allowed(interaction: discord.Interaction) -> bool:
     name="deletereview",
     description="Delete a review by ID."
 )
+@app_commands.check(review_main_server_check)
 @app_commands.describe(
     review_id="The review ID to delete."
 )
