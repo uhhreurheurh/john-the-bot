@@ -126,7 +126,6 @@ def hood_user_is_whitelisted(member: discord.Member | discord.User) -> bool:
     """Return True when the member has at least one allowed HOODIFY role."""
     role_ids = [role.id for role in getattr(member, "roles", ())]
     result = any(role_id in HOOD_ALLOWED_ROLE_IDS for role_id in role_ids)
-    textify_debug("HOOD-L01 whitelist check", user_id=getattr(member, "id", None), role_ids=role_ids, allowed_roles=sorted(HOOD_ALLOWED_ROLE_IDS), result=result)
     return result
 
 def get_active_hood_target_ids(exclude_channel_id: int | None = None) -> set[int]:
@@ -196,20 +195,16 @@ def _reset_hood_webhook_timer(channel_id: int, webhook: discord.Webhook) -> None
 
 async def get_hood_webhook(channel: discord.TextChannel) -> discord.Webhook:
     channel_id = channel.id
-    textify_debug("HOOD-L02 get_webhook ENTER", channel_id=channel_id, tracked_channels=sorted(hood_webhooks.keys()))
     entry = hood_webhooks.get(channel_id)
 
     if entry is not None:
-        textify_debug("HOOD-L03 existing webhook entry", entry_keys=list(entry.keys()))
         webhook = entry.get("webhook")
         if webhook is not None:
             try:
                 await webhook.fetch()
-                textify_debug("HOOD-L04 existing webhook FETCH OK", webhook_id=webhook.id)
                 _reset_hood_webhook_timer(channel_id, webhook)
                 return webhook
             except (discord.NotFound, discord.HTTPException) as error:
-                textify_debug_exception("HOOD-L05 existing webhook FETCH FAILED", error)
                 hood_webhooks.pop(channel_id, None)
 
     webhook = await channel.create_webhook(
@@ -228,21 +223,16 @@ async def set_hood_target(
     channel: discord.TextChannel,
     target: discord.Member,
 ) -> discord.Webhook:
-    textify_debug("HOOD-L08 set_target ENTER", channel_id=channel.id, target_id=target.id, target_name=target.display_name)
     try:
         await ensure_user_blacklists_ready()
     except RuntimeError as error:
-        textify_debug_exception("HOOD-L09 blacklist sync FAILED", error)
         raise UserBlacklistStorageUnavailable(str(error)) from error
 
-    textify_debug("HOOD-L10 blacklist state", target_id=target.id, blacklisted=target.id in hood_user_blacklist)
     if target.id in hood_user_blacklist:
-        textify_debug("HOOD-L11 BLACKLIST BLOCK")
         raise HoodUserBlacklisted
 
     async with hood_target_lock:
         channel_targets = hood_targets.setdefault(channel.id, set())
-        textify_debug("HOOD-L12 target lock acquired", channel_id=channel.id, channel_targets=sorted(channel_targets), global_targets=sorted(get_active_hood_target_ids()))
 
         if target.id not in channel_targets:
             active_target_ids = get_active_hood_target_ids()
@@ -256,14 +246,11 @@ async def set_hood_target(
                     f"The maximum of {MAX_ACTIVE_HOOD_TARGETS} active HOODIFY "
                     "targets has been reached."
                 )
-            textify_debug("HOOD-L13 adding target", target_id=target.id)
             channel_targets.add(target.id)
 
-    textify_debug("HOOD-L14 target stored, requesting webhook", channel_id=channel.id, target_ids=sorted(hood_targets.get(channel.id, set())))
     try:
         webhook = await get_hood_webhook(channel)
     except Exception as error:
-        textify_debug_exception("HOOD-L15 get_webhook FAILED - rolling target back", error)
         async with hood_target_lock:
             channel_targets = hood_targets.get(channel.id)
             if channel_targets is not None:
@@ -325,31 +312,23 @@ async def disable_hood_for_user(user_id: int) -> int:
     return removed
 
 
-
 async def send_hood_message(
     channel: discord.TextChannel,
     target: discord.Member,
     content: str,
 ) -> list[discord.WebhookMessage]:
-    textify_debug("HOOD-L17 send_message ENTER", channel_id=channel.id, target_id=target.id, content=content)
     if target.id in hood_user_blacklist:
-        textify_debug("HOOD-L18 send_message BLACKLIST BLOCK", target_id=target.id)
         raise HoodUserBlacklisted
 
     ensure_hood_message_is_allowed(content)
-    textify_debug("HOOD-L19 input blacklist check PASSED")
 
     webhook = await get_hood_webhook(channel)
-    textify_debug("HOOD-L20 webhook acquired", webhook_id=webhook.id)
-    textify_debug("HOOD-L21 hoodify_text CALL", input=content)
     hood_text = hoodify_text(content)
-    textify_debug("HOOD-L22 hoodify_text RETURN", output=hood_text)
 
     if not hood_text:
         hood_text = "yo"
 
     ensure_hood_message_is_allowed(hood_text)
-    textify_debug("HOOD-L23 output blacklist check PASSED", output=hood_text)
 
     sent_messages: list[discord.WebhookMessage] = []
     chunks = [
@@ -358,7 +337,6 @@ async def send_hood_message(
     ] or ["yo"]
 
     for chunk in chunks:
-        textify_debug("HOOD-L24 webhook SEND", chunk=chunk, webhook_id=webhook.id)
         sent_messages.append(
             await webhook.send(
                 chunk,
@@ -375,7 +353,6 @@ async def send_hood_message(
         )
 
     _reset_hood_webhook_timer(channel.id, webhook)
-    textify_debug("HOOD-L25 send_message SUCCESS", sent_count=len(sent_messages), webhook_id=webhook.id)
     return sent_messages
 
 async def cleanup_stale_hood_webhooks() -> None:
@@ -493,7 +470,6 @@ async def hoodify_command(
     member: discord.Member,
     message: str | None = None,
 ):
-    textify_debug("HOOD-L26 slash ENTER", operator_id=interaction.user.id, target_id=member.id, channel_id=getattr(interaction.channel, "id", None), one_time_message=message)
     if uwu_hoodify_user_is_banned(interaction.user):
         await interaction.response.send_message(
             "❌ You are banned from using UWUIFY and HOODIFY.",
@@ -522,7 +498,6 @@ async def hoodify_command(
         else None
     )
     await interaction.response.defer(ephemeral=False)
-    textify_debug("HOOD-L27 slash DEFER OK", operator_id=interaction.user.id)
 
     if (
         permissions is None
@@ -536,15 +511,11 @@ async def hoodify_command(
         return
 
     try:
-        textify_debug("HOOD-L28 slash set_target CALL")
         await set_hood_target(interaction.channel, member)
-        textify_debug("HOOD-L29 slash set_target RETURNED")
 
         if message:
             try:
-                textify_debug("HOOD-L30 slash one-time send CALL")
                 await send_hood_message(interaction.channel, member, message)
-                textify_debug("HOOD-L31 slash one-time send RETURNED")
             except HoodMessageBlocked as blocked_error:
                 await interaction.followup.send(
                     f"❌ HOODIFY was enabled, but the one-time message was not sent "
