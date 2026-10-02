@@ -411,6 +411,14 @@ async def cleanup_stale_uwu_webhooks() -> None:
             if webhook.user is None or webhook.user.id != bot_id:
                 continue
 
+            # Never let a newly-created webhook from another running bot
+            # instance get deleted immediately during startup. Only consider
+            # webhooks that are at least 10 minutes old; the normal 5-minute
+            # idle timer handles current webhooks.
+            if webhook.created_at is not None:
+                age = discord.utils.utcnow() - webhook.created_at
+                if age < datetime.timedelta(minutes=10):
+                    continue
 
             try:
                 await webhook.delete(reason="Stale UWU webhook cleanup")
@@ -427,6 +435,9 @@ async def cleanup_stale_uwu_webhooks() -> None:
 
 @tasks.loop(seconds=UWU_WEBHOOK_CLEANUP_INTERVAL_SECONDS)
 async def uwu_webhook_cleanup_loop():
+    # Give the normal 5-minute idle timers first chance to clean up. The
+    # background stale cleanup begins after one interval.
+    await asyncio.sleep(UWU_WEBHOOK_CLEANUP_INTERVAL_SECONDS)
     await cleanup_stale_uwu_webhooks()
 
 
