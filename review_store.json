@@ -1040,6 +1040,14 @@
       "rating": 1,
       "comment": ".",
       "created_at": "2026-10-02 18:20:25"
+    },
+    {
+      "id": 153,
+      "target_id": 1542311839210406029,
+      "reviewer_id": 1201920572616097832,
+      "rating": 1,
+      "comment": "angolan scammer",
+      "created_at": "2026-10-02 18:20:39"
     }
   ],
   "review_update_requests": [
