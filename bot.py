@@ -611,6 +611,13 @@ async def delete_original_message(message: discord.Message) -> bool:
 
 proxy_requests: dict[int, dict] = {}
 
+# Discord itself is the authoritative source for target-specific webhooks.
+# These small per-channel caches let overlapping Railway instances recover the
+# active target immediately without scanning webhooks for every message.
+uwu_webhook_recovery_cache: dict[int, float] = {}
+hood_webhook_recovery_cache: dict[int, float] = {}
+WEBHOOK_RECOVERY_CACHE_SECONDS = 3.0
+
 
 def is_proxy_bot_message(message: discord.Message) -> bool:
     """Return True when a message came from a configured proxy bot."""
@@ -1263,8 +1270,23 @@ async def on_message(message: discord.Message):
         return
 
     # Enforce active transformations BEFORE parsing any prefix command.
-    # This prevents an active target from bypassing UWU/HOODIFY by sending
-    # command-looking text such as ",uwuify @user text".
+    # Recover target state from Discord's target-specific webhooks so another
+    # overlapping Railway instance cannot lose the active target state.
+    now = time.monotonic()
+    if (
+        now - uwu_webhook_recovery_cache.get(message.channel.id, 0.0)
+        >= WEBHOOK_RECOVERY_CACHE_SECONDS
+    ):
+        await recover_uwu_targets_from_channel(message.channel)
+        uwu_webhook_recovery_cache[message.channel.id] = now
+
+    if (
+        now - hood_webhook_recovery_cache.get(message.channel.id, 0.0)
+        >= WEBHOOK_RECOVERY_CACHE_SECONDS
+    ):
+        await recover_hood_targets_from_channel(message.channel)
+        hood_webhook_recovery_cache[message.channel.id] = now
+
     hood_target_ids = hood_targets.get(message.channel.id, set())
     uwu_target_ids = uwu_targets.get(message.channel.id, set())
 
