@@ -1178,6 +1178,32 @@ async def get_review_member_or_user(
 # DISCORD EMBED LIMITS
 # ============================================================
 
+# Anti-spam cooldown for reviews targeting the same member.
+# After one person submits a review, other people must wait before submitting
+# another review for that same target.
+REVIEW_TARGET_COOLDOWN_SECONDS = 5 * 60
+_review_target_cooldowns: dict[int, float] = {}
+
+
+def get_review_target_cooldown_remaining(target_id: int) -> int:
+    """Return remaining target cooldown seconds, or 0 when available."""
+    now = time.monotonic()
+    expires_at = _review_target_cooldowns.get(target_id, 0.0)
+    remaining = expires_at - now
+
+    if remaining <= 0:
+        _review_target_cooldowns.pop(target_id, None)
+        return 0
+
+    return max(1, int(remaining + 0.999))
+
+
+def start_review_target_cooldown(target_id: int) -> None:
+    _review_target_cooldowns[target_id] = (
+        time.monotonic() + REVIEW_TARGET_COOLDOWN_SECONDS
+    )
+
+
 EMBED_FIELD_VALUE_LIMIT = 1024
 
 
@@ -1295,12 +1321,36 @@ class ReviewModal(discord.ui.Modal):
         try:
             async with review_db_lock:
                 await refresh_local_review_db_from_github()
+
+                cooldown_remaining = get_review_target_cooldown_remaining(
+                    self.target.id
+                )
+                if cooldown_remaining:
+                    minutes, seconds = divmod(cooldown_remaining, 60)
+                    if minutes:
+                        wait_text = f"{minutes}m {seconds}s" if seconds else f"{minutes}m"
+                    else:
+                        wait_text = f"{seconds}s"
+
+                    await interaction.followup.send(
+                        f"⏳ **Review cooldown:** another review for {self.target.mention} "
+                        f"was submitted recently. Please wait **{wait_text}** before "
+                        "submitting another review for this member.",
+                        ephemeral=False,
+                    )
+                    return
+
                 review_id = add_review(
                     target_id=self.target.id,
                     reviewer_id=interaction.user.id,
                     rating=self.rating,
                     comment=self.comment.value
                 )
+
+                # Start the cooldown only after the review was successfully
+                # added, so failed/duplicate submissions do not block others.
+                start_review_target_cooldown(self.target.id)
+
                 sync_success, sync_error = await sync_review_db_to_github()
         except DuplicateReviewError:
             await interaction.followup.send(
