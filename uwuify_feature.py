@@ -481,20 +481,20 @@ async def uwu_command(
 ):
     """Enable automatic uwu replacement for a selected member in this channel."""
     if uwu_hoodify_user_is_banned(interaction.user):
-        await interaction.followup.send(
+        await interaction.response.send_message(
             "❌ You are banned from using UWUIFY and HOODIFY.",
             ephemeral=False,
         )
         return
     if not isinstance(interaction.user, discord.Member) or not uwu_user_is_whitelisted(interaction.user):
-        await interaction.followup.send(
+        await interaction.response.send_message(
             "❌ You need one of the allowed UWU roles to use this command.",
             ephemeral=False,
         )
         return
 
     if not isinstance(interaction.channel, discord.TextChannel):
-        await interaction.followup.send(
+        await interaction.response.send_message(
             "❌ This command can only be used in a normal text channel.",
             ephemeral=False,
         )
@@ -573,16 +573,9 @@ async def uwu_command(
             "UWUIFY slash activation failed: "
             f"{type(error).__name__}: {error}"
         )
-        if interaction.response.is_done():
-            await interaction.followup.send(
-                "❌ The UWUIFY mode could not be enabled. "
-                f"Error: `{type(error).__name__}: {error}`",
-                ephemeral=False,
-            )
-        else:
-            await interaction.followup.send(
-                "❌ The UWUIFY mode could not be enabled. "
-                f"Error: `{type(error).__name__}: {error}`",
-                ephemeral=False,
-            )
+        await interaction.followup.send(
+            "❌ The UWUIFY mode could not be enabled. "
+            f"Error: {type(error).__name__}: {error}",
+            ephemeral=False,
+        )
 
