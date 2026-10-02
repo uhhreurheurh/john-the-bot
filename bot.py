@@ -3025,10 +3025,22 @@ async def on_ready():
 
             if required_commands.issubset(synced_names):
                 commands_synced = True
+                print(
+                    "Slash commands synced: "
+                    + ", ".join(sorted(synced_names))
+                )
             else:
                 commands_synced = False
-        except Exception:
+                print(
+                    "Slash command sync incomplete. Missing: "
+                    + ", ".join(sorted(required_commands - synced_names))
+                )
+        except Exception as error:
             commands_synced = False
+            print(
+                "Slash command sync failed: "
+                f"{type(error).__name__}: {error}"
+            )
 
     if not review_db_restore_checked:
         restored = await restore_review_db_from_github()
