@@ -14,6 +14,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import traceback
+import sys
+
+# When Railway executes this file as bot.py, Python names the running module
+# "__main__". The feature modules import "bot", so alias the running module
+# before they are imported to prevent Python from creating a second bot module.
+sys.modules.setdefault("bot", sys.modules[__name__])
 
 import discord
 from discord import app_commands
