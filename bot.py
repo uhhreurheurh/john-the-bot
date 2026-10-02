@@ -828,6 +828,99 @@ async def on_message(message: discord.Message):
     prefix_command = prefix_command_parts[0] if prefix_command_parts else ""
     textify_debug("BOT-L07 prefix parse", spaced_parts=spaced_parts, prefix_command=prefix_command)
 
+    textify_debug("BOT-L08 PRE-TARGET CHECK START")
+
+    # Active text-transform targets MUST be handled before the large prefix
+    # command parser below. This keeps ordinary target messages from getting
+    # swallowed by unrelated command handlers.
+    if not proxy_message:
+        hood_target_ids = hood_targets.get(message.channel.id, set())
+        uwu_target_ids = uwu_targets.get(message.channel.id, set())
+
+        textify_debug(
+            "BOT-L09 TARGET STATE EARLY",
+            author_id=message.author.id,
+            hood_targets=sorted(hood_target_ids),
+            uwu_targets=sorted(uwu_target_ids),
+            in_hood=message.author.id in hood_target_ids,
+            in_uwu=message.author.id in uwu_target_ids,
+            uwu_blacklisted=message.author.id in uwu_user_blacklist,
+            hood_blacklisted=message.author.id in hood_user_blacklist,
+            ban_listed=message.author.id in uwu_hoodify_ban,
+        )
+
+        # HOODIFY takes precedence when a user is active in both modes in the
+        # same channel, matching the existing routing order.
+        if message.author.id in hood_target_ids and content:
+            textify_debug("BOT-L10 HOOD EARLY TARGET MATCH")
+            if message.author.id in hood_user_blacklist:
+                textify_debug("BOT-L11 HOOD EARLY BLACKLIST HIT - disabling")
+                await disable_hood_for_user(message.author.id)
+                return
+
+            bot_member = message.guild.me if message.guild is not None else None
+            if bot_member is None:
+                textify_debug("BOT-L12 HOOD EARLY RETURN - no guild member for bot")
+                return
+
+            permissions = message.channel.permissions_for(bot_member)
+            textify_debug(
+                "BOT-L13 HOOD EARLY PERMISSIONS",
+                manage_messages=permissions.manage_messages,
+                manage_webhooks=permissions.manage_webhooks,
+            )
+            if not permissions.manage_messages or not permissions.manage_webhooks:
+                textify_debug("BOT-L14 HOOD EARLY RETURN - missing permissions")
+                return
+
+            try:
+                textify_debug("BOT-L15 HOOD EARLY SEND CALL")
+                await send_hood_message(message.channel, message.author, content)
+                textify_debug("BOT-L16 HOOD EARLY SEND SUCCESS")
+                deleted = await delete_original_message(message)
+                textify_debug("BOT-L17 HOOD EARLY DELETE RESULT", deleted=deleted)
+            except HoodMessageBlocked as error:
+                textify_debug_exception("BOT-L18 HOOD EARLY MESSAGE BLOCKED", error)
+            except Exception as error:
+                textify_debug_exception("BOT-L19 HOOD EARLY TRANSFORM EXCEPTION", error)
+            return
+
+        if message.author.id in uwu_target_ids and content:
+            textify_debug("BOT-L10 UWU EARLY TARGET MATCH")
+            if message.author.id in uwu_user_blacklist:
+                textify_debug("BOT-L11 UWU EARLY BLACKLIST HIT - disabling")
+                await disable_uwu_for_user(message.author.id)
+                return
+
+            bot_member = message.guild.me if message.guild is not None else None
+            if bot_member is None:
+                textify_debug("BOT-L12 UWU EARLY RETURN - no guild member for bot")
+                return
+
+            permissions = message.channel.permissions_for(bot_member)
+            textify_debug(
+                "BOT-L13 UWU EARLY PERMISSIONS",
+                manage_messages=permissions.manage_messages,
+                manage_webhooks=permissions.manage_webhooks,
+            )
+            if not permissions.manage_messages or not permissions.manage_webhooks:
+                textify_debug("BOT-L14 UWU EARLY RETURN - missing permissions")
+                return
+
+            try:
+                textify_debug("BOT-L15 UWU EARLY SEND CALL")
+                await send_uwu_message(message.channel, message.author, content)
+                textify_debug("BOT-L16 UWU EARLY SEND SUCCESS")
+                deleted = await delete_original_message(message)
+                textify_debug("BOT-L17 UWU EARLY DELETE RESULT", deleted=deleted)
+            except UwuMessageBlocked as error:
+                textify_debug_exception("BOT-L18 UWU EARLY MESSAGE BLOCKED", error)
+            except Exception as error:
+                textify_debug_exception("BOT-L19 UWU EARLY TRANSFORM EXCEPTION", error)
+            return
+
+    textify_debug("BOT-L20 PRE-TARGET CHECK COMPLETE - ENTERING PREFIX HANDLERS")
+
     if prefix_command in {
         ",uwuify", ",unuwuify", ",hoodify", ",unhoodify", ",uwu", ",hood"
     } and uwu_hoodify_user_is_banned(message.author):
@@ -1295,80 +1388,8 @@ async def on_message(message: discord.Message):
             return
         return
 
-    # Enforce active transformations BEFORE parsing any prefix command.
-    # This is the original pre-merge flow: the selected user is checked against
-    # the in-memory target set, transformed through the temporary webhook, then
-    # the original user message is deleted.
-    hood_target_ids = hood_targets.get(message.channel.id, set())
-    uwu_target_ids = uwu_targets.get(message.channel.id, set())
-    textify_debug(
-        "BOT-L21 TARGET STATE",
-        author_id=message.author.id,
-        hood_targets=sorted(hood_target_ids),
-        uwu_targets=sorted(uwu_target_ids),
-        in_hood=message.author.id in hood_target_ids,
-        in_uwu=message.author.id in uwu_target_ids,
-        uwu_blacklisted=message.author.id in uwu_user_blacklist,
-        hood_blacklisted=message.author.id in hood_user_blacklist,
-        ban_listed=message.author.id in uwu_hoodify_ban,
-    )
-
-    if message.author.id in hood_target_ids and content:
-        textify_debug("BOT-L22 HOOD TARGET MATCH")
-        if message.author.id in hood_user_blacklist:
-            textify_debug("BOT-L23 HOOD BLACKLIST HIT - disabling")
-            await disable_hood_for_user(message.author.id)
-            return
-
-        bot_member = message.guild.me if message.guild is not None else None
-        if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
-            textify_debug("BOT-L24 HOOD RETURN missing Manage Messages", bot_member=bool(bot_member))
-            return
-
-        try:
-            textify_debug("BOT-L25 HOOD send_hood_message CALL")
-            await send_hood_message(
-                message.channel,
-                message.author,
-                content,
-            )
-            textify_debug("BOT-L26 HOOD transformation SUCCESS")
-            await delete_original_message(message)
-            textify_debug("BOT-L27 HOOD original deletion attempted")
-        except HoodMessageBlocked as error:
-            textify_debug_exception("BOT-L28 HOOD MESSAGE BLOCKED", error)
-        except Exception as error:
-            textify_debug_exception("BOT-L29 HOOD TRANSFORM EXCEPTION", error)
-        return
-
-    if message.author.id in uwu_target_ids and content:
-        textify_debug("BOT-L30 UWU TARGET MATCH")
-        if message.author.id in uwu_user_blacklist:
-            textify_debug("BOT-L31 UWU BLACKLIST HIT - disabling")
-            await disable_uwu_for_user(message.author.id)
-            return
-
-        bot_member = message.guild.me if message.guild is not None else None
-        if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
-            textify_debug("BOT-L32 UWU RETURN missing Manage Messages", bot_member=bool(bot_member))
-            return
-
-        try:
-            textify_debug("BOT-L33 UWU send_uwu_message CALL")
-            await send_uwu_message(
-                message.channel,
-                message.author,
-                content,
-            )
-            textify_debug("BOT-L34 UWU transformation SUCCESS")
-            await delete_original_message(message)
-            textify_debug("BOT-L35 UWU original deletion attempted")
-        except UwuMessageBlocked as error:
-            textify_debug_exception("BOT-L36 UWU MESSAGE BLOCKED", error)
-        except Exception as error:
-            textify_debug_exception("BOT-L37 UWU TRANSFORM EXCEPTION", error)
-        return
-
+    # Active targets were handled above, immediately after BOT-L07.
+    # Reaching this point means the author was not handled by UWUIFY/HOODIFY.
     # Only non-target users continue into the command parser.
     remember_proxy_request(message, content)
 
