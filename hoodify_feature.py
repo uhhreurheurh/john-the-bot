@@ -138,6 +138,10 @@ def get_active_hood_target_count() -> int:
 class HoodTargetLimitReached(Exception):
     """Raised when adding a HOODIFY target would exceed the global cap."""
 
+
+class HoodUwuConflict(Exception):
+    """Raised when a target is already active in UWUIFY."""
+
 class HoodMessageBlocked(Exception):
     """Raised when a HOODIFY message contains blocked content."""
 
@@ -227,18 +231,21 @@ async def set_hood_target(
     if target.id in hood_user_blacklist:
         raise HoodUserBlacklisted
 
-    async with hood_target_lock:
-        channel_targets = hood_targets.setdefault(channel.id, set())
+    async with TEXTIFY_MODE_LOCK:
+        async with hood_target_lock:
+            if any(target.id in target_ids for target_ids in uwu_targets.values()):
+                raise HoodUwuConflict
+            channel_targets = hood_targets.setdefault(channel.id, set())
 
-        if target.id not in channel_targets:
-            active_target_ids = get_active_hood_target_ids()
-            if (
-                target.id not in active_target_ids
-                and len(active_target_ids) >= MAX_ACTIVE_HOOD_TARGETS
-            ):
-                if not channel_targets:
-                    hood_targets.pop(channel.id, None)
-                raise HoodTargetLimitReached(
+            if target.id not in channel_targets:
+                active_target_ids = get_active_hood_target_ids()
+                if (
+                    target.id not in active_target_ids
+                    and len(active_target_ids) >= MAX_ACTIVE_HOOD_TARGETS
+                ):
+                    if not channel_targets:
+                        hood_targets.pop(channel.id, None)
+                    raise HoodTargetLimitReached(
                     f"The maximum of {MAX_ACTIVE_HOOD_TARGETS} active HOODIFY "
                     "targets has been reached."
                 )
