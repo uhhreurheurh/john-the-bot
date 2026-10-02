@@ -1578,6 +1578,11 @@ async def on_message(message: discord.Message):
                 f"so I will not activate this target. Error: `{error}`",
                 mention_author=False,
             )
+        except UwuHoodifyConflict:
+            await message.reply(
+                f"❌ {target.mention} is already being HOODIFIED. A person cannot be UWUIFIED and HOODIFIED at the same time.",
+                mention_author=False,
+            )
         except UwuTargetLimitReached:
             await message.reply(
                 f"❌ The global limit of {MAX_ACTIVE_UWU_TARGETS} UWUified people has been reached. "
@@ -1724,6 +1729,11 @@ async def on_message(message: discord.Message):
             await message.reply(
                 "❌ I could not verify the HOODIFY blacklist from GitHub, "
                 f"so I will not activate this target. Error: `{error}`",
+                mention_author=False,
+            )
+        except HoodUwuConflict:
+            await message.reply(
+                f"❌ {target.mention} is already being UWUIFIED. A person cannot be UWUIFIED and HOODIFIED at the same time.",
                 mention_author=False,
             )
         except HoodTargetLimitReached:
@@ -3086,6 +3096,9 @@ staff_strike_expiry_task: asyncio.Task | None = None
 # =========================
 # FEATURE MODULES
 # =========================
+# Prevent a member from being active in UWUIFY and HOODIFY at the same time.
+TEXTIFY_MODE_LOCK = asyncio.Lock()
+
 import hoodify_feature
 import uwuify_feature
 import reviews as reviews_feature
@@ -3227,6 +3240,11 @@ async def hoodify_root_command(
         await interaction.followup.send(
             "❌ I could not verify the HOODIFY blacklist from GitHub, "
             f"so I will not activate this target. Error: {error}",
+            ephemeral=False,
+        )
+    except HoodUwuConflict:
+        await interaction.followup.send(
+            f"❌ {member.mention} is already being UWUIFIED. A person cannot be UWUIFIED and HOODIFIED at the same time.",
             ephemeral=False,
         )
     except HoodTargetLimitReached:
