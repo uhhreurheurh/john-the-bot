@@ -534,23 +534,6 @@ review_db_restore_checked = False
 
 
 # =========================
-# MESSAGE CONTENT HELPER
-# =========================
-
-async def get_target_message_content(message: discord.Message) -> str:
-    """Return message text, falling back to a REST fetch when Gateway content is empty."""
-    content = (message.content or "").strip()
-    if content:
-        return content
-
-    try:
-        fresh_message = await message.channel.fetch_message(message.id)
-        return (fresh_message.content or "").strip()
-    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-        return ""
-
-
-# =========================
 # MESSAGE DELETION HELPER
 # =========================
 
@@ -610,14 +593,6 @@ async def delete_original_message(message: discord.Message) -> bool:
 # =========================
 
 proxy_requests: dict[int, dict] = {}
-
-# Discord itself is the authoritative source for target-specific webhooks.
-# These small per-channel caches let overlapping Railway instances recover the
-# active target immediately without scanning webhooks for every message.
-uwu_webhook_recovery_cache: dict[int, float] = {}
-hood_webhook_recovery_cache: dict[int, float] = {}
-WEBHOOK_RECOVERY_CACHE_SECONDS = 3.0
-
 
 def is_proxy_bot_message(message: discord.Message) -> bool:
     """Return True when a message came from a configured proxy bot."""
