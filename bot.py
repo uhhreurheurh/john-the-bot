@@ -1377,6 +1377,80 @@ async def on_message(message: discord.Message):
             rest = spaced_parts[2] if len(spaced_parts) >= 3 else ""
             content = ",hoodify " + spaced_action + (f" {rest}" if rest else "")
 
+    # Prefix help.
+    if content.lower() == ",jelp":
+        embed = discord.Embed(
+            title="John the Bot — Prefix Commands",
+            description="Here are the available comma-prefix commands.",
+            color=discord.Color.blurple(),
+        )
+
+        embed.add_field(
+            name="General",
+            value=(
+                "`,jelp` — Show this help menu\n"
+                "`,ping` — Check bot latency"
+            ),
+            inline=False,
+        )
+
+        embed.add_field(
+            name="UWUIFY",
+            value=(
+                "`,uwuify @user` — Enable UWUIFY for a member\n"
+                "`,unuwuify @user` — Disable UWUIFY\n"
+                "`,uwu count` — Show active UWUIFY count"
+            ),
+            inline=False,
+        )
+
+        embed.add_field(
+            name="HOODIFY",
+            value=(
+                "`,hoodify @user` — Enable HOODIFY for a member\n"
+                "`,unhoodify @user` — Disable HOODIFY\n"
+                "`,hood count` — Show active HOODIFY count"
+            ),
+            inline=False,
+        )
+
+        embed.add_field(
+            name="Reviews",
+            value=(
+                "`,review @user` — Leave a review\n"
+                "`,updatereview @user` — Request a review update\n"
+                "`,reviews @user` — View reviews\n"
+                "`,deletereview ID` — Delete a review\n"
+                "`,leaderboard` — View the review leaderboard\n"
+                "`,reviewblacklist add/remove/status @user` — Manage the review blacklist"
+            ),
+            inline=False,
+        )
+
+        embed.add_field(
+            name="Staff",
+            value=(
+                "`,strike @user <7-40d> <reason>` — Issue a staff strike\n"
+                "`,removestrike @user <number>` — Remove a staff strike"
+            ),
+            inline=False,
+        )
+
+        embed.add_field(
+            name="Management",
+            value=(
+                "`,textify blacklist/unblacklist/status @user` — Manage the Textify blacklist\n"
+                "`,textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n"
+                "`,blacklist add/remove/status @user` — Manage the second-role blacklist\n"
+                "`,savedb` — Save the review database"
+            ),
+            inline=False,
+        )
+
+        embed.set_footer(text="Some commands are restricted to specific roles or the main server.")
+        await message.reply(embed=embed, mention_author=False)
+        return
+
     # Prefix ping.
     if content.lower() == ",ping":
         latency_ms = round(bot.latency * 1000)
