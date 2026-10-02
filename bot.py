@@ -2983,6 +2983,54 @@ from reviews import (
 from leaderboard import *
 from staff_strikes import *
 
+# =========================
+# HOODIFY ROOT COMMANDS
+# =========================
+# Define stable root commands in bot.py and delegate to the tested feature
+# callbacks. This prevents import-time command registration from disappearing.
+tree.remove_command("hoodify")
+tree.remove_command("unhoodify")
+tree.remove_command("hoodcount")
+
+
+@tree.command(
+    name="hoodify",
+    description="Add a member to this channel's automatic HOODIFY mode.",
+)
+@app_commands.describe(
+    member="The member whose messages should be automatically hoodified",
+    message="Optional one-time message to send through the hoodify webhook",
+)
+async def hoodify_root_command(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    message: str | None = None,
+):
+    await hoodify_feature.hoodify_command.callback(interaction, member, message)
+
+
+@tree.command(
+    name="unhoodify",
+    description="Disable HOODIFY for a selected member.",
+)
+@app_commands.describe(member="The member to stop HOODIFYING")
+async def unhoodify_root_command(
+    interaction: discord.Interaction,
+    member: discord.Member,
+):
+    await hoodify_feature.unhoodify_command.callback(interaction, member)
+
+
+@tree.command(
+    name="hoodcount",
+    description="Show how many people are currently being HOODIFIED.",
+)
+async def hoodcount_root_command(
+    interaction: discord.Interaction,
+):
+    await hoodify_feature.hoodcount_root_command.callback(interaction)
+
+
 # BOT READY
 # =========================
 
@@ -3006,15 +3054,13 @@ async def on_ready():
             # command objects explicitly as a safety net in case a module was
             # imported while bot.py was still initializing and its decorator
             # did not land on the live CommandTree.
-            # Read the command objects directly from their imported feature
-            # modules. This bypasses wildcard-import timing/collision issues.
             feature_commands = (
-                getattr(uwuify_feature, "uwu_command", None),
-                getattr(uwuify_feature, "unuwuify_command", None),
-                getattr(uwuify_feature, "uwucount_root_command", None),
-                getattr(hoodify_feature, "hoodify_command", None),
-                getattr(hoodify_feature, "unhoodify_command", None),
-                getattr(hoodify_feature, "hoodcount_root_command", None),
+                globals().get("uwu_command"),
+                globals().get("unuwuify_command"),
+                globals().get("uwucount_root_command"),
+                globals().get("hoodify_root_command"),
+                globals().get("unhoodify_root_command"),
+                globals().get("hoodcount_root_command"),
             )
             registered_names = {command.name for command in tree.get_commands()}
             for command in feature_commands:
