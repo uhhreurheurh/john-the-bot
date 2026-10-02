@@ -1269,7 +1269,8 @@ class ReviewModal(discord.ui.Modal):
     def __init__(
         self,
         target: discord.Member,
-        rating: int
+        rating: int,
+        reviewer_id: int
     ):
         super().__init__(
             title=f"Leave a {rating}-star review"
@@ -1277,6 +1278,7 @@ class ReviewModal(discord.ui.Modal):
 
         self.target = target
         self.rating = rating
+        self.reviewer_id = reviewer_id
 
         self.comment = discord.ui.TextInput(
             label="Review",
@@ -1293,6 +1295,16 @@ class ReviewModal(discord.ui.Modal):
         self,
         interaction: discord.Interaction
     ):
+
+        # The review flow belongs to the user who invoked /review.
+        # This prevents someone else from submitting a review through another
+        # person's open review prompt.
+        if interaction.user.id != self.reviewer_id:
+            await interaction.response.send_message(
+                "❌ This review prompt belongs to another user. Use /review yourself.",
+                ephemeral=True
+            )
+            return
 
         # Acknowledge the modal immediately so Discord does not time out.
         await interaction.response.defer(ephemeral=False)
@@ -1420,9 +1432,10 @@ class ReviewModal(discord.ui.Modal):
 
 class StarSelect(discord.ui.Select):
 
-    def __init__(self, target: discord.Member):
+    def __init__(self, target: discord.Member, reviewer_id: int):
 
         self.target = target
+        self.reviewer_id = reviewer_id
 
         options = [
             discord.SelectOption(
@@ -1464,12 +1477,22 @@ class StarSelect(discord.ui.Select):
         interaction: discord.Interaction
     ):
 
+        # A second layer of protection in case this select is ever
+        # used outside its parent View.
+        if interaction.user.id != self.reviewer_id:
+            await interaction.response.send_message(
+                "❌ This review prompt belongs to another user.",
+                ephemeral=True
+            )
+            return
+
         rating = int(self.values[0])
 
         await interaction.response.send_modal(
             ReviewModal(
                 target=self.target,
-                rating=rating
+                rating=rating,
+                reviewer_id=self.reviewer_id
             )
         )
 
@@ -1478,13 +1501,29 @@ class StarView(discord.ui.View):
 
     def __init__(
         self,
-        target: discord.Member
+        target: discord.Member,
+        reviewer_id: int
     ):
         super().__init__(timeout=120)
 
+        self.reviewer_id = reviewer_id
+
         self.add_item(
-            StarSelect(target)
+            StarSelect(target, reviewer_id)
         )
+
+    async def interaction_check(
+        self,
+        interaction: discord.Interaction
+    ) -> bool:
+        if interaction.user.id != self.reviewer_id:
+            await interaction.response.send_message(
+                "❌ This review prompt belongs to another user. Use /review yourself.",
+                ephemeral=True
+            )
+            return False
+
+        return True
 
 
 def review_main_server_check(interaction: discord.Interaction) -> bool:
@@ -1543,7 +1582,10 @@ async def review(
 
     await interaction.response.send_message(
         "**select your star rating:**",
-        view=StarView(user),
+        view=StarView(
+            target=user,
+            reviewer_id=interaction.user.id,
+        ),
         ephemeral=False
     )
 
