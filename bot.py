@@ -13,13 +13,47 @@ from datetime import datetime, timedelta, timezone
 import urllib.error
 import urllib.parse
 import urllib.request
+import traceback
 
 import discord
 from discord import app_commands
 import uwuify
 from discord.ext import tasks
 
+# Temporary deep diagnostics for UWUIFY / HOODIFY.
+# Set TEXTIFY_DEBUG=0 in Railway when debugging is finished.
+TEXTIFY_DEBUG = os.getenv("TEXTIFY_DEBUG", "1").strip().lower() not in {"0", "false", "off", "no"}
+
+def textify_debug(stage: str, **details) -> None:
+    """Print a timestamped diagnostic line for the text-transform pipeline."""
+    if not TEXTIFY_DEBUG:
+        return
+    stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    if details:
+        parts = []
+        for key, value in details.items():
+            rendered = repr(value)
+            if len(rendered) > 500:
+                rendered = rendered[:500] + "...<truncated>"
+            parts.append(f"{key}={rendered}")
+        suffix = " | " + " | ".join(parts)
+    else:
+        suffix = ""
+    print(f"[TEXTIFY DEBUG {stamp}] {stage}{suffix}", flush=True)
+
+def textify_debug_exception(stage: str, error: Exception) -> None:
+    """Print the exact exception plus traceback for a text-transform failure."""
+    if not TEXTIFY_DEBUG:
+        return
+    textify_debug(
+        stage,
+        exception_type=type(error).__name__,
+        exception=str(error),
+        traceback=traceback.format_exc(),
+    )
+
 # Keep the terminal quiet; the only intentional terminal output is "Bot is alive".
+# TEXTIFY_DEBUG intentionally overrides that quiet-terminal behavior while enabled.
 logging.disable(logging.CRITICAL)
 
 # =========================
@@ -757,25 +791,42 @@ async def on_message(message: discord.Message):
     Prefix command messages are intentionally kept instead of being deleted.
     Only normal messages from active UWU targets are replaced/deleted.
     """
+    textify_debug(
+        "BOT-L01 on_message ENTER",
+        message_id=getattr(message, "id", None),
+        author_id=getattr(message.author, "id", None),
+        author_name=getattr(message.author, "display_name", getattr(message.author, "name", None)),
+        channel_id=getattr(message.channel, "id", None),
+        guild_id=getattr(message.guild, "id", None),
+        webhook_id=getattr(message, "webhook_id", None),
+        content=message.content,
+        author_bot=getattr(message.author, "bot", None),
+    )
     proxy_message = is_proxy_bot_message(message)
+    textify_debug("BOT-L02 proxy detection", proxy_message=proxy_message, author_bot=message.author.bot)
 
     # Ignore normal bot/webhook messages, but allow configured proxy-bot output
     # through the UWUIFY/HOODIFY enforcement path.
     if message.author.bot and not proxy_message:
+        textify_debug("BOT-L03 RETURN normal bot message")
         return
 
     if message.webhook_id is not None and not proxy_message:
+        textify_debug("BOT-L04 RETURN non-proxy webhook message", webhook_id=message.webhook_id)
         return
 
     if not isinstance(message.channel, discord.TextChannel):
+        textify_debug("BOT-L05 RETURN unsupported channel type", channel_type=type(message.channel).__name__)
         return
 
     content = message.content.strip()
+    textify_debug("BOT-L06 content parsed", content=content, content_length=len(content))
 
     # Parse the readable spaced prefix syntax once so all handlers can use it.
     spaced_parts = content.split(maxsplit=2)
     prefix_command_parts = content.lower().split(maxsplit=1)
     prefix_command = prefix_command_parts[0] if prefix_command_parts else ""
+    textify_debug("BOT-L07 prefix parse", spaced_parts=spaced_parts, prefix_command=prefix_command)
 
     if prefix_command in {
         ",uwuify", ",unuwuify", ",hoodify", ",unhoodify", ",uwu", ",hood"
@@ -1238,6 +1289,7 @@ async def on_message(message: discord.Message):
     # Textify is the combined UWUIFY + HOODIFY blacklist interface.
 
     if proxy_message:
+        textify_debug("BOT-L20 proxy message branch")
         handled = await handle_proxy_message(message)
         if handled:
             return
@@ -1249,49 +1301,72 @@ async def on_message(message: discord.Message):
     # the original user message is deleted.
     hood_target_ids = hood_targets.get(message.channel.id, set())
     uwu_target_ids = uwu_targets.get(message.channel.id, set())
+    textify_debug(
+        "BOT-L21 TARGET STATE",
+        author_id=message.author.id,
+        hood_targets=sorted(hood_target_ids),
+        uwu_targets=sorted(uwu_target_ids),
+        in_hood=message.author.id in hood_target_ids,
+        in_uwu=message.author.id in uwu_target_ids,
+        uwu_blacklisted=message.author.id in uwu_user_blacklist,
+        hood_blacklisted=message.author.id in hood_user_blacklist,
+        ban_listed=message.author.id in uwu_hoodify_ban,
+    )
 
     if message.author.id in hood_target_ids and content:
+        textify_debug("BOT-L22 HOOD TARGET MATCH")
         if message.author.id in hood_user_blacklist:
+            textify_debug("BOT-L23 HOOD BLACKLIST HIT - disabling")
             await disable_hood_for_user(message.author.id)
             return
 
         bot_member = message.guild.me if message.guild is not None else None
         if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
+            textify_debug("BOT-L24 HOOD RETURN missing Manage Messages", bot_member=bool(bot_member))
             return
 
         try:
+            textify_debug("BOT-L25 HOOD send_hood_message CALL")
             await send_hood_message(
                 message.channel,
                 message.author,
                 content,
             )
+            textify_debug("BOT-L26 HOOD transformation SUCCESS")
             await delete_original_message(message)
-        except HoodMessageBlocked:
-            pass
-        except Exception:
-            pass
+            textify_debug("BOT-L27 HOOD original deletion attempted")
+        except HoodMessageBlocked as error:
+            textify_debug_exception("BOT-L28 HOOD MESSAGE BLOCKED", error)
+        except Exception as error:
+            textify_debug_exception("BOT-L29 HOOD TRANSFORM EXCEPTION", error)
         return
 
     if message.author.id in uwu_target_ids and content:
+        textify_debug("BOT-L30 UWU TARGET MATCH")
         if message.author.id in uwu_user_blacklist:
+            textify_debug("BOT-L31 UWU BLACKLIST HIT - disabling")
             await disable_uwu_for_user(message.author.id)
             return
 
         bot_member = message.guild.me if message.guild is not None else None
         if bot_member is None or not message.channel.permissions_for(bot_member).manage_messages:
+            textify_debug("BOT-L32 UWU RETURN missing Manage Messages", bot_member=bool(bot_member))
             return
 
         try:
+            textify_debug("BOT-L33 UWU send_uwu_message CALL")
             await send_uwu_message(
                 message.channel,
                 message.author,
                 content,
             )
+            textify_debug("BOT-L34 UWU transformation SUCCESS")
             await delete_original_message(message)
-        except UwuMessageBlocked:
-            pass
-        except Exception:
-            pass
+            textify_debug("BOT-L35 UWU original deletion attempted")
+        except UwuMessageBlocked as error:
+            textify_debug_exception("BOT-L36 UWU MESSAGE BLOCKED", error)
+        except Exception as error:
+            textify_debug_exception("BOT-L37 UWU TRANSFORM EXCEPTION", error)
         return
 
     # Only non-target users continue into the command parser.
