@@ -846,8 +846,10 @@ async def on_message(message: discord.Message):
             uwu_targets=sorted(uwu_target_ids),
             in_hood=message.author.id in hood_target_ids,
             in_uwu=message.author.id in uwu_target_ids,
-            uwu_blacklisted=message.author.id in uwuify_feature.uwu_user_blacklist,
-            hood_blacklisted=message.author.id in hoodify_feature.hood_user_blacklist,
+            # Blacklists are owned by bot.py; the target maps are owned by
+            # their respective feature modules.
+            uwu_blacklisted=message.author.id in uwu_user_blacklist,
+            hood_blacklisted=message.author.id in hood_user_blacklist,
             ban_listed=message.author.id in uwu_hoodify_ban,
         )
 
@@ -855,7 +857,7 @@ async def on_message(message: discord.Message):
         # same channel, matching the existing routing order.
         if message.author.id in hood_target_ids and content:
             textify_debug("BOT-L10 HOOD EARLY TARGET MATCH")
-            if message.author.id in hoodify_feature.hood_user_blacklist:
+            if message.author.id in hood_user_blacklist:
                 textify_debug("BOT-L11 HOOD EARLY BLACKLIST HIT - disabling")
                 await disable_hood_for_user(message.author.id)
                 return
@@ -889,7 +891,7 @@ async def on_message(message: discord.Message):
 
         if message.author.id in uwu_target_ids and content:
             textify_debug("BOT-L10 UWU EARLY TARGET MATCH")
-            if message.author.id in uwuify_feature.uwu_user_blacklist:
+            if message.author.id in uwu_user_blacklist:
                 textify_debug("BOT-L11 UWU EARLY BLACKLIST HIT - disabling")
                 await disable_uwu_for_user(message.author.id)
                 return
