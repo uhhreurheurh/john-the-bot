@@ -13,7 +13,6 @@ from datetime import datetime, timedelta, timezone
 import urllib.error
 import urllib.parse
 import urllib.request
-import traceback
 import sys
 
 # When Railway executes this file as bot.py, Python names the running module
@@ -26,40 +25,7 @@ from discord import app_commands
 import uwuify
 from discord.ext import tasks
 
-# Temporary deep diagnostics for UWUIFY / HOODIFY.
-# Set TEXTIFY_DEBUG=0 in Railway when debugging is finished.
-TEXTIFY_DEBUG = os.getenv("TEXTIFY_DEBUG", "1").strip().lower() not in {"0", "false", "off", "no"}
-
-def textify_debug(stage: str, **details) -> None:
-    """Print a timestamped diagnostic line for the text-transform pipeline."""
-    if not TEXTIFY_DEBUG:
-        return
-    stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
-    if details:
-        parts = []
-        for key, value in details.items():
-            rendered = repr(value)
-            if len(rendered) > 500:
-                rendered = rendered[:500] + "...<truncated>"
-            parts.append(f"{key}={rendered}")
-        suffix = " | " + " | ".join(parts)
-    else:
-        suffix = ""
-    print(f"[TEXTIFY DEBUG {stamp}] {stage}{suffix}", flush=True)
-
-def textify_debug_exception(stage: str, error: Exception) -> None:
-    """Print the exact exception plus traceback for a text-transform failure."""
-    if not TEXTIFY_DEBUG:
-        return
-    textify_debug(
-        stage,
-        exception_type=type(error).__name__,
-        exception=str(error),
-        traceback=traceback.format_exc(),
-    )
-
 # Keep the terminal quiet; the only intentional terminal output is "Bot is alive".
-# TEXTIFY_DEBUG intentionally overrides that quiet-terminal behavior while enabled.
 logging.disable(logging.CRITICAL)
 
 # =========================
@@ -797,44 +763,26 @@ async def on_message(message: discord.Message):
     Prefix command messages are intentionally kept instead of being deleted.
     Only normal messages from active UWU targets are replaced/deleted.
     """
-    textify_debug(
-        "BOT-L01 on_message ENTER",
-        message_id=getattr(message, "id", None),
-        author_id=getattr(message.author, "id", None),
-        author_name=getattr(message.author, "display_name", getattr(message.author, "name", None)),
-        channel_id=getattr(message.channel, "id", None),
-        guild_id=getattr(message.guild, "id", None),
-        webhook_id=getattr(message, "webhook_id", None),
-        content=message.content,
-        author_bot=getattr(message.author, "bot", None),
-    )
     proxy_message = is_proxy_bot_message(message)
-    textify_debug("BOT-L02 proxy detection", proxy_message=proxy_message, author_bot=message.author.bot)
 
     # Ignore normal bot/webhook messages, but allow configured proxy-bot output
     # through the UWUIFY/HOODIFY enforcement path.
     if message.author.bot and not proxy_message:
-        textify_debug("BOT-L03 RETURN normal bot message")
         return
 
     if message.webhook_id is not None and not proxy_message:
-        textify_debug("BOT-L04 RETURN non-proxy webhook message", webhook_id=message.webhook_id)
         return
 
     if not isinstance(message.channel, discord.TextChannel):
-        textify_debug("BOT-L05 RETURN unsupported channel type", channel_type=type(message.channel).__name__)
         return
 
     content = message.content.strip()
-    textify_debug("BOT-L06 content parsed", content=content, content_length=len(content))
 
     # Parse the readable spaced prefix syntax once so all handlers can use it.
     spaced_parts = content.split(maxsplit=2)
     prefix_command_parts = content.lower().split(maxsplit=1)
     prefix_command = prefix_command_parts[0] if prefix_command_parts else ""
-    textify_debug("BOT-L07 prefix parse", spaced_parts=spaced_parts, prefix_command=prefix_command)
 
-    textify_debug("BOT-L08 PRE-TARGET CHECK START")
 
     # Active text-transform targets MUST be handled before the large prefix
     # command parser below. This keeps ordinary target messages from getting
@@ -845,91 +793,53 @@ async def on_message(message: discord.Message):
         hood_target_ids = hoodify_feature.hood_targets.get(message.channel.id, set())
         uwu_target_ids = uwuify_feature.uwu_targets.get(message.channel.id, set())
 
-        textify_debug(
-            "BOT-L09 TARGET STATE EARLY",
-            author_id=message.author.id,
-            hood_targets=sorted(hood_target_ids),
-            uwu_targets=sorted(uwu_target_ids),
-            in_hood=message.author.id in hood_target_ids,
-            in_uwu=message.author.id in uwu_target_ids,
-            # Blacklists are owned by bot.py; the target maps are owned by
-            # their respective feature modules.
-            uwu_blacklisted=message.author.id in uwu_user_blacklist,
-            hood_blacklisted=message.author.id in hood_user_blacklist,
-            ban_listed=message.author.id in uwu_hoodify_ban,
-        )
 
         # HOODIFY takes precedence when a user is active in both modes in the
         # same channel, matching the existing routing order.
         if message.author.id in hood_target_ids and content:
-            textify_debug("BOT-L10 HOOD EARLY TARGET MATCH")
             if message.author.id in hood_user_blacklist:
-                textify_debug("BOT-L11 HOOD EARLY BLACKLIST HIT - disabling")
                 await disable_hood_for_user(message.author.id)
                 return
 
             bot_member = message.guild.me if message.guild is not None else None
             if bot_member is None:
-                textify_debug("BOT-L12 HOOD EARLY RETURN - no guild member for bot")
                 return
 
             permissions = message.channel.permissions_for(bot_member)
-            textify_debug(
-                "BOT-L13 HOOD EARLY PERMISSIONS",
-                manage_messages=permissions.manage_messages,
-                manage_webhooks=permissions.manage_webhooks,
-            )
             if not permissions.manage_messages or not permissions.manage_webhooks:
-                textify_debug("BOT-L14 HOOD EARLY RETURN - missing permissions")
                 return
 
             try:
-                textify_debug("BOT-L15 HOOD EARLY SEND CALL")
                 await send_hood_message(message.channel, message.author, content)
-                textify_debug("BOT-L16 HOOD EARLY SEND SUCCESS")
                 deleted = await delete_original_message(message)
-                textify_debug("BOT-L17 HOOD EARLY DELETE RESULT", deleted=deleted)
-            except HoodMessageBlocked as error:
-                textify_debug_exception("BOT-L18 HOOD EARLY MESSAGE BLOCKED", error)
-            except Exception as error:
-                textify_debug_exception("BOT-L19 HOOD EARLY TRANSFORM EXCEPTION", error)
+            except HoodMessageBlocked:
+                pass
+            except Exception:
+                pass
             return
 
         if message.author.id in uwu_target_ids and content:
-            textify_debug("BOT-L10 UWU EARLY TARGET MATCH")
             if message.author.id in uwu_user_blacklist:
-                textify_debug("BOT-L11 UWU EARLY BLACKLIST HIT - disabling")
                 await disable_uwu_for_user(message.author.id)
                 return
 
             bot_member = message.guild.me if message.guild is not None else None
             if bot_member is None:
-                textify_debug("BOT-L12 UWU EARLY RETURN - no guild member for bot")
                 return
 
             permissions = message.channel.permissions_for(bot_member)
-            textify_debug(
-                "BOT-L13 UWU EARLY PERMISSIONS",
-                manage_messages=permissions.manage_messages,
-                manage_webhooks=permissions.manage_webhooks,
-            )
             if not permissions.manage_messages or not permissions.manage_webhooks:
-                textify_debug("BOT-L14 UWU EARLY RETURN - missing permissions")
                 return
 
             try:
-                textify_debug("BOT-L15 UWU EARLY SEND CALL")
                 await send_uwu_message(message.channel, message.author, content)
-                textify_debug("BOT-L16 UWU EARLY SEND SUCCESS")
                 deleted = await delete_original_message(message)
-                textify_debug("BOT-L17 UWU EARLY DELETE RESULT", deleted=deleted)
-            except UwuMessageBlocked as error:
-                textify_debug_exception("BOT-L18 UWU EARLY MESSAGE BLOCKED", error)
-            except Exception as error:
-                textify_debug_exception("BOT-L19 UWU EARLY TRANSFORM EXCEPTION", error)
+            except UwuMessageBlocked:
+                pass
+            except Exception:
+                pass
             return
 
-    textify_debug("BOT-L20 PRE-TARGET CHECK COMPLETE - ENTERING PREFIX HANDLERS")
 
     if prefix_command in {
         ",uwuify", ",unuwuify", ",hoodify", ",unhoodify", ",uwu", ",hood"
@@ -1392,7 +1302,6 @@ async def on_message(message: discord.Message):
     # Textify is the combined UWUIFY + HOODIFY blacklist interface.
 
     if proxy_message:
-        textify_debug("BOT-L20 proxy message branch")
         handled = await handle_proxy_message(message)
         if handled:
             return
@@ -2141,7 +2050,6 @@ async def send_kick_webhook(
     )
 
 
-
 # =========================
 # SLASH COMMAND PERMISSION
 # =========================
@@ -2693,7 +2601,6 @@ async def remove_auto_role_if_needed(member: discord.Member, reason: str) -> boo
         return False
 
 
-
 # =========================
 # MEMBER UPDATE EVENT
 # =========================
@@ -3067,13 +2974,6 @@ async def hoodify_root_command(
 ):
     # Invoke the HOODIFY activation logic directly instead of depending on
     # the feature module's AppCommand object existing at runtime.
-    textify_debug(
-        "HOOD-ROOT ENTER",
-        operator_id=interaction.user.id,
-        target_id=member.id,
-        channel_id=getattr(interaction.channel, "id", None),
-        one_time_message=message,
-    )
 
     if uwu_hoodify_user_is_banned(interaction.user):
         await interaction.response.send_message(
@@ -3120,19 +3020,15 @@ async def hoodify_root_command(
         return
 
     try:
-        textify_debug("HOOD-ROOT SET_TARGET CALL")
         await set_hood_target(interaction.channel, member)
-        textify_debug("HOOD-ROOT SET_TARGET RETURNED")
 
         if message:
             try:
-                textify_debug("HOOD-ROOT ONE_TIME SEND CALL")
                 await send_hood_message(
                     interaction.channel,
                     member,
                     message,
                 )
-                textify_debug("HOOD-ROOT ONE_TIME SEND RETURNED")
             except HoodMessageBlocked as blocked_error:
                 await interaction.followup.send(
                     f"❌ HOODIFY was enabled, but the one-time message was not sent "
@@ -3177,7 +3073,6 @@ async def hoodify_root_command(
             ephemeral=False,
         )
     except Exception as error:
-        textify_debug_exception("HOOD-ROOT ACTIVATION EXCEPTION", error)
         await interaction.followup.send(
             "❌ The HOODIFY mode could not be enabled. "
             f"Error: {type(error).__name__}: {error}",
