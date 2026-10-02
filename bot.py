@@ -3002,19 +3002,23 @@ async def on_ready():
         main_guild_object = discord.Object(id=MAIN_SERVER)
 
         try:
-            # Sync the global tree first, then copy that exact tree into the
-            # main guild and sync it there. This avoids relying on stale guild
-            # command state and makes the commands available immediately.
-            await tree.sync()
+            # Register the complete current CommandTree directly into the
+            # main guild. This avoids guild copy state getting out of sync with
+            # the decorators defined in the feature modules.
+            global_commands = list(tree.get_commands())
 
             tree.clear_commands(guild=main_guild_object)
-            tree.copy_global_to(guild=main_guild_object)
+            for command in global_commands:
+                tree.add_command(command, guild=main_guild_object)
+
             synced_commands = await tree.sync(guild=main_guild_object)
 
-            # Verify the commands users depend on. If Discord returned an
-            # incomplete set, keep commands_synced false so the next READY
-            # event retries instead of silently accepting a broken tree.
             synced_names = {command.name for command in synced_commands}
+            defined_names = {command.name for command in global_commands}
+            print(
+                "Guild command sync: "
+                f"{len(synced_names)} synced / {len(defined_names)} defined"
+            )
             required_commands = {
                 "uwuify",
                 "unuwuify",
