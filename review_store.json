@@ -1194,6 +1194,23 @@
       "reviewed_by": 191233879175200768,
       "created_at": "2026-10-02 15:36:11",
       "reviewed_at": "2026-10-02 15:45:02"
+    },
+    {
+      "id": 9,
+      "review_id": 150,
+      "target_id": 1542311839210406029,
+      "reviewer_id": 1426737306458652742,
+      "old_rating": 2,
+      "old_comment": "black",
+      "new_rating": 5,
+      "new_comment": "hi",
+      "update_reason": "didn't know it was kovak/bug",
+      "status": "pending",
+      "approval_message_id": null,
+      "approval_channel_id": null,
+      "reviewed_by": null,
+      "created_at": "2026-10-02 18:24:09",
+      "reviewed_at": null
     }
   ],
   "review_id_sequence": 6
