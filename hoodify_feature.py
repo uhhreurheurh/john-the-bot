@@ -8,17 +8,16 @@ HOOD_OPENERS = list(_HOODIFY_DATA.get("openers", []))
 HOOD_MID_PHRASES = list(_HOODIFY_DATA.get("mid_phrases", []))
 HOOD_CLOSERS = list(_HOODIFY_DATA.get("closers", []))
 HOOD_EXTRAS = list(_HOODIFY_DATA.get("extras", []))
+HOOD_WORD_BLACKLIST = set(_HOODIFY_DATA.get("word_blacklist", []))
 
 HOOD_WEBHOOK_NAME = "Hoodify Relay"
 HOOD_WEBHOOK_IDLE_SECONDS = 5 * 60
-HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS = 60
 
 # Members with one of these roles may enable/disable HOODIFY.
 # Set to the same roles as UWU, or change them independently.
 HOOD_ALLOWED_ROLE_IDS = {
     1518416402141417472,
     1378810715611336914,
-    1377468541779050636,
 }
 
 # Separate blacklist for HOODIFY messages.
@@ -30,7 +29,7 @@ HOOD_WORD_BLACKLIST = {
 MAX_ACTIVE_HOOD_TARGETS = 5
 
 # channel_id -> {"webhook": discord.Webhook, "timer": asyncio.Task | None}
-hood_webhooks: dict[tuple[int, int], dict] = {}
+hood_webhooks: dict[int, dict] = {}
 
 # channel_id -> set of target member IDs.
 hood_targets: dict[int, set[int]] = {}
@@ -38,8 +37,6 @@ hood_targets: dict[int, set[int]] = {}
 # Protect the global HOODIFY target cap from simultaneous commands.
 hood_target_lock = asyncio.Lock()
 
-# Load the editable blacklist after the legacy inline default is declared.
-HOOD_WORD_BLACKLIST = set(_HOODIFY_DATA.get("word_blacklist", []))
 
 def hoodify_text(content: str) -> str:
     """Convert ordinary text into varied casual internet slang.
@@ -172,73 +169,24 @@ def ensure_hood_message_is_allowed(content: str) -> None:
 
 async def _delete_hood_webhook_after_idle(
     channel_id: int,
-    user_id: int,
     webhook: discord.Webhook,
 ) -> None:
     try:
         await asyncio.sleep(HOOD_WEBHOOK_IDLE_SECONDS)
-
-        should_delete = False
-        async with hood_target_lock:
-            key = (channel_id, user_id)
-            entry = hood_webhooks.get(key)
-            if entry is not None and entry.get("webhook") is webhook:
-                hood_webhooks.pop(key, None)
-                target_ids = hood_targets.get(channel_id)
-                if target_ids is not None:
-                    target_ids.discard(user_id)
-                    if not target_ids:
-                        hood_targets.pop(channel_id, None)
-                should_delete = True
-
-        if should_delete:
-            channel = bot.get_channel(channel_id)
-            if channel is None:
-                try:
-                    fetched = await bot.fetch_channel(channel_id)
-                    channel = fetched if isinstance(fetched, discord.TextChannel) else None
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    channel = None
-
-            # A different Railway instance may have used this same webhook.
-            # Confirm there was no recent webhook message before deleting it.
-            if channel is not None:
-                cutoff = discord.utils.utcnow() - datetime.timedelta(
-                    seconds=HOOD_WEBHOOK_IDLE_SECONDS
-                )
-                try:
-                    async for recent in channel.history(
-                        limit=100,
-                        after=cutoff,
-                        oldest_first=False,
-                    ):
-                        if recent.webhook_id == webhook.id:
-                            async with hood_target_lock:
-                                entry = hood_webhooks.get((channel_id, user_id))
-                                if entry is not None and entry.get("webhook") is webhook:
-                                    _reset_hood_webhook_timer(channel_id, user_id, webhook)
-                            return
-                except (discord.Forbidden, discord.HTTPException):
-                    async with hood_target_lock:
-                        entry = hood_webhooks.get((channel_id, user_id))
-                        if entry is not None and entry.get("webhook") is webhook:
-                            _reset_hood_webhook_timer(channel_id, user_id, webhook)
-                    return
-
+        entry = hood_webhooks.get(channel_id)
+        if entry is not None and entry.get("webhook") is webhook:
             try:
                 await webhook.delete(reason="Hoodify webhook unused for 5 minutes")
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 pass
+            finally:
+                hood_webhooks.pop(channel_id, None)
+                hood_targets.pop(channel_id, None)
     except asyncio.CancelledError:
         return
 
-
-def _reset_hood_webhook_timer(
-    channel_id: int,
-    user_id: int,
-    webhook: discord.Webhook,
-) -> None:
-    entry = hood_webhooks.get((channel_id, user_id))
+def _reset_hood_webhook_timer(channel_id: int, webhook: discord.Webhook) -> None:
+    entry = hood_webhooks.get(channel_id)
     if entry is None or entry.get("webhook") is not webhook:
         return
 
@@ -247,91 +195,35 @@ def _reset_hood_webhook_timer(
         old_timer.cancel()
 
     entry["timer"] = asyncio.create_task(
-        _delete_hood_webhook_after_idle(channel_id, user_id, webhook)
+        _delete_hood_webhook_after_idle(channel_id, webhook)
     )
 
-
-def _hood_webhook_name(user_id: int) -> str:
-    return f"{HOOD_WEBHOOK_NAME} | {user_id}"
-
-
-async def get_hood_webhook(
-    channel: discord.TextChannel,
-    target: discord.Member,
-) -> discord.Webhook:
-    key = (channel.id, target.id)
-    entry = hood_webhooks.get(key)
+async def get_hood_webhook(channel: discord.TextChannel) -> discord.Webhook:
+    channel_id = channel.id
+    entry = hood_webhooks.get(channel_id)
 
     if entry is not None:
         webhook = entry.get("webhook")
         if webhook is not None:
             try:
                 await webhook.fetch()
-                _reset_hood_webhook_timer(channel.id, target.id, webhook)
+                _reset_hood_webhook_timer(channel_id, webhook)
                 return webhook
             except (discord.NotFound, discord.HTTPException):
-                hood_webhooks.pop(key, None)
+                hood_webhooks.pop(channel_id, None)
 
     webhook = await channel.create_webhook(
-        name=_hood_webhook_name(target.id),
+        name=HOOD_WEBHOOK_NAME,
         reason="Temporary webhook for the ,hoodify /hoodify command",
     )
 
-    hood_webhooks[key] = {
+    hood_webhooks[channel_id] = {
         "webhook": webhook,
         "timer": None,
-        "user_id": target.id,
     }
-    _reset_hood_webhook_timer(channel.id, target.id, webhook)
+    _reset_hood_webhook_timer(channel_id, webhook)
     return webhook
 
-
-async def recover_hood_targets_from_channel(
-    channel: discord.TextChannel,
-) -> set[int]:
-    """Recover active HOODIFY target IDs from bot-created Discord webhooks."""
-    if bot.user is None:
-        return set()
-
-    try:
-        webhooks = await channel.webhooks()
-    except (discord.Forbidden, discord.HTTPException):
-        return set()
-
-    recovered: set[int] = set()
-    prefix = f"{HOOD_WEBHOOK_NAME} | "
-
-    for webhook in webhooks:
-        if webhook.user is None or webhook.user.id != bot.user.id:
-            continue
-        if not webhook.name.startswith(prefix):
-            continue
-
-        raw_id = webhook.name[len(prefix):].strip()
-        try:
-            user_id = int(raw_id)
-        except ValueError:
-            continue
-
-        if webhook.created_at is not None:
-            age = discord.utils.utcnow() - webhook.created_at
-            if age >= datetime.timedelta(minutes=10):
-                continue
-
-        recovered.add(user_id)
-        hood_targets.setdefault(channel.id, set()).add(user_id)
-        key = (channel.id, user_id)
-        if key not in hood_webhooks:
-            hood_webhooks[key] = {
-                "webhook": webhook,
-                "timer": None,
-                "user_id": user_id,
-            }
-            _reset_hood_webhook_timer(channel.id, user_id, webhook)
-
-    return recovered
-
-
 async def set_hood_target(
     channel: discord.TextChannel,
     target: discord.Member,
@@ -346,50 +238,6 @@ async def set_hood_target(
 
     async with hood_target_lock:
         channel_targets = hood_targets.setdefault(channel.id, set())
-        added_here = False
-
-        if target.id not in channel_targets:
-            active_target_ids = get_active_hood_target_ids()
-            if (
-                target.id not in active_target_ids
-                and len(active_target_ids) >= MAX_ACTIVE_HOOD_TARGETS
-            ):
-                if not channel_targets:
-                    hood_targets.pop(channel.id, None)
-                raise HoodTargetLimitReached(
-                    f"The maximum of {MAX_ACTIVE_HOOD_TARGETS} active HOODIFY targets has been reached."
-                )
-            channel_targets.add(target.id)
-            added_here = True
-
-        try:
-            webhook = await get_hood_webhook(channel, target)
-        except Exception:
-            if added_here:
-                channel_targets.discard(target.id)
-                if not channel_targets:
-                    hood_targets.pop(channel.id, None)
-            raise
-
-        _reset_hood_webhook_timer(channel.id, target.id, webhook)
-        return webhook
-
-
-async def set_hood_target(
-    channel: discord.TextChannel,
-    target: discord.Member,
-) -> discord.Webhook:
-    try:
-        await ensure_user_blacklists_ready()
-    except RuntimeError as error:
-        raise UserBlacklistStorageUnavailable(str(error)) from error
-
-    if target.id in hood_user_blacklist:
-        raise HoodUserBlacklisted
-
-    async with hood_target_lock:
-        channel_targets = hood_targets.setdefault(channel.id, set())
-        added_here = False
 
         if target.id not in channel_targets:
             active_target_ids = get_active_hood_target_ids()
@@ -404,121 +252,37 @@ async def set_hood_target(
                     "targets has been reached."
                 )
             channel_targets.add(target.id)
-            added_here = True
 
-        try:
-            webhook = await get_hood_webhook(channel, target)
-        except Exception:
-            if added_here:
-                channel_targets.discard(target.id)
-                if not channel_targets:
-                    hood_targets.pop(channel.id, None)
-            raise
-
-        _reset_hood_webhook_timer(channel.id, target.id, webhook)
-        return webhook
+    webhook = await get_hood_webhook(channel)
+    _reset_hood_webhook_timer(channel.id, webhook)
+    return webhook
 
 async def disable_hood_target(channel_id: int) -> bool:
-    async with hood_target_lock:
-        hood_targets.pop(channel_id, None)
-        entries = [
-            hood_webhooks.pop(key)
-            for key in list(hood_webhooks)
-            if key[0] == channel_id
-        ]
-
-    if not entries:
+    hood_targets.pop(channel_id, None)
+    entry = hood_webhooks.pop(channel_id, None)
+    if entry is None:
         return False
 
-    for entry in entries:
-        timer = entry.get("timer")
-        if timer is not None and not timer.done():
-            timer.cancel()
+    timer = entry.get("timer")
+    if timer is not None and not timer.done():
+        timer.cancel()
 
-        webhook = entry.get("webhook")
-        if webhook is not None:
-            try:
-                await webhook.delete(reason="Hoodify mode disabled")
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                pass
+    webhook = entry.get("webhook")
+    if webhook is not None:
+        try:
+            await webhook.delete(reason="Hoodify mode disabled")
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
 
     return True
 
-
-async def disable_hood_for_user(user_id: int) -> int:
-    entries_to_delete = []
-    removed = 0
-
-    async with hood_target_lock:
-        for channel_id, target_ids in list(hood_targets.items()):
-            if user_id not in target_ids:
-                continue
-
-            target_ids.discard(user_id)
-            removed += 1
-
-            if not target_ids:
-                hood_targets.pop(channel_id, None)
-
-            entry = hood_webhooks.pop((channel_id, user_id), None)
-            if entry is not None:
-                entries_to_delete.append(entry)
-
-    for entry in entries_to_delete:
-        timer = entry.get("timer")
-        if timer is not None and not timer.done():
-            timer.cancel()
-        webhook = entry.get("webhook")
-        if webhook is not None:
-            try:
-                await webhook.delete(reason="HOODIFY disabled for user")
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                pass
-
-    return removed
-
-
-async def remove_hood_user_from_channel(
-    channel_id: int,
-    user_id: int,
-) -> tuple[bool, bool]:
-    entry = None
-
-    async with hood_target_lock:
-        target_ids = hood_targets.get(channel_id)
-        if target_ids is None or user_id not in target_ids:
-            return False, False
-
-        target_ids.discard(user_id)
-        if not target_ids:
-            hood_targets.pop(channel_id, None)
-
-        entry = hood_webhooks.pop((channel_id, user_id), None)
-        channel_disabled = not target_ids
-
-    if entry is not None:
-        timer = entry.get("timer")
-        if timer is not None and not timer.done():
-            timer.cancel()
-        webhook = entry.get("webhook")
-        if webhook is not None:
-            try:
-                await webhook.delete(reason="HOODIFY channel target removed")
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                pass
-
-    return True, channel_disabled
-
-
 async def disable_all_hood_targets() -> int:
-    channel_ids = set(hood_targets)
-    channel_ids.update(channel_id for channel_id, _ in hood_webhooks)
+    channel_ids = list(hood_targets.keys() | hood_webhooks.keys())
     disabled_count = 0
     for channel_id in channel_ids:
         if await disable_hood_target(channel_id):
             disabled_count += 1
     return disabled_count
-
 
 async def send_hood_message(
     channel: discord.TextChannel,
@@ -529,7 +293,7 @@ async def send_hood_message(
 
     ensure_hood_message_is_allowed(content)
 
-    webhook = await get_hood_webhook(channel, target)
+    webhook = await get_hood_webhook(channel)
     hood_text = hoodify_text(content)
 
     if not hood_text:
@@ -559,7 +323,7 @@ async def send_hood_message(
             )
         )
 
-    _reset_hood_webhook_timer(channel.id, target.id, webhook)
+    _reset_hood_webhook_timer(channel.id, webhook)
     return sent_messages
 
 async def cleanup_stale_hood_webhooks() -> None:
@@ -582,45 +346,36 @@ async def cleanup_stale_hood_webhooks() -> None:
         for webhook in webhooks:
             if webhook.id in tracked_ids:
                 continue
-            if not webhook.name.startswith(f"{HOOD_WEBHOOK_NAME} | "):
+            if webhook.name != HOOD_WEBHOOK_NAME:
                 continue
             if webhook.user is None or webhook.user.id != bot_id:
                 continue
 
-            # Protect newly-created webhooks from overlapping bot instances.
-            raw_id = webhook.name[len(f"{HOOD_WEBHOOK_NAME} | "):].strip()
             try:
-                recovered_user_id = int(raw_id)
-            except ValueError:
-                continue
+                await webhook.delete(reason="Stale Hoodify webhook cleanup")
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
 
-            channel_id = webhook.channel_id
-            hood_targets.setdefault(channel_id, set()).add(recovered_user_id)
-            key = (channel_id, recovered_user_id)
-            hood_webhooks.setdefault(
-                key,
-                {"webhook": webhook, "timer": None, "user_id": recovered_user_id},
-            )
-            _reset_hood_webhook_timer(channel_id, recovered_user_id, webhook)
-            continue
-
-@tasks.loop(seconds=HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS)
+@tasks.loop(seconds=HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS if "HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS" in globals() else 60)
 async def hood_webhook_cleanup_loop():
-    # Wait one full interval before stale cleanup so startup cannot remove a
-    # webhook just created by another bot instance during a deploy.
-    await asyncio.sleep(HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS)
     await cleanup_stale_hood_webhooks()
 
 @hood_webhook_cleanup_loop.before_loop
 async def before_hood_webhook_cleanup():
     await bot.wait_until_ready()
 
+# channel_id -> {"webhook": discord.Webhook, "timer": asyncio.Task | None}
+uwu_webhooks: dict[int, dict] = {}
 
-@tree.command(
-    name="unhoodify",
-    description="Disable HOODIFY for a selected member.",
-)
-@app_commands.describe(member="The member to stop HOODIFYING")
+# channel_id -> set of target member IDs.
+# Multiple people can be UWUified in the same channel at once.
+uwu_targets: dict[int, set[int]] = {}
+
+# Protect the global 5-person cap from simultaneous commands.
+uwu_target_lock = asyncio.Lock()
+
+
+
 async def unhoodify_command(interaction: discord.Interaction, member: discord.Member):
     if uwu_hoodify_user_is_banned(interaction.user):
         await interaction.response.send_message(
@@ -677,8 +432,6 @@ async def hoodcount_root_command(interaction: discord.Interaction):
         f"This channel: **{channel_count}** people",
         ephemeral=False,
     )
-
-
 @tree.command(
     name="hoodify",
     description="Add a member to this channel's automatic HOODIFY mode.",
@@ -714,19 +467,12 @@ async def hoodify_command(
         return
 
     bot_member = interaction.guild.me if interaction.guild is not None else None
-    if bot_member is None or not (
-        interaction.channel.permissions_for(bot_member).manage_messages
-        and interaction.channel.permissions_for(bot_member).manage_webhooks
-    ):
+    if bot_member is None or not interaction.channel.permissions_for(bot_member).manage_messages:
         await interaction.response.send_message(
-            "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel to replace messages.",
+            "❌ I need **Manage Messages** permission in this channel to replace messages.",
             ephemeral=False,
         )
         return
-
-    # A GitHub-backed blacklist check can perform network I/O on the first use after a restart.
-    # Defer before entering that path so Discord does not expire the interaction.
-    await interaction.response.defer(ephemeral=False)
 
     try:
         await set_hood_target(interaction.channel, member)
@@ -735,7 +481,7 @@ async def hoodify_command(
             try:
                 await send_hood_message(interaction.channel, member, message)
             except HoodMessageBlocked as blocked_error:
-                await interaction.followup.send(
+                await interaction.response.send_message(
                     f"❌ HOODIFY was enabled, but the one-time message was not sent "
                     f"because it contains a blacklisted word/phrase: `{blocked_error}`",
                     ephemeral=False,
@@ -743,7 +489,7 @@ async def hoodify_command(
                 return
 
         active_count = get_active_hood_target_count()
-        await interaction.followup.send(
+        await interaction.response.send_message(
             f"✅ HOODIFY is active for {member.mention} in this channel. "
             f"Active people: **{active_count}/{MAX_ACTIVE_HOOD_TARGETS}**.\n"
             "You can add more people with another `/hoodify` command. "
@@ -751,36 +497,36 @@ async def hoodify_command(
             ephemeral=False,
         )
     except HoodUserBlacklisted:
-        await interaction.followup.send(
+        await interaction.response.send_message(
             f"❌ {member.mention} is blacklisted from using HOODIFY.",
             ephemeral=False,
         )
     except UserBlacklistStorageUnavailable as error:
-        await interaction.followup.send(
+        await interaction.response.send_message(
             "❌ I could not verify the HOODIFY blacklist from GitHub, "
             f"so I will not activate this target. Error: `{error}`",
             ephemeral=False,
         )
     except HoodTargetLimitReached:
-        await interaction.followup.send(
+        await interaction.response.send_message(
             f"❌ The global limit of {MAX_ACTIVE_HOOD_TARGETS} HOODIFIED people has been reached. "
             "Use `,unhoodify @user` or `/unhoodify @user` to disable HOODIFY for one member.",
             ephemeral=False,
         )
     except discord.Forbidden:
-        await interaction.followup.send(
+        await interaction.response.send_message(
             "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel/server.",
             ephemeral=False,
         )
     except discord.HTTPException as e:
-        await interaction.followup.send(
+        await interaction.response.send_message(
             f"❌ Discord rejected the HOODIFY webhook request: `{e}`",
             ephemeral=False,
         )
-    except Exception as error:
-        await interaction.followup.send(
-            "❌ The HOODIFY mode could not be enabled. "
-            f"Error: `{type(error).__name__}: {error}`",
+    except Exception:
+        await interaction.response.send_message(
+            "❌ The HOODIFY mode could not be enabled.",
             ephemeral=False,
         )
+
 
