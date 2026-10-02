@@ -834,7 +834,7 @@ async def on_message(message: discord.Message):
     # Active text-transform targets MUST be handled before the large prefix
     # command parser below. This keeps ordinary target messages from getting
     # swallowed by unrelated command handlers.
-    if not proxy_message:
+    if not proxy_message and not prefix_command.startswith(","):
         # Read the authoritative live state directly from the feature modules.
         # Do not rely on star-imported copies in this critical message path.
         hood_target_ids = hoodify_feature.hood_targets.get(message.channel.id, set())
