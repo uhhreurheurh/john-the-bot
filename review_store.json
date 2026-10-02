@@ -1032,6 +1032,14 @@
       "rating": 3,
       "comment": "Meh",
       "created_at": "2026-10-02 18:20:21"
+    },
+    {
+      "id": 152,
+      "target_id": 1542311839210406029,
+      "reviewer_id": 1495689444014030858,
+      "rating": 1,
+      "comment": ".",
+      "created_at": "2026-10-02 18:20:25"
     }
   ],
   "review_update_requests": [
