@@ -2928,55 +2928,33 @@ async def on_ready():
     if not commands_synced:
         main_guild_object = discord.Object(id=MAIN_SERVER)
 
-        # Rebuild the global command tree from only the supported commands.
-        # This removes stale/legacy command objects that can prevent Discord
-        # from accepting the whole command payload.
-        tree.clear_commands()
-        for command in (
-            ping_command,
-            uwu_command,
-            unuwuify_command,
-            uwucount_root_command,
-            hoodify_command,
-            unhoodify_command,
-            hoodcount_root_command,
-            review,
-            reviews,
-            deletereview,
-            savedb_command,
-            leaderboard,
-            strike_command,
-            strikes_command,
-            removestrike_command,
-            review_blacklist_group,
-            textify_group,
-            blacklist_group,
-        ):
-            tree.add_command(command)
-
         try:
-            # Replace stale guild definitions and copy the clean global set.
+            # Commands decorated with @tree.command are already registered on
+            # the global CommandTree. Copy that complete tree to the main guild
+            # and sync it directly. Do not clear the global tree here: doing so
+            # can remove commands before Discord receives the payload.
             tree.clear_commands(guild=main_guild_object)
             tree.copy_global_to(guild=main_guild_object)
-
             synced_commands = await tree.sync(guild=main_guild_object)
-            synced_names = {
-                command.name
-                for command in synced_commands
+
+            # Verify the commands users depend on. If Discord returned an
+            # incomplete set, keep commands_synced false so the next READY
+            # event retries instead of silently accepting a broken tree.
+            synced_names = {command.name for command in synced_commands}
+            required_commands = {
+                "uwuify",
+                "unuwuify",
+                "uwucount",
+                "hoodify",
+                "unhoodify",
+                "hoodcount",
             }
 
-            # Explicitly verify the two textify roots that users reported as
-            # missing. If Discord returned without them, retry the exact guild
-            # sync once using the same clean command set.
-            if not {"uwuify", "hoodify"}.issubset(synced_names):
-                tree.clear_commands(guild=main_guild_object)
-                tree.copy_global_to(guild=main_guild_object)
-                await tree.sync(guild=main_guild_object)
-
-            commands_synced = True
+            if required_commands.issubset(synced_names):
+                commands_synced = True
+            else:
+                commands_synced = False
         except Exception:
-            # Leave commands_synced false so the next READY event retries the
-            # sync instead of permanently accepting an incomplete command tree.
             commands_synced = False
 
     if not review_db_restore_checked:
