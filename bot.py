@@ -1684,7 +1684,7 @@ class PrefixUpdateView(discord.ui.View):
         if interaction.user.id != self.current_review["reviewer_id"]:
             await interaction.response.send_message(
                 "Only the person who wrote this review can update it.",
-                ephemeral=True,
+                ephemeral=False,
             )
             return
         await interaction.response.send_modal(

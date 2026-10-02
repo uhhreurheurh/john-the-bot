@@ -1269,26 +1269,26 @@ class ReviewModal(discord.ui.Modal):
     ):
 
         # Acknowledge the modal immediately so Discord does not time out.
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
 
         if review_user_is_blacklisted(interaction.user.id):
             await interaction.followup.send(
                 "❌ You are blacklisted from using the review system.",
-                ephemeral=True
+                ephemeral=False
             )
             return
 
         if interaction.user.id == self.target.id:
             await interaction.followup.send(
                 "❌ You can't review yourself.",
-                ephemeral=True
+                ephemeral=False
             )
             return
 
         if self.target.bot:
             await interaction.followup.send(
                 "❌ Discord bot accounts cannot receive reviews.",
-                ephemeral=True
+                ephemeral=False
             )
             return
 
@@ -1305,7 +1305,7 @@ class ReviewModal(discord.ui.Modal):
         except DuplicateReviewError:
             await interaction.followup.send(
                 '❌ You already reviewed this user. Use `/updatereview` to change your vote.',
-                ephemeral=True,
+                ephemeral=False,
             )
             return
         except Exception as error:
@@ -1326,7 +1326,7 @@ class ReviewModal(discord.ui.Modal):
             f"✅ Your review for {self.target.mention} was added.\n"
             f"**Rating:** {review_stars(self.rating)}\n"
             f"**Review ID:** `{review_id}`",
-            ephemeral=True
+            ephemeral=False
         )
         if not sync_success:
             print(f"Review database save after /review failed: {sync_error}")
@@ -1353,12 +1353,12 @@ class ReviewModal(discord.ui.Modal):
             if interaction.response.is_done():
                 await interaction.followup.send(
                     "❌ Something went wrong while saving the review. Please try again.",
-                    ephemeral=True
+                    ephemeral=False
                 )
             else:
                 await interaction.response.send_message(
                     "❌ Something went wrong while saving the review. Please try again.",
-                    ephemeral=True
+                    ephemeral=False
                 )
         except Exception:
             pass
@@ -1456,21 +1456,21 @@ async def review(
     if review_user_is_blacklisted(interaction.user.id):
         await interaction.response.send_message(
             "❌ You are blacklisted from using the review system.",
-            ephemeral=True
+            ephemeral=False
         )
         return
 
     if user.id == interaction.user.id:
         await interaction.response.send_message(
             "❌ You can't review yourself.",
-            ephemeral=True
+            ephemeral=False
         )
         return
 
     if user.bot:
         await interaction.response.send_message(
             "❌ Discord bot accounts cannot receive reviews.",
-            ephemeral=True
+            ephemeral=False
         )
         return
 
@@ -1481,14 +1481,14 @@ async def review(
         await interaction.response.send_message(
             "❌ You already reviewed this user. Use /updatereview to request a change. "
             "Your existing review will stay unchanged until a moderator approves it.",
-            ephemeral=True
+            ephemeral=False
         )
         return
 
     await interaction.response.send_message(
         "**select your star rating:**",
         view=StarView(user),
-        ephemeral=True
+        ephemeral=False
     )
 
 
@@ -1748,13 +1748,13 @@ class UpdateReviewModal(discord.ui.Modal):
         self.add_item(self.update_reason)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
         try:
             new_rating = int(self.rating.value.strip())
             if new_rating < 1 or new_rating > 5:
                 raise ValueError
         except ValueError:
-            await interaction.followup.send('❌ Rating must be a number from 1 to 5.', ephemeral=True)
+            await interaction.followup.send('❌ Rating must be a number from 1 to 5.', ephemeral=False)
             return
 
         new_comment = self.comment.value.strip() or self.current_review['comment']
@@ -1763,7 +1763,7 @@ class UpdateReviewModal(discord.ui.Modal):
         if len(update_reason) < 10:
             await interaction.followup.send(
                 '❌ You must provide at least 10 characters explaining why you are updating the review.',
-                ephemeral=True,
+                ephemeral=False,
             )
             return
 
@@ -1779,7 +1779,7 @@ class UpdateReviewModal(discord.ui.Modal):
                 update_reason,
             )
         except PendingReviewUpdateError:
-            await interaction.followup.send('❌ You already have an update waiting for approval for this vote.', ephemeral=True)
+            await interaction.followup.send('❌ You already have an update waiting for approval for this vote.', ephemeral=False)
             return
         except Exception as error:
             await interaction.followup.send(f'❌ I could not create the update request: `{error}`', ephemeral=True)
@@ -1794,13 +1794,13 @@ class UpdateReviewModal(discord.ui.Modal):
                 connection.commit()
             finally:
                 connection.close()
-            await interaction.followup.send('❌ I could not send the update to the approval channel. Check the bot permissions there.', ephemeral=True)
+            await interaction.followup.send('❌ I could not send the update to the approval channel. Check the bot permissions there.', ephemeral=False)
             return
 
         asyncio.create_task(sync_review_db_to_github_locked())
         await interaction.followup.send(
             f'✅ Your updated vote was sent for approval. Request ID: `{request_id}`',
-            ephemeral=True,
+            ephemeral=False,
         )
 
 
@@ -1813,20 +1813,20 @@ async def updatereview(interaction: discord.Interaction, user: discord.Member):
     if review_user_is_blacklisted(interaction.user.id):
         await interaction.response.send_message(
             "❌ You are blacklisted from using the review system.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
     await refresh_local_review_db_from_github()
     if user.id == interaction.user.id:
-        await interaction.response.send_message('❌ You cannot update a review for yourself.', ephemeral=True)
+        await interaction.response.send_message('❌ You cannot update a review for yourself.', ephemeral=False)
         return
     if user.bot:
-        await interaction.response.send_message('❌ Discord bot accounts cannot receive reviews.', ephemeral=True)
+        await interaction.response.send_message('❌ Discord bot accounts cannot receive reviews.', ephemeral=False)
         return
     current = get_user_review(user.id, interaction.user.id)
     if not current:
-        await interaction.response.send_message('❌ You have not reviewed this user yet. Use `/review` first.', ephemeral=True)
+        await interaction.response.send_message('❌ You have not reviewed this user yet. Use `/review` first.', ephemeral=False)
         return
     await interaction.response.send_modal(UpdateReviewModal(user, current))
 
@@ -1842,16 +1842,16 @@ async def handle_review_update_decision(interaction: discord.Interaction, reques
     if interaction.channel_id != REVIEW_UPDATE_APPROVAL_CHANNEL_ID:
         await interaction.response.send_message(
             f'❌ Review updates must be approved or rejected in <#{REVIEW_UPDATE_APPROVAL_CHANNEL_ID}>.',
-            ephemeral=True,
+            ephemeral=False,
         )
         return
     if not await review_approval_allowed(interaction):
-        await interaction.response.send_message('❌ You do not have permission to approve or reject review updates.', ephemeral=True)
+        await interaction.response.send_message('❌ You do not have permission to approve or reject review updates.', ephemeral=False)
         return
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=False)
     request, status = await asyncio.to_thread(complete_review_update, request_id, interaction.user.id, approve)
     if request is None:
-        await interaction.followup.send('❌ That review update has already been handled or does not exist.', ephemeral=True)
+        await interaction.followup.send('❌ That review update has already been handled or does not exist.', ephemeral=False)
         return
     try:
         channel = bot.get_channel(request['approval_channel_id']) if request['approval_channel_id'] else None
@@ -1872,7 +1872,7 @@ async def handle_review_update_decision(interaction: discord.Interaction, reques
         text = f'✅ Review update #{request_id} rejected. The original vote remains unchanged.'
     else:
         text = f'⚠️ Review update #{request_id} was cancelled because the original review no longer exists.'
-    await interaction.followup.send(text, ephemeral=True)
+    await interaction.followup.send(text, ephemeral=False)
 
 
 async def register_pending_review_update_views():
@@ -1917,51 +1917,51 @@ async def transferreviews(
     if from_account.id == to_account.id:
         await interaction.response.send_message(
             "❌ The source and destination accounts must be different.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
     if not review_transfer_allowed(interaction, from_account.id):
         await interaction.response.send_message(
             "❌ Only the account receiving the reviews or authorized review staff can transfer them.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
     if from_account.bot:
         await interaction.response.send_message(
             "❌ Bot accounts cannot be review-transfer sources.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
     if to_account.bot:
         await interaction.response.send_message(
             "❌ Bot accounts cannot receive reviews.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=False)
 
     try:
         count = transfer_reviews(from_account.id, to_account.id)
         await sync_review_db_to_github_locked()
     except ValueError as error:
-        await interaction.followup.send(f"❌ {error}", ephemeral=True)
+        await interaction.followup.send(f"❌ {error}", ephemeral=False)
         return
     except ReviewTransferConflict:
         await interaction.followup.send(
             "❌ The transfer would create duplicate reviews because at least one reviewer "
             "has already reviewed the destination account. No reviews were moved.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
     except Exception as error:
         print(f"Review transfer error: {type(error).__name__}: {error}")
         await interaction.followup.send(
             "❌ I couldn't transfer those reviews.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
@@ -1980,7 +1980,7 @@ async def transferreviews(
     await interaction.followup.send(
         f"✅ Transferred **{count}** review(s) from {from_account.mention} to {to_account.mention}. "
         "The existing review IDs and reviewer accounts were preserved.",
-        ephemeral=True,
+        ephemeral=False,
     )
 
 
@@ -2006,7 +2006,7 @@ async def reviews(
     if not review_list:
         await interaction.response.send_message(
             f"**{user.display_name}** has no reviews yet.",
-            ephemeral=True
+            ephemeral=False
         )
         return
 
@@ -2052,7 +2052,7 @@ async def deletereview(
     if not review:
         await interaction.response.send_message(
             "❌ Review not found.",
-            ephemeral=True
+            ephemeral=False
         )
         return
 
@@ -2075,7 +2075,7 @@ async def deletereview(
 
     await interaction.response.send_message(
         f"✅ Review `{review_id}` deleted.",
-        ephemeral=True
+        ephemeral=False
     )
 
 
@@ -2092,7 +2092,7 @@ async def deletereview_error(
     if isinstance(error, app_commands.errors.CheckFailure):
         await interaction.response.send_message(
             "❌ You do not have one of the required roles to use `/deletereview`.",
-            ephemeral=True
+            ephemeral=False
         )
     else:
         raise error
@@ -2124,25 +2124,25 @@ async def savedb_command(interaction: discord.Interaction):
     if not isinstance(interaction.user, discord.Member):
         await interaction.response.send_message(
             "❌ This command can only be used inside a server.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
     if REVIEW_DB_SAVE_ROLE_ID not in {role.id for role in interaction.user.roles}:
         await interaction.response.send_message(
             "❌ You do not have permission to use `/savedb`.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=False)
     async with review_db_lock:
         success, error = await sync_review_db_to_github()
 
     if success:
         await interaction.followup.send(
             "✅ The review database was saved to GitHub successfully.",
-            ephemeral=True,
+            ephemeral=False,
         )
     else:
         await interaction.followup.send(

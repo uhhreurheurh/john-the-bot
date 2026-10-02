@@ -280,7 +280,7 @@ async def leaderboard(interaction: discord.Interaction):
         await interaction.followup.send(
             "❌ I couldn't load the leaderboard right now. "
             "Please try again in a moment.",
-            ephemeral=True,
+            ephemeral=False,
         )
         print(
             f"Leaderboard command failed: {type(error).__name__}: {error}"

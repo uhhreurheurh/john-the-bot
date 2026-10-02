@@ -632,7 +632,7 @@ async def strike_command(
     if not reason:
         await interaction.followup.send(
             "❌ You must provide a reason for the strike.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
@@ -645,7 +645,7 @@ async def strike_command(
     if current_staff_info is None:
         await interaction.followup.send(
             "❌ The selected member does not have a configured staff role.",
-            ephemeral=True,
+            ephemeral=False,
         )
         return
 
@@ -681,7 +681,7 @@ async def strike_command(
 
     await interaction.followup.send(
         "✅ Strike issued successfully.",
-        ephemeral=True,
+        ephemeral=False,
     )
 
 
