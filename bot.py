@@ -1277,16 +1277,10 @@ async def on_message(message: discord.Message):
             sent_messages = await send_hood_message(message.channel, message.author, content)
             deleted = await delete_original_message(message)
             if not deleted:
-                for sent in sent_messages:
-                    try:
-                        await sent.delete()
-                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                        pass
-                await disable_hood_for_user(message.author.id)
                 try:
                     await message.reply(
-                        "❌ I could not delete your original message. "
-                        "Please give me **Manage Messages** permission in this channel.",
+                        "⚠️ HOODIFY transformed your message, but I could not delete "
+                        "the original. Check that I have **Manage Messages** in this channel.",
                         mention_author=False,
                     )
                 except (discord.Forbidden, discord.HTTPException):
@@ -1297,7 +1291,11 @@ async def on_message(message: discord.Message):
             return
         except (discord.Forbidden, discord.HTTPException):
             await disable_hood_for_user(message.author.id)
-        except Exception:
+        except Exception as error:
+            print(
+                "HOODIFY automatic message error: "
+                f"{type(error).__name__}: {error}"
+            )
             return
         return
 
@@ -1328,16 +1326,10 @@ async def on_message(message: discord.Message):
             sent_messages = await send_uwu_message(message.channel, message.author, content)
             deleted = await delete_original_message(message)
             if not deleted:
-                for sent in sent_messages:
-                    try:
-                        await sent.delete()
-                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                        pass
-                await disable_uwu_for_user(message.author.id)
                 try:
                     await message.reply(
-                        "❌ I could not delete your original message. "
-                        "Please give me **Manage Messages** permission in this channel.",
+                        "⚠️ UWUIFY transformed your message, but I could not delete "
+                        "the original. Check that I have **Manage Messages** in this channel.",
                         mention_author=False,
                     )
                 except (discord.Forbidden, discord.HTTPException):
@@ -1348,7 +1340,11 @@ async def on_message(message: discord.Message):
             return
         except (discord.Forbidden, discord.HTTPException):
             await disable_uwu_for_user(message.author.id)
-        except Exception:
+        except Exception as error:
+            print(
+                "UWUIFY automatic message error: "
+                f"{type(error).__name__}: {error}"
+            )
             return
         return
 
@@ -3603,4 +3599,17 @@ if not BOT_TOKEN:
         "Set the BOT_TOKEN environment variable before starting the bot."
     )
 
-bot.run(BOT_TOKEN)
+# Keep the Discord worker alive if bot.run() ever returns cleanly.
+# Railway only restarts crashed processes, so a clean return would otherwise
+# leave the service stopped.
+while True:
+    try:
+        bot.run(BOT_TOKEN, reconnect=True)
+        print("Bot run returned; restarting Discord connection in 5 seconds.")
+    except Exception as error:
+        print(
+            "Discord connection stopped: "
+            f"{type(error).__name__}: {error}"
+        )
+
+    time.sleep(5)
