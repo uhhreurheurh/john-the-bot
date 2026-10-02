@@ -42,7 +42,6 @@ def uwu_user_is_whitelisted(member: discord.Member | discord.User) -> bool:
     """Return True when the member has at least one allowed UWU role."""
     role_ids = [role.id for role in getattr(member, "roles", ())]
     result = any(role_id in UWU_ALLOWED_ROLE_IDS for role_id in role_ids)
-    textify_debug("UWU-L01 whitelist check", user_id=getattr(member, "id", None), role_ids=role_ids, allowed_roles=sorted(UWU_ALLOWED_ROLE_IDS), result=result)
     return result
 
 
@@ -130,23 +129,18 @@ def _reset_uwu_webhook_timer(channel_id: int, webhook: discord.Webhook) -> None:
 async def get_uwu_webhook(channel: discord.TextChannel) -> discord.Webhook:
     """Get or create the temporary UWU webhook for a channel."""
     channel_id = channel.id
-    textify_debug("UWU-L02 get_webhook ENTER", channel_id=channel_id, tracked_channels=sorted(uwu_webhooks.keys()))
     entry = uwu_webhooks.get(channel_id)
 
     if entry is not None:
-        textify_debug("UWU-L03 existing webhook entry", entry_keys=list(entry.keys()))
         webhook = entry.get("webhook")
         if webhook is not None:
             try:
                 await webhook.fetch()
-                textify_debug("UWU-L04 existing webhook FETCH OK", webhook_id=webhook.id)
                 _reset_uwu_webhook_timer(channel_id, webhook)
                 return webhook
             except (discord.NotFound, discord.HTTPException) as error:
-                textify_debug_exception("UWU-L05 existing webhook FETCH FAILED", error)
                 uwu_webhooks.pop(channel_id, None)
 
-    textify_debug("UWU-L06 creating new webhook", channel_id=channel_id, webhook_name=UWU_WEBHOOK_NAME)
     webhook = await channel.create_webhook(
         name=UWU_WEBHOOK_NAME,
         reason="Temporary webhook for the ,uwuify /uwuify command",
@@ -157,7 +151,6 @@ async def get_uwu_webhook(channel: discord.TextChannel) -> discord.Webhook:
         "timer": None,
     }
     _reset_uwu_webhook_timer(channel_id, webhook)
-    textify_debug("UWU-L07 webhook READY", webhook_id=webhook.id, channel_id=channel_id)
     return webhook
 
 
@@ -166,21 +159,16 @@ async def set_uwu_target(
     target: discord.Member,
 ) -> discord.Webhook:
     """Add a target to UWU mode while enforcing a global 5-person cap."""
-    textify_debug("UWU-L08 set_target ENTER", channel_id=channel.id, target_id=target.id, target_name=target.display_name)
     try:
         await ensure_user_blacklists_ready()
     except RuntimeError as error:
-        textify_debug_exception("UWU-L09 blacklist sync FAILED", error)
         raise UserBlacklistStorageUnavailable(str(error)) from error
 
-    textify_debug("UWU-L10 blacklist state", target_id=target.id, blacklisted=target.id in uwu_user_blacklist)
     if target.id in uwu_user_blacklist:
-        textify_debug("UWU-L11 BLACKLIST BLOCK")
         raise UwuUserBlacklisted
 
     async with uwu_target_lock:
         channel_targets = uwu_targets.setdefault(channel.id, set())
-        textify_debug("UWU-L12 target lock acquired", channel_id=channel.id, channel_targets=sorted(channel_targets), global_targets=sorted(get_active_uwu_target_ids()))
 
         # Already active in this channel: no additional slot is needed.
         if target.id not in channel_targets:
@@ -199,16 +187,13 @@ async def set_uwu_target(
                     f"The maximum of {MAX_ACTIVE_UWU_TARGETS} active UWU targets has been reached."
                 )
 
-            textify_debug("UWU-L13 adding target", target_id=target.id)
             channel_targets.add(target.id)
 
     # Create/reuse the webhook outside the cap lock so webhook API calls do not
     # block another target from being checked against the cap.
-    textify_debug("UWU-L14 target stored, requesting webhook", channel_id=channel.id, target_ids=sorted(uwu_targets.get(channel.id, set())))
     try:
         webhook = await get_uwu_webhook(channel)
     except Exception as error:
-        textify_debug_exception("UWU-L15 get_webhook FAILED - rolling target back", error)
         async with uwu_target_lock:
             channel_targets = uwu_targets.get(channel.id)
             if channel_targets is not None:
@@ -218,7 +203,6 @@ async def set_uwu_target(
         raise
 
     _reset_uwu_webhook_timer(channel.id, webhook)
-    textify_debug("UWU-L16 set_target SUCCESS", target_id=target.id, channel_id=channel.id, webhook_id=webhook.id, active_targets=sorted(get_active_uwu_target_ids()))
     return webhook
 
 
@@ -260,9 +244,7 @@ async def send_uwu_message(
     target: discord.Member,
     content: str,
 ) -> list[discord.WebhookMessage]:
-    textify_debug("UWU-L17 send_message ENTER", channel_id=channel.id, target_id=target.id, content=content)
     if target.id in uwu_user_blacklist:
-        textify_debug("UWU-L18 send_message BLACKLIST BLOCK", target_id=target.id)
         raise UwuUserBlacklisted
 
     """Uwuify text and send it through the temporary webhook.
@@ -273,10 +255,8 @@ async def send_uwu_message(
     """
     # Never send a blacklisted word/phrase.
     ensure_uwu_message_is_allowed(content)
-    textify_debug("UWU-L19 input blacklist check PASSED")
 
     webhook = await get_uwu_webhook(channel)
-    textify_debug("UWU-L20 webhook acquired", webhook_id=webhook.id)
 
     # Protect Discord mentions before uwuify transforms the text.
     # This keeps @users, @roles, and #channels intact and clickable.
@@ -295,9 +275,7 @@ async def send_uwu_message(
     )
 
     # PyPI uwuify exposes uwu(text, flags=...).
-    textify_debug("UWU-L21 calling uwuify package", input=uwu_input, flags=UWU_FLAGS)
     uwu_text = uwuify.uwu(uwu_input, flags=UWU_FLAGS)
-    textify_debug("UWU-L22 uwuify package returned", output=uwu_text)
     if not uwu_text:
         uwu_text = "uwu"
 
@@ -311,7 +289,6 @@ async def send_uwu_message(
     # Also check the final transformed text so the webhook never sends a blocked
     # word even if the transformation itself somehow creates one.
     ensure_uwu_message_is_allowed(uwu_text)
-    textify_debug("UWU-L23 output blacklist check PASSED", output=uwu_text)
 
     sent_messages: list[discord.WebhookMessage] = []
     chunks = [
@@ -320,7 +297,6 @@ async def send_uwu_message(
     ] or ["uwu"]
 
     for chunk in chunks:
-        textify_debug("UWU-L24 webhook SEND", chunk=chunk, webhook_id=webhook.id)
         sent_messages.append(
             await webhook.send(
                 chunk,
@@ -339,7 +315,6 @@ async def send_uwu_message(
         )
 
     _reset_uwu_webhook_timer(channel.id, webhook)
-    textify_debug("UWU-L25 send_message SUCCESS", sent_count=len(sent_messages), webhook_id=webhook.id)
     return sent_messages
 
 
@@ -504,7 +479,6 @@ async def uwu_command(
     message: str | None = None,
 ):
     """Enable automatic uwu replacement for a selected member in this channel."""
-    textify_debug("UWU-L26 slash ENTER", operator_id=interaction.user.id, target_id=member.id, channel_id=getattr(interaction.channel, "id", None), one_time_message=message)
     if uwu_hoodify_user_is_banned(interaction.user):
         await interaction.response.send_message(
             "❌ You are banned from using UWUIFY and HOODIFY.",
@@ -534,7 +508,6 @@ async def uwu_command(
     # A GitHub-backed blacklist check can involve network I/O. Defer the
     # interaction first so Discord's response window cannot expire.
     await interaction.response.defer(ephemeral=False)
-    textify_debug("UWU-L27 slash DEFER OK", operator_id=interaction.user.id)
 
     if (
         permissions is None
@@ -548,15 +521,11 @@ async def uwu_command(
         return
 
     try:
-        textify_debug("UWU-L28 slash set_target CALL")
         await set_uwu_target(interaction.channel, member)
-        textify_debug("UWU-L29 slash set_target RETURNED")
 
         if message:
             try:
-                textify_debug("UWU-L30 slash one-time send CALL")
                 await send_uwu_message(interaction.channel, member, message)
-                textify_debug("UWU-L31 slash one-time send RETURNED")
             except UwuMessageBlocked as blocked_error:
                 await interaction.followup.send(
                     f"❌ The UWU mode was enabled, but the one-time message was not sent because it contains a blacklisted word/phrase: `{blocked_error}`",
@@ -599,7 +568,6 @@ async def uwu_command(
             ephemeral=False,
         )
     except Exception as error:
-        textify_debug_exception("UWU-L32 slash activation EXCEPTION", error)
         await interaction.followup.send(
             "❌ The UWUIFY mode could not be enabled. "
             f"Error: {type(error).__name__}: {error}",
