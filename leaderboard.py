@@ -73,6 +73,75 @@ def get_user_stats(user_id: int):
     )
 
 
+def _build_leaderboard_rows(store):
+    """Build complete leaderboard rows for pagination."""
+    stats_by_target = {}
+    liked_counts = {}
+    neutral_counts = {}
+    disliked_counts = {}
+
+    for review in store.get("reviews", []):
+        target_id = int(review["target_id"])
+        rating = int(review["rating"])
+
+        stats = stats_by_target.setdefault(
+            target_id,
+            {"total": 0, "approved": 0, "rating_sum": 0},
+        )
+        stats["total"] += 1
+        stats["rating_sum"] += rating
+
+        if rating in (4, 5):
+            stats["approved"] += 1
+            liked_counts[target_id] = liked_counts.get(target_id, 0) + 1
+        elif rating == 3:
+            neutral_counts[target_id] = neutral_counts.get(target_id, 0) + 1
+        elif rating in (1, 2):
+            disliked_counts[target_id] = disliked_counts.get(target_id, 0) + 1
+
+    liked = sorted(
+        (
+            {"target_id": target_id, "approved": count}
+            for target_id, count in liked_counts.items()
+        ),
+        key=lambda row: (-row["approved"], row["target_id"]),
+    )
+
+    reviewed = sorted(
+        (
+            {
+                "target_id": target_id,
+                "review_count": stats["total"],
+                "average_rating": stats["rating_sum"] / stats["total"],
+            }
+            for target_id, stats in stats_by_target.items()
+        ),
+        key=lambda row: (
+            -row["review_count"],
+            -row["average_rating"],
+            row["target_id"],
+        ),
+    )
+
+    neutral = sorted(
+        (
+            {"target_id": target_id, "neutral": count}
+            for target_id, count in neutral_counts.items()
+        ),
+        key=lambda row: (-row["neutral"], row["target_id"]),
+    )
+
+    disliked = sorted(
+        (
+            {"target_id": target_id, "disliked": count}
+            for target_id, count in disliked_counts.items()
+        ),
+        key=lambda row: (-row["disliked"], row["target_id"]),
+    )
+
+    return stats_by_target, liked, reviewed, neutral, disliked
+
+
 LEADERBOARD_PAGE_SIZE = 5
 
 
