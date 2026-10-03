@@ -1662,6 +1662,23 @@
       "reviewed_by": 191233879175200768,
       "created_at": "2026-10-03 16:09:16",
       "reviewed_at": "2026-10-03 16:10:29"
+    },
+    {
+      "id": 13,
+      "review_id": 204,
+      "target_id": 929885818867314718,
+      "reviewer_id": 1348469829425959022,
+      "old_rating": 5,
+      "old_comment": "🦍🤬",
+      "new_rating": 1,
+      "new_comment": "🦍🤬",
+      "update_reason": "I missclicked",
+      "status": "pending",
+      "approval_message_id": null,
+      "approval_channel_id": null,
+      "reviewed_by": null,
+      "created_at": "2026-10-03 19:23:57",
+      "reviewed_at": null
     }
   ],
   "review_id_sequence": 6
