@@ -385,10 +385,11 @@ async def send_hood_message(
     ensure_hood_message_is_allowed(hood_text)
 
     sent_messages: list[discord.WebhookMessage] = []
-    chunks = [
-        hood_text[index:index + 2000]
-        for index in range(0, len(hood_text), 2000)
-    ] or ["yo"]
+    chunks = (
+        [hood_text[index:index + 2000] for index in range(0, len(hood_text), 2000)]
+        if hood_text
+        else [None]
+    )
 
     for chunk_index, chunk in enumerate(chunks):
         sent_messages.append(
