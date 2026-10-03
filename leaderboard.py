@@ -155,102 +155,150 @@ class LeaderboardPaginationView(discord.ui.View):
         self.neutral = neutral
         self.disliked = disliked
         self.page = 0
-        self.total_pages = max(1, (max(len(liked), len(reviewed), len(neutral), len(disliked), 1) + LEADERBOARD_PAGE_SIZE - 1) // LEADERBOARD_PAGE_SIZE)
+        self.pages = [
+            ("Positive", self.liked),
+            ("Neutral", self.neutral),
+            ("Negative", self.disliked),
+            ("Most Reviewed", self.reviewed),
+        ]
         self._refresh_buttons()
 
     def _refresh_buttons(self):
         self.previous_button.disabled = self.page <= 0
-        self.next_button.disabled = self.page >= self.total_pages - 1
+        self.next_button.disabled = self.page >= len(self.pages) - 1
 
     async def make_embed(self):
-        start = self.page * LEADERBOARD_PAGE_SIZE
-        end = start + LEADERBOARD_PAGE_SIZE
-        categories = [
-            ("Most Liked", self.liked[start:end]),
-            ("Most Reviewed", self.reviewed[start:end]),
-            ("Neutral (3 Stars)", self.neutral[start:end]),
-            ("Most Disliked", self.disliked[start:end]),
-        ]
+        page_name, rows = self.pages[self.page]
 
-        target_ids = []
-        for _, rows in categories:
-            for row in rows:
-                if row["target_id"] not in target_ids:
-                    target_ids.append(row["target_id"])
-
+        target_ids = [row["target_id"] for row in rows]
         members = {}
+
         if self.guild is not None:
             for target_id in target_ids:
-                members[target_id] = await get_review_member_or_user(self.guild, target_id)
+                members[target_id] = await get_review_member_or_user(
+                    self.guild,
+                    target_id,
+                )
 
         def label(target_id):
             member = members.get(target_id)
-            return (member.mention if member else f"<@{target_id}>", member.name if member else "unknown")
+            return (
+                member.mention if member else f"<@{target_id}>",
+                member.name if member else "unknown",
+            )
 
         embed = discord.Embed(
             title="leaderboard",
-            description=f"Page **{self.page + 1}/{self.total_pages}** • 5 users per category",
-            color=discord.Color.dark_grey(),
+            description=f"**{page_name}** • Page **{self.page + 1}/{len(self.pages)}**",
+            color=(
+                discord.Color.green()
+                if page_name == "Positive"
+                else discord.Color.orange()
+                if page_name == "Neutral"
+                else discord.Color.red()
+                if page_name == "Negative"
+                else discord.Color.blurple()
+            ),
         )
 
-        for name, rows in categories:
-            if name == "Most Liked":
-                heading = "**top most liked users**"
-            elif name == "Most Reviewed":
-                heading = "**top most reviewed**"
-            elif name == "Neutral (3 Stars)":
-                heading = "**top neutral users**"
-            else:
-                heading = "**top most disliked users**"
+        if not rows:
+            empty_text = {
+                "Positive": "No positive reviews yet.",
+                "Neutral": "No 3-star reviews yet.",
+                "Negative": "No negative reviews yet.",
+                "Most Reviewed": "No reviews yet.",
+            }[page_name]
+            embed.description += f"\n\n{empty_text}"
+        else:
+            text = ""
 
-            text = heading + "\n\n"
-            if not rows:
-                text += (
-                    "No reviews yet." if self.page == 0 and name != "Neutral (3 Stars)"
-                    else "No 3-star reviews yet." if self.page == 0
-                    else "No more users on this page."
-                )
-            else:
-                for offset, row in enumerate(rows):
-                    target_id = row["target_id"]
-                    mention, username = label(target_id)
-                    rank = start + offset + 1
+            for rank, row in enumerate(rows, start=1):
+                target_id = row["target_id"]
+                mention, username = label(target_id)
 
-                    if name == "Most Liked":
-                        stats = self.stats_by_target.get(target_id, {"total": 0, "approved": 0})
-                        approval = stats["approved"] / stats["total"] * 100 if stats["total"] else 0
-                        text += f"{rank} {mention} ({username}) 🟢 **{row['approved']}** ({approval:.2f}% approval)\n"
-                    elif name == "Most Reviewed":
-                        text += f"{rank} {mention} ({username}) 📝 **{row['review_count']} reviews** (⭐ {row['average_rating']:.1f} avg)\n"
-                    elif name == "Neutral (3 Stars)":
-                        text += f"{rank} {mention} ({username}) 🟠 **{row['neutral']} neutral reviews**\n"
-                    else:
-                        stats = self.stats_by_target.get(target_id, {"total": 0, "approved": 0})
-                        approval = stats["approved"] / stats["total"] * 100 if stats["total"] else 0
-                        text += f"{rank} {mention} ({username}) 🔴 **{row['disliked']} negative reviews** ({approval:.2f}% approval)\n"
+                if page_name == "Positive":
+                    stats = self.stats_by_target.get(
+                        target_id,
+                        {"total": 0, "approved": 0},
+                    )
+                    approval = (
+                        stats["approved"] / stats["total"] * 100
+                        if stats["total"]
+                        else 0
+                    )
+                    text += (
+                        f"{rank} {mention} ({username}) "
+                        f"🟢 **{row['approved']}** positive reviews "
+                        f"({approval:.2f}% approval)\n"
+                    )
 
-            embed.add_field(name=name, value=text, inline=False)
+                elif page_name == "Neutral":
+                    text += (
+                        f"{rank} {mention} ({username}) "
+                        f"🟠 **{row['neutral']}** neutral reviews\n"
+                    )
 
-        embed.set_footer(text="Use Previous and Next to change pages.")
+                elif page_name == "Negative":
+                    stats = self.stats_by_target.get(
+                        target_id,
+                        {"total": 0, "approved": 0},
+                    )
+                    approval = (
+                        stats["approved"] / stats["total"] * 100
+                        if stats["total"]
+                        else 0
+                    )
+                    text += (
+                        f"{rank} {mention} ({username}) "
+                        f"🔴 **{row['disliked']}** negative reviews "
+                        f"({approval:.2f}% approval)\n"
+                    )
+
+                else:
+                    text += (
+                        f"{rank} {mention} ({username}) "
+                        f"📝 **{row['review_count']} reviews** "
+                        f"(⭐ {row['average_rating']:.1f} avg)\n"
+                    )
+
+            embed.description += f"\n\n{text}"
+
+        embed.set_footer(text="Use Previous and Next to switch leaderboard pages.")
         return embed
 
-    @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
-    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.page <= 0:
-            await interaction.response.defer()
-            return
-        self.page -= 1
+    @discord.ui.button(
+        label="Previous",
+        style=discord.ButtonStyle.secondary,
+    )
+    async def previous_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        if self.page > 0:
+            self.page -= 1
         self._refresh_buttons()
-        await interaction.response.edit_message(embed=await self.make_embed(), view=self)
+        await interaction.response.edit_message(
+            embed=await self.make_embed(),
+            view=self,
+        )
 
-    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary)
-    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.page >= self.total_pages - 1:
-            await interaction.response.defer()
-            return
-        self.page += 1
+    @discord.ui.button(
+        label="Next",
+        style=discord.ButtonStyle.primary,
+    )
+    async def next_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        if self.page < len(self.pages) - 1:
+            self.page += 1
         self._refresh_buttons()
-        await interaction.response.edit_message(embed=await self.make_embed(), view=self)
+        await interaction.response.edit_message(
+            embed=await self.make_embed(),
+            view=self,
+        )
 
     async def on_timeout(self):
         for item in self.children:
