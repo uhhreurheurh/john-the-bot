@@ -1674,8 +1674,8 @@
       "new_comment": "🦍🤬",
       "update_reason": "I missclicked",
       "status": "pending",
-      "approval_message_id": null,
-      "approval_channel_id": null,
+      "approval_message_id": 1556024035622522973,
+      "approval_channel_id": 1554700806220161164,
       "reviewed_by": null,
       "created_at": "2026-10-03 19:23:57",
       "reviewed_at": null
