@@ -1387,6 +1387,7 @@ async def on_message(message: discord.Message):
                     ("General", "`,jelp` — Show this help menu\n`,ping` — Check bot latency"),
                     ("Textify", "`,uwuify @user` — Enable UWUIFY for a member\n`,unuwuify @user` — Disable UWUIFY\n`,uwu count` — Show active UWUIFY count\n\n`,hoodify @user` — Enable HOODIFY for a member\n`,unhoodify @user` — Disable HOODIFY\n`,hood count` — Show active HOODIFY count"),
                     ("Blackjack", "`,blackjack <bet>` — Play Blackjack with Kevin Bucks\n`,balance` — Check your Kevin Bucks balance\n`,daily` — Claim your daily Kevin Bucks"),
+                    ("Mines", "`,mines <bet> [mines]` — Play Mines with Kevin Bucks\nUse 1–12 mines; the default is 3."),
                     ("Reviews", "`,review @user` — Leave a review\n`,updatereview @user` — Request a review update\n`,reviews @user` — View reviews\n`,deletereview ID` — Delete a review\n`,leaderboard` — View the review leaderboard\n`,reviewblacklist add/remove/status @user` — Manage the review blacklist"),
                     ("Staff & Management", "`,strike @user <7-40d> <reason>` — Issue a staff strike\n`,removestrike @user <number>` — Remove a staff strike\n\n`,textify blacklist/unblacklist/status @user` — Manage the Textify blacklist\n`,textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n`,blacklist add/remove/status @user` — Manage the second-role blacklist\n`,savedb` — Save the review database"),
                 ]
@@ -1730,6 +1731,10 @@ async def on_message(message: discord.Message):
         return
     # Kevin Bucks / Blackjack prefix commands.
     if await blackjack_feature.handle_prefix(message):
+        return
+
+    # Mines prefix command.
+    if await mines_feature.handle_prefix(message):
         return
 
     # Review, leaderboard, and remaining staff prefix commands.
@@ -3054,6 +3059,7 @@ import reviews as reviews_feature
 import leaderboard as leaderboard_feature
 import staff_strikes as staff_strikes_feature
 import blackjack as blackjack_feature
+import mines as mines_feature
 from hoodify_feature import *
 from uwuify_feature import *
 from reviews import *
@@ -3066,6 +3072,7 @@ from reviews import (
 from leaderboard import *
 from staff_strikes import *
 from blackjack import *
+from mines import *
 
 # =========================
 # HOODIFY ROOT COMMANDS
