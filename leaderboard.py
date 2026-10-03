@@ -73,216 +73,146 @@ def get_user_stats(user_id: int):
     )
 
 
+LEADERBOARD_PAGE_SIZE = 5
+
+
+class LeaderboardPaginationView(discord.ui.View):
+    def __init__(self, guild, stats_by_target, liked, reviewed, neutral, disliked):
+        super().__init__(timeout=300)
+        self.guild = guild
+        self.stats_by_target = stats_by_target
+        self.liked = liked
+        self.reviewed = reviewed
+        self.neutral = neutral
+        self.disliked = disliked
+        self.page = 0
+        self.total_pages = max(1, (max(len(liked), len(reviewed), len(neutral), len(disliked), 1) + LEADERBOARD_PAGE_SIZE - 1) // LEADERBOARD_PAGE_SIZE)
+        self._refresh_buttons()
+
+    def _refresh_buttons(self):
+        self.previous_button.disabled = self.page <= 0
+        self.next_button.disabled = self.page >= self.total_pages - 1
+
+    async def make_embed(self):
+        start = self.page * LEADERBOARD_PAGE_SIZE
+        end = start + LEADERBOARD_PAGE_SIZE
+        categories = [
+            ("Most Liked", self.liked[start:end]),
+            ("Most Reviewed", self.reviewed[start:end]),
+            ("Neutral (3 Stars)", self.neutral[start:end]),
+            ("Most Disliked", self.disliked[start:end]),
+        ]
+
+        target_ids = []
+        for _, rows in categories:
+            for row in rows:
+                if row["target_id"] not in target_ids:
+                    target_ids.append(row["target_id"])
+
+        members = {}
+        if self.guild is not None:
+            for target_id in target_ids:
+                members[target_id] = await get_review_member_or_user(self.guild, target_id)
+
+        def label(target_id):
+            member = members.get(target_id)
+            return (member.mention if member else f"<@{target_id}>", member.name if member else "unknown")
+
+        embed = discord.Embed(
+            title="leaderboard",
+            description=f"Page **{self.page + 1}/{self.total_pages}** • 5 users per category",
+            color=discord.Color.dark_grey(),
+        )
+
+        for name, rows in categories:
+            if name == "Most Liked":
+                heading = "**top most liked users**"
+            elif name == "Most Reviewed":
+                heading = "**top most reviewed**"
+            elif name == "Neutral (3 Stars)":
+                heading = "**top neutral users**"
+            else:
+                heading = "**top most disliked users**"
+
+            text = heading + "\n\n"
+            if not rows:
+                text += (
+                    "No reviews yet." if self.page == 0 and name != "Neutral (3 Stars)"
+                    else "No 3-star reviews yet." if self.page == 0
+                    else "No more users on this page."
+                )
+            else:
+                for offset, row in enumerate(rows):
+                    target_id = row["target_id"]
+                    mention, username = label(target_id)
+                    rank = start + offset + 1
+
+                    if name == "Most Liked":
+                        stats = self.stats_by_target.get(target_id, {"total": 0, "approved": 0})
+                        approval = stats["approved"] / stats["total"] * 100 if stats["total"] else 0
+                        text += f"{rank} {mention} ({username}) 🟢 **{row['approved']}** ({approval:.2f}% approval)\n"
+                    elif name == "Most Reviewed":
+                        text += f"{rank} {mention} ({username}) 📝 **{row['review_count']} reviews** (⭐ {row['average_rating']:.1f} avg)\n"
+                    elif name == "Neutral (3 Stars)":
+                        text += f"{rank} {mention} ({username}) 🟠 **{row['neutral']} neutral reviews**\n"
+                    else:
+                        stats = self.stats_by_target.get(target_id, {"total": 0, "approved": 0})
+                        approval = stats["approved"] / stats["total"] * 100 if stats["total"] else 0
+                        text += f"{rank} {mention} ({username}) 🔴 **{row['disliked']} negative reviews** ({approval:.2f}% approval)\n"
+
+            embed.add_field(name=name, value=text, inline=False)
+
+        embed.set_footer(text="Use Previous and Next to change pages.")
+        return embed
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.page <= 0:
+            await interaction.response.defer()
+            return
+        self.page -= 1
+        self._refresh_buttons()
+        await interaction.response.edit_message(embed=await self.make_embed(), view=self)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.page >= self.total_pages - 1:
+            await interaction.response.defer()
+            return
+        self.page += 1
+        self._refresh_buttons()
+        await interaction.response.edit_message(embed=await self.make_embed(), view=self)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+
+async def send_prefix_leaderboard(message):
+    try:
+        store = await asyncio.to_thread(_load_shared_review_store)
+        stats_by_target, liked, reviewed, neutral, disliked = _build_leaderboard_rows(store)
+        view = LeaderboardPaginationView(message.guild, stats_by_target, liked, reviewed, neutral, disliked)
+        await message.reply(embed=await view.make_embed(), view=view, mention_author=False)
+    except Exception as error:
+        await message.reply("I couldn't load the leaderboard right now.", mention_author=False)
+        print(f"Prefix leaderboard failed: {type(error).__name__}: {error}")
+
+
 @tree.command(
     name="leaderboard",
     description="View the reputation leaderboard."
 )
 async def leaderboard(interaction: discord.Interaction):
-    # Acknowledge the interaction immediately. GitHub/API work can take longer
-    # than Discord's initial interaction response window.
     await interaction.response.defer()
-
     try:
-        # The shared review store is the source used by the leaderboard.
-        # Load it once instead of refreshing the SQLite DB and then making
-        # three additional GitHub reads (one for each leaderboard section).
         store = await asyncio.to_thread(_load_shared_review_store)
-        reviews = store.get("reviews", [])
-
-        # Aggregate everything from the same snapshot so all three sections
-        # are consistent with one another and do not repeatedly hit GitHub.
-        stats_by_target = {}
-        liked_counts = {}
-        neutral_counts = {}
-        disliked_counts = {}
-
-        for review in reviews:
-            target_id = int(review["target_id"])
-            rating = int(review["rating"])
-
-            stats = stats_by_target.setdefault(
-                target_id,
-                {"total": 0, "approved": 0, "rating_sum": 0},
-            )
-            stats["total"] += 1
-            stats["rating_sum"] += rating
-
-            if rating in (4, 5):
-                stats["approved"] += 1
-                liked_counts[target_id] = liked_counts.get(target_id, 0) + 1
-            elif rating == 3:
-                neutral_counts[target_id] = neutral_counts.get(target_id, 0) + 1
-            elif rating in (1, 2):
-                disliked_counts[target_id] = disliked_counts.get(target_id, 0) + 1
-
-        liked = sorted(
-            (
-                {"target_id": target_id, "approved": count}
-                for target_id, count in liked_counts.items()
-            ),
-            key=lambda row: (-row["approved"], row["target_id"]),
-        )[:5]
-
-        reviewed = sorted(
-            (
-                {
-                    "target_id": target_id,
-                    "review_count": values["total"],
-                    "average_rating": (
-                        values["rating_sum"] / values["total"]
-                        if values["total"]
-                        else 0
-                    ),
-                }
-                for target_id, values in stats_by_target.items()
-            ),
-            key=lambda row: (
-                -row["review_count"],
-                -row["average_rating"],
-                row["target_id"],
-            ),
-        )[:5]
-
-        neutral = sorted(
-            (
-                {"target_id": target_id, "neutral": count}
-                for target_id, count in neutral_counts.items()
-            ),
-            key=lambda row: (-row["neutral"], row["target_id"]),
-        )[:5]
-
-        disliked = sorted(
-            (
-                {"target_id": target_id, "disliked": count}
-                for target_id, count in disliked_counts.items()
-            ),
-            key=lambda row: (-row["disliked"], row["target_id"]),
-        )[:5]
-
-        embed = discord.Embed(
-            title="leaderboard",
-            color=discord.Color.dark_grey()
-        )
-
-        # Resolve each leaderboard target only once.
-        target_ids = []
-        for rows in (liked, reviewed, neutral, disliked):
-            for row in rows:
-                target_id = row["target_id"]
-                if target_id not in target_ids:
-                    target_ids.append(target_id)
-
-        members = {}
-        if interaction.guild is not None:
-            for target_id in target_ids:
-                members[target_id] = await get_review_member_or_user(
-                    interaction.guild,
-                    target_id,
-                )
-
-        liked_text = "**top 5 most liked users**\n\n"
-        if not liked:
-            liked_text += "No reviews yet."
-        else:
-            for index, row in enumerate(liked, start=1):
-                target_id = row["target_id"]
-                member = members.get(target_id)
-                name = member.mention if member else f"<@{target_id}>"
-                username = member.name if member else "unknown"
-                stats = stats_by_target.get(
-                    target_id,
-                    {"total": 0, "approved": 0},
-                )
-                approval = (
-                    (stats["approved"] / stats["total"]) * 100
-                    if stats["total"]
-                    else 0
-                )
-                liked_text += (
-                    f"{index} {name} ({username}) 🟢 **{row['approved']}** "
-                    f"({approval:.2f}% approval)\n"
-                )
-        embed.add_field(
-            name="Most Liked",
-            value=liked_text,
-            inline=False,
-        )
-
-        reviewed_text = "**top 5 most reviewed**\n\n"
-        if not reviewed:
-            reviewed_text += "No reviews yet."
-        else:
-            for index, row in enumerate(reviewed, start=1):
-                target_id = row["target_id"]
-                member = members.get(target_id)
-                name = member.mention if member else f"<@{target_id}>"
-                username = member.name if member else "unknown"
-                reviewed_text += (
-                    f"{index} {name} ({username}) 📝 **{row['review_count']} reviews** "
-                    f"(⭐ {row['average_rating']:.1f} avg)\n"
-                )
-        embed.add_field(
-            name="Most Reviewed",
-            value=reviewed_text,
-            inline=False,
-        )
-
-        neutral_text = "**top 5 neutral users**\n\n"
-        if not neutral:
-            neutral_text += "No 3-star reviews yet."
-        else:
-            for index, row in enumerate(neutral, start=1):
-                target_id = row["target_id"]
-                member = members.get(target_id)
-                name = member.mention if member else f"<@{target_id}>"
-                username = member.name if member else "unknown"
-                neutral_text += (
-                    f"{index} {name} ({username}) 🟠 "
-                    f"**{row['neutral']} neutral reviews**\n"
-                )
-        embed.add_field(
-            name="Neutral (3 Stars)",
-            value=neutral_text,
-            inline=False,
-        )
-
-        disliked_text = "**top 5 most disliked users**\n\n"
-        if not disliked:
-            disliked_text += "No negative reviews yet."
-        else:
-            for index, row in enumerate(disliked, start=1):
-                target_id = row["target_id"]
-                member = members.get(target_id)
-                name = member.mention if member else f"<@{target_id}>"
-                username = member.name if member else "unknown"
-                stats = stats_by_target.get(
-                    target_id,
-                    {"total": 0, "approved": 0},
-                )
-                approval = (
-                    (stats["approved"] / stats["total"]) * 100
-                    if stats["total"]
-                    else 0
-                )
-                disliked_text += (
-                    f"{index} {name} ({username}) 🔴 **{row['disliked']} negative reviews** "
-                    f"({approval:.2f}% approval)\n"
-                )
-        embed.add_field(
-            name="Most Disliked",
-            value=disliked_text,
-            inline=False,
-        )
-
-        await interaction.followup.send(embed=embed)
-
+        stats_by_target, liked, reviewed, neutral, disliked = _build_leaderboard_rows(store)
+        view = LeaderboardPaginationView(interaction.guild, stats_by_target, liked, reviewed, neutral, disliked)
+        await interaction.followup.send(embed=await view.make_embed(), view=view)
     except Exception as error:
         await interaction.followup.send(
-            "❌ I couldn't load the leaderboard right now. "
-            "Please try again in a moment.",
+            "❌ I couldn't load the leaderboard right now. Please try again in a moment.",
             ephemeral=False,
         )
-        print(
-            f"Leaderboard command failed: {type(error).__name__}: {error}"
-        )
-
+        print(f"Leaderboard command failed: {type(error).__name__}: {error}")
