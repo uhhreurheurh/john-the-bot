@@ -248,10 +248,44 @@ async def disable_all_uwu_targets() -> int:
     return disabled_count
 
 
+def uwuify_embed(embed: discord.Embed) -> discord.Embed:
+    """Copy an embed while transforming text fields but preserving every URL."""
+    data = embed.to_dict()
+
+    def transform(value):
+        if not value:
+            return value
+        protected = []
+        def protect(match):
+            protected.append(match.group(0))
+            return f"\\ue000{len(protected) - 1}\\ue001"
+        value = re.sub(r"https?://\\S+", protect, str(value))
+        value = uwuify.uwu(value, flags=UWU_FLAGS) or "uwu"
+        for index, original in enumerate(protected):
+            value = value.replace(f"\\ue000{index}\\ue001", original)
+        ensure_uwu_message_is_allowed(value)
+        return value
+
+    for key in ("title", "description"):
+        if key in data and data[key] is not None:
+            data[key] = transform(data[key])
+    if data.get("author") and data["author"].get("name") is not None:
+        data["author"]["name"] = transform(data["author"]["name"])
+    if data.get("footer") and data["footer"].get("text") is not None:
+        data["footer"]["text"] = transform(data["footer"]["text"])
+    for field in data.get("fields", []):
+        if field.get("name") is not None:
+            field["name"] = transform(field["name"])
+        if field.get("value") is not None:
+            field["value"] = transform(field["value"])
+    return discord.Embed.from_dict(data)
+
+
 async def send_uwu_message(
     channel: discord.TextChannel,
     target: discord.Member,
     content: str,
+    embeds: list[discord.Embed] | None = None,
 ) -> list[discord.WebhookMessage]:
     if target.id in uwu_user_blacklist:
         raise UwuUserBlacklisted
@@ -264,6 +298,8 @@ async def send_uwu_message(
     """
     # Never send a blacklisted word/phrase.
     ensure_uwu_message_is_allowed(content)
+    embeds = embeds or []
+    transformed_embeds = [uwuify_embed(embed) for embed in embeds]
 
     webhook = await get_uwu_webhook(channel)
 
@@ -305,7 +341,7 @@ async def send_uwu_message(
         for index in range(0, len(uwu_text), 2000)
     ] or ["uwu"]
 
-    for chunk in chunks:
+    for chunk_index, chunk in enumerate(chunks):
         sent_messages.append(
             await webhook.send(
                 chunk,
@@ -319,6 +355,7 @@ async def send_uwu_message(
                     users=True,
                     replied_user=False,
                 ),
+                embeds=transformed_embeds if chunk_index == 0 else [],
                 wait=True,
             )
         )
