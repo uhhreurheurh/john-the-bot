@@ -1784,9 +1784,31 @@ class PrefixUpdateView(discord.ui.View):
 
 
 async def send_prefix_leaderboard(message):
-    # Use the shared paginated leaderboard implementation from leaderboard.py
-    # so prefix and slash commands stay identical.
-    return await leaderboard_feature.send_prefix_leaderboard(message)
+    # Render the same sentiment-page leaderboard as the slash command.
+    try:
+        store = await asyncio.to_thread(reviews_feature._load_shared_review_store)
+        stats_by_target, liked, reviewed, neutral, disliked = (
+            leaderboard_feature._build_leaderboard_rows(store)
+        )
+        view = leaderboard_feature.LeaderboardPaginationView(
+            message.guild,
+            stats_by_target,
+            liked,
+            reviewed,
+            neutral,
+            disliked,
+        )
+        await message.reply(
+            embed=await view.make_embed(),
+            view=view,
+            mention_author=False,
+        )
+    except Exception as error:
+        print(f"Prefix leaderboard failed: {type(error).__name__}: {error}")
+        await message.reply(
+            "I couldn't load the leaderboard right now. Please try again in a moment.",
+            mention_author=False,
+        )
 
 
 async def handle_prefix_review_command(message, content):
