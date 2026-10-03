@@ -330,15 +330,51 @@ async def disable_hood_for_user(user_id: int) -> int:
     return removed
 
 
+def hoodify_embed(embed: discord.Embed) -> discord.Embed:
+    """Copy an embed while transforming text fields but preserving every URL."""
+    data = embed.to_dict()
+
+    def transform(value):
+        if not value:
+            return value
+        protected = []
+        def protect(match):
+            protected.append(match.group(0))
+            return f"\\ue002{len(protected) - 1}\\ue003"
+        value = re.sub(r"https?://\\S+", protect, str(value))
+        value = hoodify_text(value)
+        for index, original in enumerate(protected):
+            value = value.replace(f"\\ue002{index}\\ue003", original)
+        ensure_hood_message_is_allowed(value)
+        return value
+
+    for key in ("title", "description"):
+        if key in data and data[key] is not None:
+            data[key] = transform(data[key])
+    if data.get("author") and data["author"].get("name") is not None:
+        data["author"]["name"] = transform(data["author"]["name"])
+    if data.get("footer") and data["footer"].get("text") is not None:
+        data["footer"]["text"] = transform(data["footer"]["text"])
+    for field in data.get("fields", []):
+        if field.get("name") is not None:
+            field["name"] = transform(field["name"])
+        if field.get("value") is not None:
+            field["value"] = transform(field["value"])
+    return discord.Embed.from_dict(data)
+
+
 async def send_hood_message(
     channel: discord.TextChannel,
     target: discord.Member,
     content: str,
+    embeds: list[discord.Embed] | None = None,
 ) -> list[discord.WebhookMessage]:
     if target.id in hood_user_blacklist:
         raise HoodUserBlacklisted
 
     ensure_hood_message_is_allowed(content)
+    embeds = embeds or []
+    transformed_embeds = [hoodify_embed(embed) for embed in embeds]
 
     webhook = await get_hood_webhook(channel)
     hood_text = hoodify_text(content)
@@ -354,7 +390,7 @@ async def send_hood_message(
         for index in range(0, len(hood_text), 2000)
     ] or ["yo"]
 
-    for chunk in chunks:
+    for chunk_index, chunk in enumerate(chunks):
         sent_messages.append(
             await webhook.send(
                 chunk,
@@ -366,6 +402,7 @@ async def send_hood_message(
                     users=True,
                     replied_user=False,
                 ),
+                embeds=transformed_embeds if chunk_index == 0 else [],
                 wait=True,
             )
         )
