@@ -249,23 +249,24 @@ async def disable_all_uwu_targets() -> int:
 
 
 def uwuify_text_preserving_urls(content: str) -> str:
-    """UWUify text while preserving URLs byte-for-byte."""
+    """UWUify text while preserving URLs and Discord mention tokens exactly."""
     if not content:
         return content
-    protected = []
 
-    def protect(match):
-        protected.append(match.group(0))
-        return f"\ue000{len(protected) - 1}\ue001"
+    token_re = re.compile(r"https?://\S+|<@!?\d+>|<@&\d+>|<#\d+>|<a?:\w+:\d+>")
+    parts = []
+    last = 0
 
-    protected_text = re.sub(r"https?://\S+", protect, str(content))
-    transformed = uwuify.uwu(protected_text, flags=UWU_FLAGS) or ""
-    for index, original in enumerate(protected):
-        transformed = transformed.replace(
-            f"\ue000{index}\ue001",
-            original,
-        )
-    return transformed
+    for match in token_re.finditer(str(content)):
+        if match.start() > last:
+            parts.append(uwuify.uwu(str(content)[last:match.start()], flags=UWU_FLAGS) or "")
+        parts.append(match.group(0))
+        last = match.end()
+
+    if last < len(str(content)):
+        parts.append(uwuify.uwu(str(content)[last:], flags=UWU_FLAGS) or "")
+
+    return "".join(parts)
 
 
 def uwuify_embed(embed: discord.Embed) -> discord.Embed:
@@ -316,28 +317,8 @@ async def send_uwu_message(
 
     webhook = await get_uwu_webhook(channel)
 
-    # Preserve URLs and Discord mentions exactly as written.
-    protected = []
-
-    def protect(match):
-        protected.append(match.group(0))
-        return f"\ue000{len(protected) - 1}\ue001"
-
-    uwu_input = re.sub(
-        r"https?://\S+|<@!?\d+>|<@&\d+>|<#\d+>",
-        protect,
-        content,
-    )
-
-    # PyPI uwuify exposes uwu(text, flags=...).
-    uwu_text = uwuify.uwu(uwu_input, flags=UWU_FLAGS) or ""
-
-    # Restore exact URLs and Discord mention tokens before sending.
-    for index, original in enumerate(protected):
-        uwu_text = uwu_text.replace(
-            f"\ue000{index}\ue001",
-            original,
-        )
+    # Transform only ordinary text; URLs and Discord tokens remain exact.
+    uwu_text = uwuify_text_preserving_urls(content)
 
     # Also check the final transformed text so the webhook never sends a blocked
     # word even if the transformation itself somehow creates one.
