@@ -248,6 +248,26 @@ async def disable_all_uwu_targets() -> int:
     return disabled_count
 
 
+def uwuify_text_preserving_urls(content: str) -> str:
+    """UWUify text while preserving URLs byte-for-byte."""
+    if not content:
+        return content
+    protected = []
+
+    def protect(match):
+        protected.append(match.group(0))
+        return f"\ue000{len(protected) - 1}\ue001"
+
+    protected_text = re.sub(r"https?://\S+", protect, str(content))
+    transformed = uwuify.uwu(protected_text, flags=UWU_FLAGS) or ""
+    for index, original in enumerate(protected):
+        transformed = transformed.replace(
+            f"\ue000{index}\ue001",
+            original,
+        )
+    return transformed
+
+
 def uwuify_embed(embed: discord.Embed) -> discord.Embed:
     """Copy an embed while transforming text fields but preserving every URL."""
     data = embed.to_dict()
@@ -255,14 +275,7 @@ def uwuify_embed(embed: discord.Embed) -> discord.Embed:
     def transform(value):
         if not value:
             return value
-        protected = []
-        def protect(match):
-            protected.append(match.group(0))
-            return f"\\ue000{len(protected) - 1}\\ue001"
-        value = re.sub(r"https?://\\S+", protect, str(value))
-        value = uwuify.uwu(value, flags=UWU_FLAGS) or "uwu"
-        for index, original in enumerate(protected):
-            value = value.replace(f"\\ue000{index}\\ue001", original)
+        value = uwuify_text_preserving_urls(str(value))
         ensure_uwu_message_is_allowed(value)
         return value
 
@@ -303,29 +316,24 @@ async def send_uwu_message(
 
     webhook = await get_uwu_webhook(channel)
 
-    # Protect Discord mentions before uwuify transforms the text.
-    # This keeps @users, @roles, and #channels intact and clickable.
-    protected_mentions = []
+    # Preserve URLs and Discord mentions exactly as written.
+    protected = []
 
-    def protect_mention(match):
-        protected_mentions.append(match.group(0))
-        # Use Unicode private-use characters only. ASCII placeholder words such
-        # as "__UWU_PROTECTED_0__" get transformed by uwuify itself.
-        return f"\ue000{len(protected_mentions) - 1}\ue001"
+    def protect(match):
+        protected.append(match.group(0))
+        return f"\ue000{len(protected) - 1}\ue001"
 
     uwu_input = re.sub(
-        r"<@!?\d+>|<@&\d+>|<#\d+>",
-        protect_mention,
+        r"https?://\S+|<@!?\d+>|<@&\d+>|<#\d+>",
+        protect,
         content,
     )
 
     # PyPI uwuify exposes uwu(text, flags=...).
-    uwu_text = uwuify.uwu(uwu_input, flags=UWU_FLAGS)
-    if not uwu_text:
-        uwu_text = "uwu"
+    uwu_text = uwuify.uwu(uwu_input, flags=UWU_FLAGS) or ""
 
-    # Restore exact Discord mention tokens before sending.
-    for index, original in enumerate(protected_mentions):
+    # Restore exact URLs and Discord mention tokens before sending.
+    for index, original in enumerate(protected):
         uwu_text = uwu_text.replace(
             f"\ue000{index}\ue001",
             original,
