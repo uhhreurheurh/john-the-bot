@@ -1136,6 +1136,14 @@
       "rating": 5,
       "comment": "I dont hate him, although he looks a little bit retarded but its okay, I barely interact with him, he seems like a good friend and idk what else to say",
       "created_at": "2026-10-03 03:09:30"
+    },
+    {
+      "id": 166,
+      "target_id": 1352418521560252506,
+      "reviewer_id": 767322244975165442,
+      "rating": 5,
+      "comment": "Funny person, talks like they are Nastard's kid",
+      "created_at": "2026-10-03 03:22:18"
     }
   ],
   "review_update_requests": [
