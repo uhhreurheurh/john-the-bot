@@ -1440,6 +1440,14 @@
       "rating": 5,
       "comment": "🦍🤬",
       "created_at": "2026-10-03 19:19:50"
+    },
+    {
+      "id": 205,
+      "target_id": 1348469829425959022,
+      "reviewer_id": 594693657916080128,
+      "rating": 5,
+      "comment": "So handsome 😳😳",
+      "created_at": "2026-10-03 19:20:47"
     }
   ],
   "review_update_requests": [
