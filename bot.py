@@ -2184,56 +2184,42 @@ async def uwuify_hoodify_unban_command(interaction: discord.Interaction, member:
     description="Show John the Bot's available slash commands.",
 )
 async def jelp_command(interaction: discord.Interaction):
-    """Show the available slash commands, including Blackjack."""
-    embed = discord.Embed(
-        title="John the Bot — Slash Commands",
-        description="Here are the available slash commands.",
-        color=discord.Color.blurple(),
-    )
-
-    embed.add_field(
-        name="General",
-        value=(
-            "`/jelp` — Show this help menu\n"
-            "`/ping` — Check bot latency"
-        ),
-        inline=False,
-    )
-
-    embed.add_field(
-        name="Blackjack",
-        value=(
-            "`/blackjack <bet>` — Play Blackjack with Kevin Bucks\n"
-            "`/balance` — Check your Kevin Bucks balance\n"
-            "`/daily` — Claim your daily Kevin Bucks"
-        ),
-        inline=False,
-    )
-
-    embed.add_field(
-        name="UWUIFY",
-        value=(
-            "`/uwuify @user` — Enable UWUIFY for a member\n"
-            "`/unuwuify @user` — Disable UWUIFY\n"
-            "`/uwucount` — Show active UWUIFY count"
-        ),
-        inline=False,
-    )
-
-    embed.add_field(
-        name="HOODIFY",
-        value=(
-            "`/hoodify @user` — Enable HOODIFY for a member\n"
-            "`/unhoodify @user` — Disable HOODIFY\n"
-            "`/hoodcount` — Show active HOODIFY count"
-        ),
-        inline=False,
-    )
-
-    embed.set_footer(text="Some commands are restricted to specific roles or the main server.")
-    await interaction.response.send_message(embed=embed, ephemeral=False)
-
-
+    """Show the available slash commands with pagination."""
+    class SlashJelpView(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=300)
+            self.page = 0
+            self.pages = [
+                ("General", "`/jelp` — Show this help menu\n`/ping` — Check bot latency"),
+                ("Blackjack", "`/blackjack <bet>` — Play Blackjack with Kevin Bucks\n`/balance` — Check your Kevin Bucks balance\n`/daily` — Claim your daily Kevin Bucks"),
+                ("UWUIFY & HOODIFY", "`/uwuify @user` — Enable UWUIFY\n`/unuwuify @user` — Disable UWUIFY\n`/uwucount` — Show active UWUIFY count\n\n`/hoodify @user` — Enable HOODIFY\n`/unhoodify @user` — Disable HOODIFY\n`/hoodcount` — Show active HOODIFY count"),
+                ("Reviews", "`/review @user` — Leave a review\n`/updatereview @user` — Request a review update\n`/reviews @user` — View reviews\n`/deletereview ID` — Delete a review\n`/leaderboard` — View the review leaderboard"),
+                ("Management", "`/textify blacklist/unblacklist/status @user` — Manage Textify\n`/textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n`/blacklist add/remove/status @user` — Manage the second-role blacklist\n`/savedb` — Save the review database"),
+            ]
+        def update_buttons(self):
+            self.previous.disabled = self.page == 0
+            self.next.disabled = self.page == len(self.pages) - 1
+        def embed(self):
+            name, value = self.pages[self.page]
+            embed = discord.Embed(title="John the Bot — Slash Commands", description=f"Page **{self.page + 1}/{len(self.pages)}**", color=discord.Color.blurple())
+            embed.add_field(name=name, value=value, inline=False)
+            embed.set_footer(text="Use Previous and Next to browse commands.")
+            return embed
+        @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
+        async def previous(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if self.page > 0: self.page -= 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.embed(), view=self)
+        @discord.ui.button(label="Next", style=discord.ButtonStyle.primary)
+        async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if self.page < len(self.pages) - 1: self.page += 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.embed(), view=self)
+        async def on_timeout(self):
+            for item in self.children: item.disabled = True
+    view = SlashJelpView()
+    view.update_buttons()
+    await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=False)
 @tree.command(
     name="ping",
     description="Show the bot's current Discord latency.",
