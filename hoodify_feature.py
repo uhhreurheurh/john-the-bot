@@ -337,14 +337,8 @@ def hoodify_embed(embed: discord.Embed) -> discord.Embed:
     def transform(value):
         if not value:
             return value
-        protected = []
-        def protect(match):
-            protected.append(match.group(0))
-            return f"\\ue002{len(protected) - 1}\\ue003"
-        value = re.sub(r"https?://\\S+", protect, str(value))
-        value = hoodify_text(value)
-        for index, original in enumerate(protected):
-            value = value.replace(f"\\ue002{index}\\ue003", original)
+        # hoodify_text already preserves URLs, mentions, and Discord tokens.
+        value = hoodify_text(str(value))
         ensure_hood_message_is_allowed(value)
         return value
 
