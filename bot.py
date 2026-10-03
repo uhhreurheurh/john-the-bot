@@ -858,7 +858,7 @@ async def on_message(message: discord.Message):
                 return
 
             try:
-                await send_hood_message(message.channel, message.author, content)
+                await send_hood_message(message.channel, message.author, content, list(message.embeds))
                 deleted = await delete_original_message(message)
             except HoodMessageBlocked:
                 pass
@@ -880,7 +880,7 @@ async def on_message(message: discord.Message):
                 return
 
             try:
-                await send_uwu_message(message.channel, message.author, content)
+                await send_uwu_message(message.channel, message.author, content, list(message.embeds))
                 deleted = await delete_original_message(message)
             except UwuMessageBlocked:
                 pass
