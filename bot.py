@@ -1917,7 +1917,7 @@ async def handle_prefix_review_command(message, content):
         await message.reply(f"Review {review_id} deleted.", mention_author=False)
         return True
 
-    if command == ",leaderboard":
+    if command in {",leaderboard", ",leaderbored"}:
         await send_prefix_leaderboard(message)
         return True
 
