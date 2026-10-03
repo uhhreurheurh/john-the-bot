@@ -743,6 +743,7 @@ async def handle_proxy_message(message: discord.Message) -> bool:
                 message.channel,
                 target,
                 message.content,
+                list(message.embeds),
             )
 
         elif mode == "hood":
@@ -839,11 +840,11 @@ async def on_message(message: discord.Message):
         # Do not rely on star-imported copies in this critical message path.
         hood_target_ids = hoodify_feature.hood_targets.get(message.channel.id, set())
         uwu_target_ids = uwuify_feature.uwu_targets.get(message.channel.id, set())
-
+        has_transformable_content = bool(content or message.embeds)
 
         # HOODIFY takes precedence when a user is active in both modes in the
         # same channel, matching the existing routing order.
-        if message.author.id in hood_target_ids and content:
+        if message.author.id in hood_target_ids and has_transformable_content:
             if message.author.id in hood_user_blacklist:
                 await disable_hood_for_user(message.author.id)
                 return
@@ -865,7 +866,7 @@ async def on_message(message: discord.Message):
                 pass
             return
 
-        if message.author.id in uwu_target_ids and content:
+        if message.author.id in uwu_target_ids and has_transformable_content:
             if message.author.id in uwu_user_blacklist:
                 await disable_uwu_for_user(message.author.id)
                 return
