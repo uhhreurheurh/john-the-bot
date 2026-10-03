@@ -1713,12 +1713,12 @@
       "new_rating": 1,
       "new_comment": "🦍🤬",
       "update_reason": "I missclicked",
-      "status": "pending",
+      "status": "rejected",
       "approval_message_id": 1556024035622522973,
       "approval_channel_id": 1554700806220161164,
-      "reviewed_by": null,
+      "reviewed_by": 191233879175200768,
       "created_at": "2026-10-03 19:23:57",
-      "reviewed_at": null
+      "reviewed_at": "2026-10-03 20:05:55"
     }
   ],
   "review_id_sequence": 6
