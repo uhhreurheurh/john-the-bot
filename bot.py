@@ -1377,90 +1377,50 @@ async def on_message(message: discord.Message):
             rest = spaced_parts[2] if len(spaced_parts) >= 3 else ""
             content = ",hoodify " + spaced_action + (f" {rest}" if rest else "")
 
-    # Prefix help.
+    # Prefix help with pagination.
     if content.lower() == ",jelp":
-        embed = discord.Embed(
-            title="John the Bot — Prefix Commands",
-            description="Here are the available comma-prefix commands.",
-            color=discord.Color.blurple(),
-        )
+        class JelpView(discord.ui.View):
+            def __init__(self):
+                super().__init__(timeout=300)
+                self.page = 0
+                self.pages = [
+                    ("General", "`,jelp` — Show this help menu\n`,ping` — Check bot latency"),
+                    ("Textify", "`,uwuify @user` — Enable UWUIFY for a member\n`,unuwuify @user` — Disable UWUIFY\n`,uwu count` — Show active UWUIFY count\n\n`,hoodify @user` — Enable HOODIFY for a member\n`,unhoodify @user` — Disable HOODIFY\n`,hood count` — Show active HOODIFY count"),
+                    ("Blackjack", "`,blackjack <bet>` — Play Blackjack with Kevin Bucks\n`,balance` — Check your Kevin Bucks balance\n`,daily` — Claim your daily Kevin Bucks"),
+                    ("Reviews", "`,review @user` — Leave a review\n`,updatereview @user` — Request a review update\n`,reviews @user` — View reviews\n`,deletereview ID` — Delete a review\n`,leaderboard` — View the review leaderboard\n`,reviewblacklist add/remove/status @user` — Manage the review blacklist"),
+                    ("Staff & Management", "`,strike @user <7-40d> <reason>` — Issue a staff strike\n`,removestrike @user <number>` — Remove a staff strike\n\n`,textify blacklist/unblacklist/status @user` — Manage the Textify blacklist\n`,textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n`,blacklist add/remove/status @user` — Manage the second-role blacklist\n`,savedb` — Save the review database"),
+                ]
 
-        embed.add_field(
-            name="General",
-            value=(
-                "`,jelp` — Show this help menu\n"
-                "`,ping` — Check bot latency"
-            ),
-            inline=False,
-        )
+            def update_buttons(self):
+                self.previous.disabled = self.page == 0
+                self.next.disabled = self.page == len(self.pages) - 1
 
-        embed.add_field(
-            name="UWUIFY",
-            value=(
-                "`,uwuify @user` — Enable UWUIFY for a member\n"
-                "`,unuwuify @user` — Disable UWUIFY\n"
-                "`,uwu count` — Show active UWUIFY count"
-            ),
-            inline=False,
-        )
+            def embed(self):
+                name, value = self.pages[self.page]
+                embed = discord.Embed(title="John the Bot — Prefix Commands", description=f"Page **{self.page + 1}/{len(self.pages)}**", color=discord.Color.blurple())
+                embed.add_field(name=name, value=value, inline=False)
+                embed.set_footer(text="Use Previous and Next to browse commands.")
+                return embed
 
-        embed.add_field(
-            name="HOODIFY",
-            value=(
-                "`,hoodify @user` — Enable HOODIFY for a member\n"
-                "`,unhoodify @user` — Disable HOODIFY\n"
-                "`,hood count` — Show active HOODIFY count"
-            ),
-            inline=False,
-        )
+            @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
+            async def previous(self, interaction: discord.Interaction, button: discord.ui.Button):
+                if self.page > 0: self.page -= 1
+                self.update_buttons()
+                await interaction.response.edit_message(embed=self.embed(), view=self)
 
-        embed.add_field(
-            name="Blackjack",
-            value=(
-                "`,blackjack <bet>` — Play Blackjack with Kevin Bucks\n"
-                "`,balance` — Check your Kevin Bucks balance\n"
-                "`,daily` — Claim your daily Kevin Bucks"
-            ),
-            inline=False,
-        )
+            @discord.ui.button(label="Next", style=discord.ButtonStyle.primary)
+            async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
+                if self.page < len(self.pages) - 1: self.page += 1
+                self.update_buttons()
+                await interaction.response.edit_message(embed=self.embed(), view=self)
 
-        embed.add_field(
-            name="Reviews",
-            value=(
-                "`,review @user` — Leave a review\n"
-                "`,updatereview @user` — Request a review update\n"
-                "`,reviews @user` — View reviews\n"
-                "`,deletereview ID` — Delete a review\n"
-                "`,leaderboard` — View the review leaderboard\n"
-                "`,reviewblacklist add/remove/status @user` — Manage the review blacklist"
-            ),
-            inline=False,
-        )
+            async def on_timeout(self):
+                for item in self.children: item.disabled = True
 
-        embed.add_field(
-            name="Staff",
-            value=(
-                "`,strike @user <7-40d> <reason>` — Issue a staff strike\n"
-                "`,removestrike @user <number>` — Remove a staff strike"
-            ),
-            inline=False,
-        )
-
-        embed.add_field(
-            name="Management",
-            value=(
-                "`,textify blacklist/unblacklist/status @user` — Manage the Textify blacklist\n"
-                "`,textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n"
-                "`,blacklist add/remove/status @user` — Manage the second-role blacklist\n"
-                "`,savedb` — Save the review database"
-            ),
-            inline=False,
-        )
-
-        embed.set_footer(text="Some commands are restricted to specific roles or the main server.")
-        await message.reply(embed=embed, mention_author=False)
+        view = JelpView()
+        view.update_buttons()
+        await message.reply(embed=view.embed(), view=view, mention_author=False)
         return
-
     # Prefix ping.
     if content.lower() == ",ping":
         latency_ms = round(bot.latency * 1000)
