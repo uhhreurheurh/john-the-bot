@@ -169,6 +169,7 @@ class LeaderboardPaginationView(discord.ui.View):
 
     async def make_embed(self):
         page_name, rows = self.pages[self.page]
+        rows = rows[:10]
 
         target_ids = [row["target_id"] for row in rows]
         members = {}
