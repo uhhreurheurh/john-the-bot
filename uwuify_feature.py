@@ -292,6 +292,11 @@ def uwuify_embed(embed: discord.Embed) -> discord.Embed:
             field["name"] = transform(field["name"])
         if field.get("value") is not None:
             field["value"] = transform(field["value"])
+    # Discord link embeds often put GIF/media previews in the thumbnail.
+    # Promote that media to the main image so the webhook shows the full-size media.
+    if data.get("thumbnail") and data.get("thumbnail", {}).get("url") and not data.get("image", {}).get("url"):
+        data["image"] = {"url": data["thumbnail"]["url"]}
+
     return discord.Embed.from_dict(data)
 
 
