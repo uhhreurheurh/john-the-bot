@@ -336,10 +336,11 @@ async def send_uwu_message(
     ensure_uwu_message_is_allowed(uwu_text)
 
     sent_messages: list[discord.WebhookMessage] = []
-    chunks = [
-        uwu_text[index:index + 2000]
-        for index in range(0, len(uwu_text), 2000)
-    ] or ["uwu"]
+    chunks = (
+        [uwu_text[index:index + 2000] for index in range(0, len(uwu_text), 2000)]
+        if uwu_text
+        else [None]
+    )
 
     for chunk_index, chunk in enumerate(chunks):
         sent_messages.append(
