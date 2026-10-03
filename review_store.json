@@ -1384,6 +1384,14 @@
       "rating": 1,
       "comment": "beats me when loses lane",
       "created_at": "2026-10-03 15:59:49"
+    },
+    {
+      "id": 198,
+      "target_id": 1403862921678950480,
+      "reviewer_id": 1475154062298321077,
+      "rating": 4,
+      "comment": "idk but i vote 4 stars",
+      "created_at": "2026-10-03 16:00:43"
     }
   ],
   "review_update_requests": [
