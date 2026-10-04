@@ -37,7 +37,7 @@ DEFAULT_MINES = 3
 MIN_MINES = 1
 MAX_MINES = 12
 
-GAME_TIMEOUT_SECONDS = 120
+GAME_TIMEOUT_SECONDS = 300
 
 # Small house edge so the displayed cash-out multiplier is deterministic
 # and still rewards successful streaks.
@@ -117,6 +117,11 @@ class MinesGame:
         if payout > 0:
             blackjack_feature.add_balance(self.user.id, payout)
 
+        # An expired/abandoned game is not a loss. Refund the original
+        # bet so inactivity cannot silently remove Kevin Bucks.
+        if result == "timeout":
+            blackjack_feature.add_balance(self.user.id, self.bet)
+
         await blackjack_feature.save_data()
 
     def result_text(self, result: Optional[str]) -> str:
@@ -155,8 +160,8 @@ class MinesGame:
 
         if result == "timeout":
             return (
-                f"The game timed out and your **{self.bet:,} "
-                f"{blackjack_feature.CURRENCY_NAME}** bet was lost."
+                f"The game expired and your **{self.bet:,} "
+                f"{blackjack_feature.CURRENCY_NAME}** bet was refunded."
             )
 
         return "Game over."
@@ -168,6 +173,9 @@ class MinesGame:
         elif result in {"cashout", "clear"}:
             title = "Mines — You Win"
             color = discord.Color.green()
+        elif result == "timeout":
+            title = "Mines — Game Expired"
+            color = discord.Color.orange()
         else:
             title = "Mines — Game Over"
             color = discord.Color.red()
@@ -205,7 +213,7 @@ class MinesGame:
                 inline=False,
             )
             embed.set_footer(
-                text="Pick a tile or cash out. The game expires after 2 minutes."
+                text="Pick a tile or cash out. The game expires after 5 minutes."
             )
         else:
             embed.add_field(
