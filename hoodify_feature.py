@@ -17,6 +17,12 @@ HOOD_WEBHOOK_CLEANUP_INTERVAL_SECONDS = 60
 # Shared whitelist for both UWUIFY and HOODIFY.
 HOOD_ALLOWED_ROLE_IDS = textify_whitelist
 
+
+def hood_user_is_whitelisted(member: discord.Member | discord.User) -> bool:
+    """Return True when the member has at least one shared Textify whitelist role."""
+    role_ids = {role.id for role in getattr(member, "roles", ())}
+    return bool(role_ids & HOOD_ALLOWED_ROLE_IDS)
+
 # Maximum number of unique people who can be actively HOODIFIED at once.
 MAX_ACTIVE_HOOD_TARGETS = 5
 
