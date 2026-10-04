@@ -154,6 +154,11 @@ async def set_hood_target(
     if target.id in hood_user_blacklist:
         raise HoodUserBlacklisted
 
+    # Import these lazily because hoodify_feature.py and bot.py import each
+    # other during startup. By the time a command runs, bot.py has finished
+    # importing uwuify_feature and created the shared Textify mode lock.
+    from bot import TEXTIFY_MODE_LOCK, uwuify_feature
+
     # Keep the UWU/HOODIFY conflict rule atomic with all other Textify mode changes.
     async with TEXTIFY_MODE_LOCK:
         async with hood_target_lock:
