@@ -1738,6 +1738,10 @@ async def on_message(message: discord.Message):
     if await mines_feature.handle_prefix(message):
         return
 
+    # Slots prefix command.
+    if await slots_feature.handle_prefix(message):
+        return
+
     # Review, leaderboard, and remaining staff prefix commands.
     try:
         if await handle_prefix_review_command(message, content):
@@ -3061,6 +3065,7 @@ import leaderboard as leaderboard_feature
 import staff_strikes as staff_strikes_feature
 import blackjack as blackjack_feature
 import mines as mines_feature
+import slots as slots_feature
 from hoodify_feature import *
 from uwuify_feature import *
 from reviews import *
@@ -3074,6 +3079,7 @@ from leaderboard import *
 from staff_strikes import *
 from blackjack import *
 from mines import *
+from slots import *
 
 # =========================
 # HOODIFY ROOT COMMANDS
