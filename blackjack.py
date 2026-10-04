@@ -51,7 +51,7 @@ MAX_BET = 100_000
 BLACKJACK_PAYOUT_NUMERATOR = 3
 BLACKJACK_PAYOUT_DENOMINATOR = 2
 
-GAME_TIMEOUT_SECONDS = 120
+GAME_TIMEOUT_SECONDS = 300
 
 DATA_FILE = Path(__file__).with_name("kevin_bucks.json")
 
@@ -430,6 +430,10 @@ class BlackjackGame:
             add_balance(self.user.id, self.bet * 2)
         elif result == "push":
             add_balance(self.user.id, self.bet)
+        elif result == "timeout":
+            # Timing out is not a loss. Refund the original bet so an
+            # inactive/expired game cannot silently take the user's money.
+            add_balance(self.user.id, self.bet)
 
         await save_data()
 
@@ -470,6 +474,7 @@ def build_embed(game: BlackjackGame, *, result: Optional[str] = None) -> discord
             "lose": "You Lose!",
             "push": "Push!",
             "bust": "Bust!",
+            "timeout": "Game Expired",
         }.get(result, "Game Over")
         color = {
             "blackjack": discord.Color.gold(),
@@ -477,6 +482,7 @@ def build_embed(game: BlackjackGame, *, result: Optional[str] = None) -> discord
             "lose": discord.Color.red(),
             "push": discord.Color.orange(),
             "bust": discord.Color.red(),
+            "timeout": discord.Color.orange(),
         }.get(result, discord.Color.blurple())
 
     dealer_text = format_dealer_hand(game.dealer, hide_first=result is None)
@@ -510,6 +516,7 @@ def build_embed(game: BlackjackGame, *, result: Optional[str] = None) -> discord
             "lose": f"-{game.bet:,} {CURRENCY_NAME}",
             "push": f"Your {game.bet:,} {CURRENCY_NAME} bet was returned.",
             "bust": f"-{game.bet:,} {CURRENCY_NAME}",
+            "timeout": f"Game expired — your {game.bet:,} {CURRENCY_NAME} bet was refunded.",
         }.get(result, "")
         embed.add_field(name="Result", value=result_text, inline=False)
         embed.add_field(name="New Balance", value=f"**{balance:,} {CURRENCY_NAME}**", inline=True)
@@ -535,8 +542,10 @@ class BlackjackView(discord.ui.View):
         if self.game.finished:
             return
 
-        # An abandoned game forfeits its original bet.
-        await self.game.finish("lose")
+        # An abandoned game expires without being a loss.
+        # The original bet is refunded so inactivity cannot silently
+        # remove Kevin Bucks.
+        await self.game.finish("timeout")
 
         try:
             if self.game.message is not None:
