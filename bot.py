@@ -1389,6 +1389,7 @@ async def on_message(message: discord.Message):
                     ("Textify", "`,uwuify @user` — Enable UWUIFY for a member\n`,unuwuify @user` — Disable UWUIFY\n`,uwu count` — Show active UWUIFY count\n\n`,hoodify @user` — Enable HOODIFY for a member\n`,unhoodify @user` — Disable HOODIFY\n`,hood count` — Show active HOODIFY count"),
                     ("Blackjack", "`,blackjack <bet>` — Play Blackjack with Kevin Bucks\n`,balance` — Check your Kevin Bucks balance\n`,daily` — Claim your daily Kevin Bucks"),
                     ("Mines", "`,mines <bet> [mines]` — Play Mines with Kevin Bucks\nUse 1–12 mines; the default is 3."),
+                    ("Slots", "`,slots <bet>` — Play Slots with Kevin Bucks\nOnly the person who started the game can use its buttons."),
                     ("Reviews", "`,review @user` — Leave a review\n`,updatereview @user` — Request a review update\n`,reviews @user` — View reviews\n`,deletereview ID` — Delete a review\n`,leaderboard` — View the review leaderboard\n`,reviewblacklist add/remove/status @user` — Manage the review blacklist"),
                     ("Staff & Management", "`,strike @user <7-40d> <reason>` — Issue a staff strike\n`,removestrike @user <number>` — Remove a staff strike\n\n`,textify blacklist/unblacklist/status @user` — Manage the Textify blacklist\n`,textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n`,blacklist add/remove/status @user` — Manage the second-role blacklist\n`,savedb` — Save the review database"),
                 ]
@@ -2218,6 +2219,7 @@ class SlashJelpView(discord.ui.View):
         self.pages = [
             ("General", "`/jelp` — Show this help menu\n`/ping` — Check bot latency"),
             ("Blackjack", "`/blackjack <bet>` — Play Blackjack with Kevin Bucks\n`/balance` — Check your Kevin Bucks balance\n`/daily` — Claim your daily Kevin Bucks"),
+            ("Slots", "`/slots <bet>` — Play Slots with Kevin Bucks\nOnly the person who started the game can use its buttons."),
             ("UWUIFY & HOODIFY", "`/uwuify @user` — Enable UWUIFY\n`/unuwuify @user` — Disable UWUIFY\n`/uwucount` — Show active UWUIFY count\n\n`/hoodify @user` — Enable HOODIFY\n`/unhoodify @user` — Disable HOODIFY\n`/hoodcount` — Show active HOODIFY count"),
             ("Reviews", "`/review @user` — Leave a review\n`/updatereview @user` — Request a review update\n`/reviews @user` — View reviews\n`/deletereview ID` — Delete a review\n`/leaderboard` — View the review leaderboard"),
             ("Management", "`/textify blacklist/unblacklist/status @user` — Manage Textify\n`/textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n`/blacklist add/remove/status @user` — Manage the second-role blacklist\n`/savedb` — Save the review database"),
