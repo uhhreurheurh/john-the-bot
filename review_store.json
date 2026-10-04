@@ -1608,6 +1608,14 @@
       "rating": 5,
       "comment": "very cool and funny cool bisexual lesbian i would recommend anyone to talk to them uhh yeah cool review right",
       "created_at": "2026-10-04 10:08:00"
+    },
+    {
+      "id": 227,
+      "target_id": 1475154062298321077,
+      "reviewer_id": 1001366178951860345,
+      "rating": 4,
+      "comment": "for stars",
+      "created_at": "2026-10-04 10:25:22"
     }
   ],
   "review_update_requests": [
