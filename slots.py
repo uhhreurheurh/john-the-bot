@@ -78,6 +78,27 @@ class SlotsView(discord.ui.View):
     def is_win(self) -> bool:
         return self.payout > 0
 
+    def build_spinning_embed(self, reels: tuple[str, str, str]) -> discord.Embed:
+        embed = discord.Embed(
+            title="🎰 Slots — SPINNING...",
+            description="The reels are spinning...",
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(
+            name="Reels",
+            value=f"## {reels[0]} │ {reels[1]} │ {reels[2]}",
+            inline=False,
+        )
+        embed.add_field(
+            name="Bet",
+            value=f"**{self.bet:,} {blackjack_feature.CURRENCY_NAME}**",
+            inline=False,
+        )
+        embed.set_footer(
+            text="Only the person who started this Slots game can use its buttons."
+        )
+        return embed
+
     def build_embed(self) -> discord.Embed:
         if self.is_win:
             title = "🎰 Slots — WIN!"
@@ -107,6 +128,23 @@ class SlotsView(discord.ui.View):
         )
         embed.set_footer(text="Only the person who started this Slots game can use its buttons.")
         return embed
+
+    async def animate_spin(self, message: discord.Message, final_reels: tuple[str, str, str]) -> None:
+        """Show a short reel animation before revealing the final result."""
+        for _ in range(7):
+            await asyncio.sleep(0.18)
+            rolling = spin_reels()
+            try:
+                await message.edit(embed=self.build_spinning_embed(rolling), view=self)
+            except (discord.NotFound, discord.HTTPException):
+                return
+
+        await asyncio.sleep(0.12)
+        self.reels = final_reels
+        try:
+            await message.edit(embed=self.build_embed(), view=self)
+        except (discord.NotFound, discord.HTTPException):
+            return
 
     @discord.ui.button(
         label="Spin Again",
@@ -143,16 +181,29 @@ class SlotsView(discord.ui.View):
                 return
 
             blackjack_feature.set_balance(self.user.id, balance - self.bet)
-            self.reels = spin_reels()
-            self.payout = payout_for(self.bet, self.reels)
+
+            # Decide the final result first, then visually spin the reels.
+            final_reels = spin_reels()
+            self.payout = payout_for(self.bet, final_reels)
             if self.payout:
                 blackjack_feature.add_balance(self.user.id, self.payout)
 
             await blackjack_feature.save_data()
+
+            for child in self.children:
+                if isinstance(child, discord.ui.Button):
+                    child.disabled = True
+
             await interaction.response.edit_message(
-                embed=self.build_embed(),
+                embed=self.build_spinning_embed(spin_reels()),
                 view=self,
             )
+
+            await self.animate_spin(interaction.message, final_reels)
+
+            for child in self.children:
+                if isinstance(child, discord.ui.Button):
+                    child.disabled = False
 
     async def on_timeout(self) -> None:
         self.finished = True
@@ -213,10 +264,36 @@ async def send_slots(target, user: discord.abc.User, bet: int) -> None:
     await blackjack_feature.save_data()
 
     if isinstance(target, discord.Interaction):
-        await target.response.send_message(embed=view.build_embed(), view=view)
+        await target.response.send_message(
+            embed=view.build_spinning_embed(spin_reels()),
+            view=view,
+        )
         view.message = await target.original_response()
+
+        for child in view.children:
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
+        await view.message.edit(view=view)
+
+        await view.animate_spin(view.message, view.reels)
+
+        for child in view.children:
+            if isinstance(child, discord.ui.Button):
+                child.disabled = False
+        await view.message.edit(view=view)
     else:
-        view.message = await target.send(embed=view.build_embed(), view=view)
+        for child in view.children:
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
+        view.message = await target.send(
+            embed=view.build_spinning_embed(spin_reels()),
+            view=view,
+        )
+        await view.animate_spin(view.message, view.reels)
+        for child in view.children:
+            if isinstance(child, discord.ui.Button):
+                child.disabled = False
+        await view.message.edit(view=view)
 
 
 @bot_module.tree.command(
