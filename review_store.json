@@ -1752,6 +1752,14 @@
       "rating": 1,
       "comment": "Stinky Indian 🇮🇳 take a shower",
       "created_at": "2026-10-04 13:44:11"
+    },
+    {
+      "id": 247,
+      "target_id": 1512484378050302053,
+      "reviewer_id": 1001366178951860345,
+      "rating": 5,
+      "comment": "kedgeree cool boss 😎😘🧐",
+      "created_at": "2026-10-04 14:08:22"
     }
   ],
   "review_update_requests": [
