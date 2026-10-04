@@ -20,8 +20,237 @@ HOOD_ALLOWED_ROLE_IDS = textify_whitelist
 
 def hood_user_is_whitelisted(member: discord.Member | discord.User) -> bool:
     """Return True when the member has at least one shared Textify whitelist role."""
-    role_ids = {role.id for role in getattr(member, "roles", ())}
-    return bool(role_ids & HOOD_ALLOWED_ROLE_IDS)
+    role_ids = {
+        int(getattr(role, "id", 0))
+        for role in getattr(member, "roles", ())
+    }
+    return any(role_id in HOOD_ALLOWED_ROLE_IDS for role_id in role_ids)
+
+
+def get_active_hood_target_ids(exclude_channel_id: int | None = None) -> set[int]:
+    """Return unique target IDs currently active in HOODIFY."""
+    active: set[int] = set()
+    for channel_id, target_ids in hood_targets.items():
+        if channel_id == exclude_channel_id:
+            continue
+        active.update(target_ids)
+    return active
+
+
+def get_active_hood_target_count() -> int:
+    """Return the number of unique active HOODIFY targets."""
+    return len(get_active_hood_target_ids())
+
+
+class HoodTargetLimitReached(Exception):
+    """Raised when adding a HOODIFY target would exceed the global cap."""
+
+
+class HoodMessageBlocked(Exception):
+    """Raised when a HOODIFY message contains a blacklisted word/phrase."""
+
+
+def get_blacklisted_hood_word(content: str) -> str | None:
+    """Return the first blocked word/phrase found in content, or None."""
+    if not content or not HOOD_WORD_BLACKLIST:
+        return None
+
+    for blocked in HOOD_WORD_BLACKLIST:
+        blocked = str(blocked).strip()
+        if not blocked:
+            continue
+
+        pattern = rf"(?<!\w){re.escape(blocked)}(?!\w)"
+        if re.search(pattern, content, flags=re.IGNORECASE):
+            return blocked
+
+    return None
+
+
+def ensure_hood_message_is_allowed(content: str) -> None:
+    """Raise HoodMessageBlocked when the content is not allowed."""
+    blocked = get_blacklisted_hood_word(content)
+    if blocked is not None:
+        raise HoodMessageBlocked(blocked)
+
+
+async def _delete_hood_webhook_after_idle(
+    channel_id: int,
+    webhook: discord.Webhook,
+) -> None:
+    """Delete a temporary HOODIFY webhook after 5 minutes of inactivity."""
+    try:
+        await asyncio.sleep(HOOD_WEBHOOK_IDLE_SECONDS)
+
+        entry = hood_webhooks.get(channel_id)
+        if entry is not None and entry.get("webhook") is webhook:
+            try:
+                await webhook.delete(reason="Hoodify webhook unused for 5 minutes")
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
+            finally:
+                hood_webhooks.pop(channel_id, None)
+                hood_targets.pop(channel_id, None)
+    except asyncio.CancelledError:
+        return
+
+
+def _reset_hood_webhook_timer(channel_id: int, webhook: discord.Webhook) -> None:
+    entry = hood_webhooks.get(channel_id)
+    if entry is None or entry.get("webhook") is not webhook:
+        return
+
+    old_timer = entry.get("timer")
+    if old_timer is not None and not old_timer.done():
+        old_timer.cancel()
+
+    entry["timer"] = asyncio.create_task(
+        _delete_hood_webhook_after_idle(channel_id, webhook)
+    )
+
+
+async def get_hood_webhook(channel: discord.TextChannel) -> discord.Webhook:
+    """Get or create the temporary HOODIFY webhook for a channel."""
+    channel_id = channel.id
+    entry = hood_webhooks.get(channel_id)
+
+    if entry is not None:
+        webhook = entry.get("webhook")
+        if webhook is not None:
+            try:
+                await webhook.fetch()
+                _reset_hood_webhook_timer(channel_id, webhook)
+                return webhook
+            except (discord.NotFound, discord.HTTPException):
+                hood_webhooks.pop(channel_id, None)
+
+    webhook = await channel.create_webhook(
+        name=HOOD_WEBHOOK_NAME,
+        reason="Temporary webhook for the ,hoodify /hoodify command",
+    )
+
+    hood_webhooks[channel_id] = {
+        "webhook": webhook,
+        "timer": None,
+    }
+    _reset_hood_webhook_timer(channel_id, webhook)
+    return webhook
+
+
+async def set_hood_target(
+    channel: discord.TextChannel,
+    target: discord.Member,
+) -> discord.Webhook:
+    """Enable HOODIFY for a target and return the channel webhook."""
+    try:
+        await ensure_user_blacklists_ready()
+    except RuntimeError as error:
+        raise UserBlacklistStorageUnavailable(str(error)) from error
+
+    if target.id in hood_user_blacklist:
+        raise HoodUserBlacklisted
+
+    # Keep the UWU/HOODIFY conflict rule atomic with all other Textify mode changes.
+    async with TEXTIFY_MODE_LOCK:
+        async with hood_target_lock:
+            channel_targets = hood_targets.setdefault(channel.id, set())
+
+            if target.id not in channel_targets:
+                active_target_ids = get_active_hood_target_ids()
+
+                # A target already active in another HOODIFY channel uses the
+                # same global slot and does not consume an extra one.
+                if (
+                    target.id not in active_target_ids
+                    and len(active_target_ids) >= MAX_ACTIVE_HOOD_TARGETS
+                ):
+                    if not channel_targets:
+                        hood_targets.pop(channel.id, None)
+                    raise HoodTargetLimitReached(
+                        f"The maximum of {MAX_ACTIVE_HOOD_TARGETS} active HOODIFY targets has been reached."
+                    )
+
+                # Never allow the same person to run UWUIFY and HOODIFY together.
+                if any(
+                    target.id in target_ids
+                    for target_ids in uwuify_feature.uwu_targets.values()
+                ):
+                    if not channel_targets:
+                        hood_targets.pop(channel.id, None)
+                    raise HoodUwuConflict
+
+                channel_targets.add(target.id)
+
+    try:
+        webhook = await get_hood_webhook(channel)
+    except Exception:
+        async with hood_target_lock:
+            channel_targets = hood_targets.get(channel.id)
+            if channel_targets is not None:
+                channel_targets.discard(target.id)
+                if not channel_targets:
+                    hood_targets.pop(channel.id, None)
+        raise
+
+    _reset_hood_webhook_timer(channel.id, webhook)
+    return webhook
+
+
+async def disable_hood_target(channel_id: int) -> bool:
+    """Disable HOODIFY for one channel and delete its temporary webhook."""
+    hood_targets.pop(channel_id, None)
+
+    entry = hood_webhooks.pop(channel_id, None)
+    if entry is None:
+        return False
+
+    timer = entry.get("timer")
+    if timer is not None and not timer.done():
+        timer.cancel()
+
+    webhook = entry.get("webhook")
+    if webhook is not None:
+        try:
+            await webhook.delete(reason="Hoodify mode disabled")
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
+
+    return True
+
+
+async def disable_all_hood_targets() -> int:
+    """Disable HOODIFY everywhere and delete its temporary webhooks."""
+    channel_ids = list(hood_targets.keys() | hood_webhooks.keys())
+    disabled_count = 0
+
+    for channel_id in channel_ids:
+        if await disable_hood_target(channel_id):
+            disabled_count += 1
+
+    return disabled_count
+
+
+async def disable_hood_for_user(user_id: int) -> int:
+    """Remove one user from every active HOODIFY channel."""
+    affected_channels = [
+        channel_id
+        for channel_id, target_ids in hood_targets.items()
+        if user_id in target_ids
+    ]
+
+    removed = 0
+    for channel_id in affected_channels:
+        target_ids = hood_targets.get(channel_id)
+        if target_ids is None or user_id not in target_ids:
+            continue
+
+        target_ids.discard(user_id)
+        removed += 1
+
+        if not target_ids:
+            await disable_hood_target(channel_id)
+
+    return removed
 
 # Maximum number of unique people who can be actively HOODIFIED at once.
 MAX_ACTIVE_HOOD_TARGETS = 5
@@ -82,7 +311,7 @@ def _hoodify_segment(content: str) -> str:
             parts.insert(pos, phrase)
             result = " ".join(parts)
         if random.random() < 0.18 and len(words) >= 4:
-            result = f"{result} {random.choice(HOOD_ENDERS)}"
+            result = f"{result} {random.choice(HOOD_CLOSERS)}"
 
     return result
 
