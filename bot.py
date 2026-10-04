@@ -3320,6 +3320,7 @@ async def on_ready():
                 globals().get("blackjack_command"),
                 globals().get("balance_command"),
                 globals().get("daily_command"),
+                globals().get("slots_command"),
             )
             registered_names = {command.name for command in tree.get_commands()}
             for command in feature_commands:
@@ -3361,6 +3362,7 @@ async def on_ready():
                 "hoodify",
                 "unhoodify",
                 "hoodcount",
+                "slots",
             }
 
             if required_commands.issubset(synced_names):
