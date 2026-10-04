@@ -210,12 +210,7 @@ async def send_slots(target, user: discord.abc.User, bet: int) -> None:
             await target.send(error)
         return
 
-    # Apply the initial spin payout after the bet was deducted.
-    if view.payout:
-        # _resolve_spin only computed payout during construction; the actual
-        # payout must be credited here.
-        blackjack_feature.add_balance(user.id, view.payout)
-        await blackjack_feature.save_data()
+    await blackjack_feature.save_data()
 
     if isinstance(target, discord.Interaction):
         await target.response.send_message(embed=view.build_embed(), view=view)
