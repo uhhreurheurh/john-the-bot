@@ -46,6 +46,10 @@ class HoodTargetLimitReached(Exception):
     """Raised when adding a HOODIFY target would exceed the global cap."""
 
 
+class HoodUwuConflict(Exception):
+    """Raised when a target is already active in UWUIFY."""
+
+
 class HoodMessageBlocked(Exception):
     """Raised when a HOODIFY message contains a blacklisted word/phrase."""
 
