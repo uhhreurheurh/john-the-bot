@@ -233,6 +233,7 @@ async def send_safechat_message(
     content: str,
     embeds: list[discord.Embed] | None = None,
     reply_mention: str | None = None,
+    files: list[discord.File] | None = None,
 ) -> list[discord.WebhookMessage]:
     """Relay the message without changing its text, name, or embed contents."""
     if target.id in textify_blacklist:
@@ -275,6 +276,7 @@ async def send_safechat_message(
                     replied_user=False,
                 ),
                 embeds=embeds if chunk_index == 0 else [],
+                files=files if chunk_index == 0 else [],
                 wait=True,
             )
         )
