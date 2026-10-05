@@ -1952,6 +1952,14 @@
       "rating": 3,
       "comment": "sometimes funny but not 4-5 stars funny",
       "created_at": "2026-10-05 20:26:03"
+    },
+    {
+      "id": 273,
+      "target_id": 984969907647176755,
+      "reviewer_id": 1512484378050302053,
+      "rating": 5,
+      "comment": "My best friend like genuinely wished we lived together I love this dude I wish we were billionaires together genuinely",
+      "created_at": "2026-10-05 20:28:28"
     }
   ],
   "review_update_requests": [
