@@ -232,7 +232,7 @@ async def send_safechat_message(
     target: discord.Member,
     content: str,
     embeds: list[discord.Embed] | None = None,
-    reply_mention: str | None = None,
+    reply_header: str | None = None,
     files: list[discord.File] | None = None,
 ) -> list[discord.WebhookMessage]:
     """Relay the message without changing its text, name, or embed contents."""
