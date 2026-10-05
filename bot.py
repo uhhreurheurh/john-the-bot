@@ -499,6 +499,8 @@ async def sync_user_blacklists_from_github() -> bool:
                         if name == "textify"
                         else uwu_hoodify_ban
                         if name == "ban"
+                        else safechat_ban
+                        if name == "safechat_ban"
                         else review_blacklist
                         if name == "review"
                         else second_role_blacklist
