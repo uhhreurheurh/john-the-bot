@@ -3351,10 +3351,14 @@ async def on_ready():
                     registered_names.add(group.name)
 
             # Sync the complete command tree directly to the main server.
-            # Do not clear/sync the global tree first, because doing so can
-            # leave Discord with only a subset of the imported commands.
+            # Register SafeChat explicitly on the guild as well so the group
+            # and its subcommands cannot be lost during the guild copy.
             tree.clear_commands(guild=main_guild_object)
             tree.copy_global_to(guild=main_guild_object)
+            if isinstance(safechat_group, app_commands.Group):
+                guild_commands = {command.name for command in tree.get_commands(guild=main_guild_object)}
+                if "safechat" not in guild_commands:
+                    tree.add_command(safechat_group, guild=main_guild_object)
             synced_commands = await tree.sync(guild=main_guild_object)
 
             synced_names = {command.name for command in synced_commands}
