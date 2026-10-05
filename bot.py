@@ -3365,7 +3365,6 @@ async def on_ready():
             )
             required_commands = {
                 "uwuify",
-                "uwufy",
                 "blackjack",
                 "balance",
                 "daily",
