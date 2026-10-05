@@ -557,38 +557,35 @@ intents.guilds = True
 intents.message_content = True
 
 bot = discord.Client(intents=intents)
-tree = app_commands.CommandTree(bot)
 
-@tree.interaction_check
-async def reject_external_app_interactions(interaction: discord.Interaction) -> bool:
-    """
-    Reject application-command interactions when John the Bot is being used
-    as a Discord External App instead of being installed in the server.
 
-    An external-app interaction can contain a guild_id even though the bot
-    itself is not a member of that guild. Checking the bot's guild cache lets
-    us distinguish that case from a normal installed-bot interaction.
-    """
-    guild_id = interaction.guild_id
+class ExternalAppCommandTree(app_commands.CommandTree):
+    """Command tree with a global check that blocks External App interactions."""
 
-    # Never allow application commands from DMs.
-    if guild_id is None:
-        return False
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        guild_id = interaction.guild_id
 
-    # If the bot is not actually installed/member of the guild, this is an
-    # External App interaction. Do not execute any command.
-    if bot.get_guild(guild_id) is None:
-        try:
-            if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    "❌ John the Bot must be installed in this server to use its commands.",
-                    ephemeral=True,
-                )
-        except Exception:
-            pass
-        return False
+        # Never allow application commands from DMs.
+        if guild_id is None:
+            return False
 
-    return True
+        # If the bot is not actually installed/member of the guild, this is an
+        # External App interaction. Do not execute any command.
+        if bot.get_guild(guild_id) is None:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "❌ John the Bot must be installed in this server to use its commands.",
+                        ephemeral=True,
+                    )
+            except Exception:
+                pass
+            return False
+
+        return True
+
+
+tree = ExternalAppCommandTree(bot)
 
 
 commands_synced = False
