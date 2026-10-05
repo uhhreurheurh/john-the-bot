@@ -1829,6 +1829,9 @@ async def on_message(message: discord.Message):
         return
 
     if content.lower().startswith(",safechat"):
+        if message.author.id in safechat_ban:
+            await message.reply("❌ You are banned from using SafeChat.", mention_author=False)
+            return
         parts = content.split(maxsplit=2)
         if len(parts) < 2 or not message.mentions:
             await message.reply("Usage: ,safechat @user", mention_author=False)
@@ -3232,6 +3235,10 @@ async def safechat_root_command(interaction: discord.Interaction, member: discor
     if uwu_hoodify_user_is_banned(interaction.user):
         await interaction.response.send_message("❌ You are banned from using UWUIFY, HOODIFY, and SafeChat.", ephemeral=False)
         return
+    if interaction.user.id in safechat_ban:
+        await interaction.response.send_message("❌ You are banned from using SafeChat.", ephemeral=False)
+        return
+
     if action_value == "off":
         disabled_count = await safechat_feature.disable_safechat_for_user(member.id)
         await interaction.response.send_message(f"✅ SafeChat disabled for {member.mention}. Removed them from **{disabled_count}** active channel(s).", ephemeral=False)
@@ -3583,6 +3590,8 @@ async def on_ready():
                 "unhoodify",
                 "hoodcount",
                 "safechat",
+                "safechatban",
+                "safechatunban",
                 "safechatcount",
                 "slots",
             }
