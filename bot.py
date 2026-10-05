@@ -832,17 +832,22 @@ def prefix_blacklist_allowed(message: discord.Message) -> bool:
     )
 
 
-async def get_safechat_reply_mention(message: discord.Message) -> str | None:
+async def get_safechat_reply_header(message: discord.Message) -> str | None:
     reference = message.reference
     if reference is None or reference.message_id is None:
         return None
+
     replied_message = reference.resolved
     if not isinstance(replied_message, discord.Message):
         try:
             replied_message = await message.channel.fetch_message(reference.message_id)
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             return None
-    return replied_message.author.mention
+
+    return (
+        f"-# {message.author.mention} replying to "
+        f"{replied_message.author.mention}: {replied_message.jump_url}"
+    )
 
 
 @bot.event
@@ -905,7 +910,7 @@ async def on_message(message: discord.Message):
                     message.author,
                     content,
                     list(message.embeds),
-                    reply_mention=await get_safechat_reply_mention(message),
+                    reply_header=await get_safechat_reply_header(message),
                     files=image_files,
                 )
                 await delete_original_message(message)
@@ -1449,19 +1454,140 @@ async def on_message(message: discord.Message):
             content = ",hoodify " + spaced_action + (f" {rest}" if rest else "")
 
     # Prefix help with pagination.
+    # Prefix SafeChat: self-only toggle.
+    if content.lower() == ",safechat":
+        if message.author.id in safechat_ban:
+            await message.reply(
+                "❌ You are banned from using SafeChat.",
+                mention_author=False,
+            )
+            return
+
+        if not isinstance(message.channel, discord.TextChannel):
+            await message.reply(
+                "❌ This command can only be used in a normal text channel.",
+                mention_author=False,
+            )
+            return
+
+        bot_member = message.guild.me if message.guild is not None else None
+        permissions = (
+            message.channel.permissions_for(bot_member)
+            if bot_member is not None
+            else None
+        )
+        if permissions is None or not permissions.manage_messages or not permissions.manage_webhooks:
+            await message.reply(
+                "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel.",
+                mention_author=False,
+            )
+            return
+
+        active_targets = safechat_feature.safechat_targets.get(message.channel.id, set())
+        if message.author.id in active_targets:
+            try:
+                removed = await safechat_feature.disable_safechat_for_user(message.author.id)
+                await message.reply(
+                    "🛑 SafeChat is now disabled for you in this channel."
+                    if removed
+                    else "ℹ️ SafeChat was not active for you in this channel.",
+                    mention_author=False,
+                )
+            except Exception:
+                await message.reply(
+                    "❌ SafeChat could not be disabled.",
+                    mention_author=False,
+                )
+            return
+
+        try:
+            await safechat_feature.set_safechat_target(message.channel, message.author)
+            await message.reply(
+                f"✅ SafeChat is now active for {message.author.mention} in this channel.",
+                mention_author=False,
+            )
+        except safechat_feature.SafeChatUserBlacklisted:
+            await message.reply(
+                "❌ You are blacklisted or banned from SafeChat.",
+                mention_author=False,
+            )
+        except UserBlacklistStorageUnavailable as error:
+            await message.reply(
+                f"❌ I could not verify the SafeChat blacklist: {error}",
+                mention_author=False,
+            )
+        except safechat_feature.SafeChatUwuConflict:
+            await message.reply(
+                "❌ You are already being UWUIFIED.",
+                mention_author=False,
+            )
+        except safechat_feature.SafeChatHoodConflict:
+            await message.reply(
+                "❌ You are already being HOODIFIED.",
+                mention_author=False,
+            )
+        except discord.Forbidden:
+            await message.reply(
+                "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel/server.",
+                mention_author=False,
+            )
+        except discord.HTTPException as error:
+            await message.reply(
+                f"❌ Discord rejected the SafeChat webhook request: {error}",
+                mention_author=False,
+            )
+        except Exception:
+            await message.reply(
+                "❌ SafeChat could not be enabled.",
+                mention_author=False,
+            )
+        return
+
+    if content.lower().startswith(",safechatban ") and message.mentions:
+        if not safechat_ban_allowed(message.author):
+            await message.reply("❌ You do not have permission to use this command.", mention_author=False)
+            return
+        target = message.mentions[0]
+        safechat_ban.add(target.id)
+        github_synced = await save_user_blacklist(SAFECHAT_BAN_FILE, safechat_ban)
+        removed = await safechat_feature.disable_safechat_for_user(target.id)
+        response = f"✅ {target.mention} is now banned from SafeChat."
+        if removed:
+            response += f" Removed them from **{removed}** active channel(s)."
+        if not github_synced:
+            response += f"\n⚠️ GitHub sync FAILED.\n`{github_blacklist_sync_error}`"
+        await message.reply(response, mention_author=False)
+        return
+
+    if content.lower().startswith(",safechatunban ") and message.mentions:
+        if not safechat_ban_allowed(message.author):
+            await message.reply("❌ You do not have permission to use this command.", mention_author=False)
+            return
+        target = message.mentions[0]
+        if target.id not in safechat_ban:
+            await message.reply(f"ℹ️ {target.mention} is not currently banned from SafeChat.", mention_author=False)
+            return
+        safechat_ban.remove(target.id)
+        github_synced = await save_user_blacklist(SAFECHAT_BAN_FILE, safechat_ban)
+        response = f"✅ {target.mention} can use SafeChat again."
+        if not github_synced:
+            response += f"\n⚠️ GitHub sync FAILED.\n`{github_blacklist_sync_error}`"
+        await message.reply(response, mention_author=False)
+        return
+
     if content.lower() == ",jelp":
         class JelpView(discord.ui.View):
             def __init__(self):
                 super().__init__(timeout=300)
                 self.page = 0
                 self.pages = [
-                    ("General", "`,jelp` — Show this help menu\n`,ping` — Check bot latency"),
+                    ("General", "`,jelp` — Show this help menu\n`,ping` — Check bot latency\n`,safechat` — Toggle SafeChat for yourself"),
                     ("Textify", "`,uwuify @user` — Enable UWUIFY for a member\n`,unuwuify @user` — Disable UWUIFY\n`,uwu count` — Show active UWUIFY count\n\n`,hoodify @user` — Enable HOODIFY for a member\n`,unhoodify @user` — Disable HOODIFY\n`,hood count` — Show active HOODIFY count"),
                     ("Blackjack", "`,blackjack <bet>` — Play Blackjack with Kevin Bucks\n`,balance` — Check your Kevin Bucks balance\n`,daily` — Claim your daily Kevin Bucks"),
                     ("Mines", "`,mines <bet> [mines]` — Play Mines with Kevin Bucks\nUse 1–12 mines; the default is 3."),
                     ("Slots", "`,slots <bet>` — Play Slots with Kevin Bucks\nOnly the person who started the game can use its buttons."),
                     ("Reviews", "`,review @user` — Leave a review\n`,updatereview @user` — Request a review update\n`,reviews @user` — View reviews\n`,deletereview ID` — Delete a review\n`,leaderboard` — View the review leaderboard\n`,reviewblacklist add/remove/status @user` — Manage the review blacklist"),
-                    ("Staff & Management", "`,strike @user <7-40d> <reason>` — Issue a staff strike\n`,removestrike @user <number>` — Remove a staff strike\n\n`,textify blacklist/unblacklist/status @user` — Manage the Textify blacklist\n`,textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n`,blacklist add/remove/status @user` — Manage the second-role blacklist\n`,savedb` — Save the review database"),
+                    ("Staff & Management", "`,strike @user <7-40d> <reason>` — Issue a staff strike\n`,removestrike @user <number>` — Remove a staff strike\n`,safechatban @user` — Staff: ban a user from SafeChat\n`,safechatunban @user` — Staff: unban a user from SafeChat\n\n`,textify blacklist/unblacklist/status @user` — Manage the Textify blacklist\n`,textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n`,blacklist add/remove/status @user` — Manage the second-role blacklist\n`,savedb` — Save the review database"),
                 ]
 
             def update_buttons(self):
@@ -2372,10 +2498,10 @@ class SlashJelpView(discord.ui.View):
         self.pages = [
             ("General", "`/jelp` — Show this help menu\n`/ping` — Check bot latency"),
             ("Blackjack", "`/blackjack <bet>` — Play Blackjack with Kevin Bucks\n`/balance` — Check your Kevin Bucks balance\n`/daily` — Claim your daily Kevin Bucks"),
-            ("Slots", "`/slots <bet>` — Play Slots with Kevin Bucks\nOnly the person who started the game can use its buttons."),
+            ("Slots", "`/slots <bet>` — Play Slots with Kevin Bucks\nOnly the person who started the game can use its buttons."),\n            ("SafeChat", "`/safechat` — Toggle SafeChat for yourself\nSafeChat relays your messages through a temporary webhook and replaces the original message."),
             ("UWUIFY & HOODIFY", "`/uwuify @user` — Enable UWUIFY\n`/unuwuify @user` — Disable UWUIFY\n`/uwucount` — Show active UWUIFY count\n\n`/hoodify @user` — Enable HOODIFY\n`/unhoodify @user` — Disable HOODIFY\n`/hoodcount` — Show active HOODIFY count"),
             ("Reviews", "`/review @user` — Leave a review\n`/updatereview @user` — Request a review update\n`/reviews @user` — View reviews\n`/deletereview ID` — Delete a review\n`/leaderboard` — View the review leaderboard"),
-            ("Management", "`/textify blacklist/unblacklist/status @user` — Manage Textify\n`/textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n`/blacklist add/remove/status @user` — Manage the second-role blacklist\n`/savedb` — Save the review database"),
+            ("Management", "`/safechat` — Toggle SafeChat for yourself\n`/safechatban @user` — Staff: ban a user from SafeChat\n`/safechatunban @user` — Staff: unban a user from SafeChat\n`/textify blacklist/unblacklist/status @user` — Manage Textify\n`/textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n`/blacklist add/remove/status @user` — Manage the second-role blacklist\n`/savedb` — Save the review database"),
         ]
     def update_buttons(self):
         self.previous.disabled = self.page == 0
@@ -3242,65 +3368,156 @@ from slots import *
 # SAFECHAT SLASH COMMANDS
 # =========================
 
-safechat_group = app_commands.Group(
+@tree.command(
     name="safechat",
-    description="Enable, disable, ban, or unban SafeChat users.",
+    description="Toggle SafeChat for yourself in this channel.",
 )
-
-
-@safechat_group.command(name="on", description="Enable SafeChat for yourself in this channel.")
-@app_commands.describe(member="The member whose messages should be relayed (must be you)")
-async def safechat_on_command(interaction: discord.Interaction, member: discord.Member):
-    if member.id != interaction.user.id:
+async def safechat_command(interaction: discord.Interaction):
+    if interaction.user.id in safechat_ban:
         await interaction.response.send_message(
-            "❌ You can only activate SafeChat for yourself.",
+            "❌ You are banned from using SafeChat.",
             ephemeral=False,
         )
         return
-    if interaction.user.id in safechat_ban:
-        await interaction.response.send_message("❌ You are banned from using SafeChat.", ephemeral=False)
-        return
+
     if not isinstance(interaction.channel, discord.TextChannel):
-        await interaction.response.send_message("❌ This command can only be used in a normal text channel.", ephemeral=False)
+        await interaction.response.send_message(
+            "❌ This command can only be used in a normal text channel.",
+            ephemeral=False,
+        )
         return
 
     bot_member = interaction.guild.me if interaction.guild is not None else None
-    permissions = interaction.channel.permissions_for(bot_member) if bot_member is not None else None
-    await interaction.response.defer(ephemeral=False)
-
+    permissions = (
+        interaction.channel.permissions_for(bot_member)
+        if bot_member is not None
+        else None
+    )
     if permissions is None or not permissions.manage_messages or not permissions.manage_webhooks:
-        await interaction.followup.send(
+        await interaction.response.send_message(
             "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel.",
             ephemeral=False,
         )
         return
 
+    active_targets = safechat_feature.safechat_targets.get(interaction.channel.id, set())
+    if interaction.user.id in active_targets:
+        try:
+            removed = await safechat_feature.disable_safechat_for_user(interaction.user.id)
+            await interaction.response.send_message(
+                "🛑 SafeChat is now disabled for you in this channel."
+                if removed
+                else "ℹ️ SafeChat was not active for you in this channel.",
+                ephemeral=False,
+            )
+        except Exception:
+            await interaction.response.send_message(
+                "❌ SafeChat could not be disabled.",
+                ephemeral=False,
+            )
+        return
+
+    await interaction.response.defer(ephemeral=False)
     try:
-        await safechat_feature.set_safechat_target(interaction.channel, member)
+        await safechat_feature.set_safechat_target(interaction.channel, interaction.user)
         await interaction.followup.send(
-            f"✅ SafeChat is active for {member.mention} in this channel.",
+            f"✅ SafeChat is now active for {interaction.user.mention} in this channel.",
             ephemeral=False,
         )
     except safechat_feature.SafeChatUserBlacklisted:
-        await interaction.followup.send(f"❌ {member.mention} is blacklisted or banned from SafeChat.", ephemeral=False)
+        await interaction.followup.send(
+            "❌ You are blacklisted or banned from SafeChat.",
+            ephemeral=False,
+        )
     except UserBlacklistStorageUnavailable as error:
-        await interaction.followup.send(f"❌ I could not verify the SafeChat blacklist: {error}", ephemeral=False)
+        await interaction.followup.send(
+            f"❌ I could not verify the SafeChat blacklist: {error}",
+            ephemeral=False,
+        )
     except safechat_feature.SafeChatUwuConflict:
-        await interaction.followup.send(f"❌ {member.mention} is already being UWUIFIED.", ephemeral=False)
+        await interaction.followup.send(
+            "❌ You are already being UWUIFIED.",
+            ephemeral=False,
+        )
     except safechat_feature.SafeChatHoodConflict:
-        await interaction.followup.send(f"❌ {member.mention} is already being HOODIFIED.", ephemeral=False)
+        await interaction.followup.send(
+            "❌ You are already being HOODIFIED.",
+            ephemeral=False,
+        )
     except discord.Forbidden:
         await interaction.followup.send(
             "❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel/server.",
             ephemeral=False,
         )
     except discord.HTTPException as error:
-        await interaction.followup.send(f"❌ Discord rejected the SafeChat webhook request: {error}", ephemeral=False)
+        await interaction.followup.send(
+            f"❌ Discord rejected the SafeChat webhook request: {error}",
+            ephemeral=False,
+        )
     except Exception:
-        await interaction.followup.send("❌ SafeChat could not be enabled.", ephemeral=False)
+        await interaction.followup.send(
+            "❌ SafeChat could not be enabled.",
+            ephemeral=False,
+        )
 
-# Register the SafeChat slash-command group on the live command tree.
-tree.add_command(safechat_group)
+
+@tree.command(
+    name="safechatban",
+    description="Ban a member from using SafeChat.",
+)
+@app_commands.describe(member="The member to ban from SafeChat")
+async def safechatban_command(interaction: discord.Interaction, member: discord.Member):
+    if not safechat_ban_allowed(interaction.user):
+        await interaction.response.send_message(
+            "❌ You do not have permission to use this command.",
+            ephemeral=False,
+        )
+        return
+
+    await interaction.response.defer(ephemeral=False)
+    safechat_ban.add(member.id)
+    github_synced = await save_user_blacklist(SAFECHAT_BAN_FILE, safechat_ban)
+    removed = await safechat_feature.disable_safechat_for_user(member.id)
+
+    response = f"✅ {member.mention} is now banned from SafeChat."
+    if removed:
+        response += f" Removed them from **{removed}** active channel(s)."
+    if not github_synced:
+        response += f"\n⚠️ GitHub sync FAILED.\n`{github_blacklist_sync_error}`"
+
+    await interaction.followup.send(response, ephemeral=False)
+
+
+@tree.command(
+    name="safechatunban",
+    description="Unban a member from using SafeChat.",
+)
+@app_commands.describe(member="The member to unban from SafeChat")
+async def safechatunban_command(interaction: discord.Interaction, member: discord.Member):
+    if not safechat_ban_allowed(interaction.user):
+        await interaction.response.send_message(
+            "❌ You do not have permission to use this command.",
+            ephemeral=False,
+        )
+        return
+
+    await interaction.response.defer(ephemeral=False)
+    if member.id not in safechat_ban:
+        await interaction.followup.send(
+            f"ℹ️ {member.mention} is not currently banned from SafeChat.",
+            ephemeral=False,
+        )
+        return
+
+    safechat_ban.remove(member.id)
+    github_synced = await save_user_blacklist(SAFECHAT_BAN_FILE, safechat_ban)
+
+    response = f"✅ {member.mention} can use SafeChat again."
+    if not github_synced:
+        response += f"\n⚠️ GitHub sync FAILED.\n`{github_blacklist_sync_error}`"
+
+    await interaction.followup.send(response, ephemeral=False)
+
 
 # BOT READY
 # =========================
