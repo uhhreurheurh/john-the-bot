@@ -1959,57 +1959,6 @@ async def on_message(message: discord.Message):
         await message.reply(response, mention_author=False)
         return
 
-    # Anyone can turn SafeChat off.
-    if len(safechat_parts) >= 2 and safechat_parts[0].lower() == ",safechat" and safechat_parts[1].lower() == "off":
-        if not message.mentions:
-            await message.reply("Usage: ,safechat off @user", mention_author=False)
-            return
-        target = message.mentions[0]
-        disabled_count = await safechat_feature.disable_safechat_for_user(target.id)
-        await message.reply(f"✅ SafeChat disabled for {target.mention}. Removed them from **{disabled_count}** active channel(s).", mention_author=False)
-        return
-
-    if content.lower().startswith(",safechat"):
-        if message.author.id in safechat_ban:
-            await message.reply("❌ You are banned from using SafeChat.", mention_author=False)
-            return
-        parts = content.split(maxsplit=2)
-        if len(parts) < 2 or not message.mentions:
-            await message.reply("Usage: ,safechat @user", mention_author=False)
-            return
-        target = message.mentions[0]
-        if target.id != message.author.id:
-            await message.reply("❌ You can only activate SafeChat for yourself.", mention_author=False)
-            return
-        if target.id in safechat_ban:
-            await message.reply(f"❌ {target.mention} is banned from SafeChat.", mention_author=False)
-            return
-        bot_member = message.guild.me if message.guild is not None else None
-        permissions = message.channel.permissions_for(bot_member) if bot_member is not None else None
-        if permissions is None or not permissions.manage_messages or not permissions.manage_webhooks:
-            await message.reply("❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel.", mention_author=False)
-            return
-        try:
-            await safechat_feature.set_safechat_target(message.channel, target)
-            if len(parts) >= 3:
-                await safechat_feature.send_safechat_message(message.channel, target, parts[2])
-            await message.reply(f"✅ SafeChat is active for {target.mention} in this channel.", mention_author=False)
-        except safechat_feature.SafeChatUserBlacklisted:
-            await message.reply(f"❌ {target.mention} is blacklisted or banned from SafeChat.", mention_author=False)
-        except UserBlacklistStorageUnavailable as error:
-            await message.reply(f"❌ I could not verify the blacklist from GitHub, so SafeChat was not activated. Error: {error}", mention_author=False)
-        except safechat_feature.SafeChatUwuConflict:
-            await message.reply(f"❌ {target.mention} is already being UWUIFIED.", mention_author=False)
-        except safechat_feature.SafeChatHoodConflict:
-            await message.reply(f"❌ {target.mention} is already being HOODIFIED.", mention_author=False)
-        except discord.Forbidden:
-            await message.reply("❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel/server.", mention_author=False)
-        except discord.HTTPException as error:
-            await message.reply(f"❌ Discord rejected the SafeChat webhook request: {error}", mention_author=False)
-        except Exception as error:
-            await message.reply(f"❌ SafeChat command failed: {error}", mention_author=False)
-        return
-
     # Kevin Bucks / Blackjack prefix commands.
     if await blackjack_feature.handle_prefix(message):
         return
@@ -3568,16 +3517,15 @@ async def on_ready():
                     tree.add_command(group)
                     registered_names.add(group.name)
 
-            # Sync the complete command tree directly to the main server.
-            # Register SafeChat explicitly on the guild as well so the group
-            # and its subcommands cannot be lost during the guild copy.
+            # Sync the current command tree directly to the main server.
+            # SafeChat is a top-level command now (not /safechat on|off).
             tree.clear_commands(guild=main_guild_object)
             tree.copy_global_to(guild=main_guild_object)
-            if isinstance(safechat_group, app_commands.Group):
-                guild_commands = {command.name for command in tree.get_commands(guild=main_guild_object)}
-                if "safechat" not in guild_commands:
-                    tree.add_command(safechat_group, guild=main_guild_object)
             synced_commands = await tree.sync(guild=main_guild_object)
+
+            # Also update the global command registration so Discord does not
+            # continue showing the obsolete /safechat on|off command.
+            await tree.sync()
 
             synced_names = {command.name for command in synced_commands}
             defined_names = {command.name for command in tree.get_commands()}
