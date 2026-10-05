@@ -543,7 +543,7 @@ async def handle_prefix(message: discord.Message) -> bool:
 
     if len(parts) not in {2, 3}:
         await message.reply(
-            f"Usage: \`,mines <bet> [mines]\` — bet {MIN_BET:,} to "
+            f"Usage: ,mines <bet> [mines] — bet {MIN_BET:,} to "
             f"{MAX_BET:,} {blackjack_feature.CURRENCY_NAME}.",
             mention_author=False,
         )
