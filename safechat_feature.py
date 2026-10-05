@@ -5,8 +5,8 @@ SafeChat is a non-transforming relay based on the existing HOODIFY behavior:
 - preserves the target's display name exactly
 - preserves embeds without modifying their text
 - uses temporary per-channel webhooks
-- uses the shared Textify whitelist/blacklist
-- has a five-person global target cap
+- uses the shared Textify blacklist
+- has no global target cap
 """
 
 from bot import *
@@ -14,9 +14,7 @@ from bot import *
 SAFECHAT_WEBHOOK_NAME = "SafeChat Relay"
 SAFECHAT_WEBHOOK_IDLE_SECONDS = 5 * 60
 SAFECHAT_WEBHOOK_CLEANUP_INTERVAL_SECONDS = 60
-MAX_ACTIVE_SAFECHAT_TARGETS = 5
-
-SAFECHAT_ALLOWED_ROLE_IDS = textify_whitelist
+MAX_ACTIVE_SAFECHAT_TARGETS = None  # SafeChat has no target cap.
 
 # channel_id -> {"webhook": discord.Webhook, "timer": asyncio.Task | None}
 safechat_webhooks: dict[int, dict] = {}
@@ -25,15 +23,6 @@ safechat_webhooks: dict[int, dict] = {}
 safechat_targets: dict[int, set[int]] = {}
 
 safechat_target_lock = asyncio.Lock()
-
-
-def safechat_user_is_whitelisted(member: discord.Member | discord.User) -> bool:
-    """Return True when a member has a shared Textify whitelist role."""
-    role_ids = {
-        int(getattr(role, "id", 0))
-        for role in getattr(member, "roles", ())
-    }
-    return any(role_id in SAFECHAT_ALLOWED_ROLE_IDS for role_id in role_ids)
 
 
 def get_active_safechat_target_ids(exclude_channel_id: int | None = None) -> set[int]:
@@ -151,16 +140,6 @@ async def set_safechat_target(
             channel_targets = safechat_targets.setdefault(channel.id, set())
 
             if target.id not in channel_targets:
-                active_target_ids = get_active_safechat_target_ids()
-
-                if (
-                    target.id not in active_target_ids
-                    and len(active_target_ids) >= MAX_ACTIVE_SAFECHAT_TARGETS
-                ):
-                    if not channel_targets:
-                        safechat_targets.pop(channel.id, None)
-                    raise SafeChatTargetLimitReached
-
                 if any(
                     target.id in target_ids
                     for target_ids in uwuify_feature.uwu_targets.values()
@@ -253,15 +232,22 @@ async def send_safechat_message(
     target: discord.Member,
     content: str,
     embeds: list[discord.Embed] | None = None,
+    reply_mention: str | None = None,
 ) -> list[discord.WebhookMessage]:
     """Relay the message without changing its text, name, or embed contents."""
     if target.id in textify_blacklist:
+        raise SafeChatUserBlacklisted
+    if target.id in safechat_ban:
         raise SafeChatUserBlacklisted
 
     webhook = await get_safechat_webhook(channel)
     embeds = embeds or []
 
     # Intentionally do not strip, rewrite, filter, or transform content.
+    # If this was a reply, append a real user mention for the replied-to author.
+    if reply_mention:
+        content = f"{content} {reply_mention}" if content else reply_mention
+
     # Discord's webhook username is limited to 80 characters, so the original
     # display name is passed through unchanged up to Discord's own limit.
     username = target.display_name[:80]
