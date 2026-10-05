@@ -262,22 +262,33 @@ async def send_safechat_message(
         chunks = [None]
 
     for chunk_index, chunk in enumerate(chunks):
-        sent_messages.append(
-            await webhook.send(
-                chunk,
-                username=username,
-                avatar_url=target.display_avatar.url,
-                allowed_mentions=discord.AllowedMentions(
-                    everyone=False,
-                    roles=False,
-                    users=True,
-                    replied_user=False,
-                ),
-                embeds=embeds if chunk_index == 0 else [],
-                files=files if chunk_index == 0 else [],
-                wait=True,
-            )
-        )
+        send_kwargs = {
+            "content": chunk,
+            "username": username,
+            "avatar_url": target.display_avatar.url,
+            "allowed_mentions": discord.AllowedMentions(
+                everyone=False,
+                roles=False,
+                users=True,
+                replied_user=False,
+            ),
+            "embeds": embeds if chunk_index == 0 else [],
+            "files": files if chunk_index == 0 else [],
+            "wait": True,
+        }
+
+        try:
+            sent_messages.append(await webhook.send(**send_kwargs))
+        except (discord.NotFound, discord.HTTPException):
+            # A temporary SafeChat webhook can disappear between messages
+            # (cleanup, manual deletion, or Discord-side invalidation).  Drop
+            # the stale cache and transparently create a fresh relay webhook.
+            current = safechat_webhooks.get(channel.id)
+            if current is not None and current.get("webhook") is webhook:
+                safechat_webhooks.pop(channel.id, None)
+
+            webhook = await get_safechat_webhook(channel)
+            sent_messages.append(await webhook.send(**send_kwargs))
 
     _reset_safechat_webhook_timer(channel.id, webhook)
     return sent_messages
