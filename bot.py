@@ -1749,6 +1749,78 @@ async def on_message(message: discord.Message):
                 mention_author=False,
             )
         return
+    # -------------------------
+    # SAFECHAT PREFIX COMMANDS
+    # -------------------------
+    if content.lower() in {",safechatcount", ",safechat count"}:
+        global_count = safechat_feature.get_active_safechat_target_count()
+        channel_count = len(safechat_feature.safechat_targets.get(message.channel.id, set()))
+        await message.reply(
+            f"🛡️ **SafeChat count**\\n"
+            f"Global: **{global_count}/{safechat_feature.MAX_ACTIVE_SAFECHAT_TARGETS}** people\\n"
+            f"This channel: **{channel_count}** people",
+            mention_author=False,
+        )
+        return
+
+    if content.lower().startswith(",unsafechat"):
+        if not safechat_feature.safechat_user_is_whitelisted(message.author):
+            await message.reply("❌ You need one of the allowed Textify roles to use this command.", mention_author=False)
+            return
+        if not message.mentions:
+            await message.reply("Usage: ,unsafechat @user", mention_author=False)
+            return
+        target = message.mentions[0]
+        disabled_count = await safechat_feature.disable_safechat_for_user(target.id)
+        await message.reply(
+            f"✅ SafeChat disabled for {target.mention}. Removed them from **{disabled_count}** active channel(s).",
+            mention_author=False,
+        )
+        return
+
+    if content.lower().startswith(",safechat"):
+        if not safechat_feature.safechat_user_is_whitelisted(message.author):
+            await message.reply("❌ You need one of the allowed Textify roles to use this command.", mention_author=False)
+            return
+        parts = content.split(maxsplit=2)
+        if len(parts) < 2 or not message.mentions:
+            await message.reply("Usage: \`,safechat @user\`", mention_author=False)
+            return
+        target = message.mentions[0]
+        bot_member = message.guild.me if message.guild is not None else None
+        permissions = message.channel.permissions_for(bot_member) if bot_member is not None else None
+        if permissions is None or not permissions.manage_messages or not permissions.manage_webhooks:
+            await message.reply("❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel.", mention_author=False)
+            return
+        try:
+            await safechat_feature.set_safechat_target(message.channel, target)
+            if len(parts) >= 3:
+                await safechat_feature.send_safechat_message(message.channel, target, parts[2])
+            await message.reply(
+                f"✅ SafeChat is active for {target.mention} in this channel. Active people: **{safechat_feature.get_active_safechat_target_count()}/{safechat_feature.MAX_ACTIVE_SAFECHAT_TARGETS}**.",
+                mention_author=False,
+            )
+        except safechat_feature.SafeChatUserBlacklisted:
+            await message.reply(f"❌ {target.mention} is blacklisted from SafeChat.", mention_author=False)
+        except UserBlacklistStorageUnavailable as error:
+            await message.reply(f"❌ I could not verify the blacklist from GitHub, so SafeChat was not activated. Error: \`{error}\`", mention_author=False)
+        except safechat_feature.SafeChatUwuConflict:
+            await message.reply(f"❌ {target.mention} is already being UWUIFIED.", mention_author=False)
+        except safechat_feature.SafeChatHoodConflict:
+            await message.reply(f"❌ {target.mention} is already being HOODIFIED.", mention_author=False)
+        except safechat_feature.SafeChatTargetLimitReached:
+            await message.reply(
+                f"❌ The global limit of {safechat_feature.MAX_ACTIVE_SAFECHAT_TARGETS} active SafeChat people has been reached. Use \`,unsafechat @user\` to disable one.",
+                mention_author=False,
+            )
+        except discord.Forbidden:
+            await message.reply("❌ I need **Manage Messages** and **Manage Webhooks** permission in this channel/server.", mention_author=False)
+        except discord.HTTPException as error:
+            await message.reply(f"❌ Discord rejected the SafeChat webhook request: \`{error}\`", mention_author=False)
+        except Exception as error:
+            await message.reply(f"❌ SafeChat command failed: \`{error}\`", mention_author=False)
+        return
+
     # Kevin Bucks / Blackjack prefix commands.
     if await blackjack_feature.handle_prefix(message):
         return
