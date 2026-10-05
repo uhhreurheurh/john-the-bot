@@ -129,7 +129,7 @@ async def set_safechat_target(
     except RuntimeError as error:
         raise UserBlacklistStorageUnavailable(str(error)) from error
 
-    if target.id in textify_blacklist:
+    if target.id in textify_blacklist or target.id in safechat_ban:
         raise SafeChatUserBlacklisted
 
     # Keep SafeChat from being active alongside either text-transform mode.
