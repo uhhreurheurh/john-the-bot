@@ -842,8 +842,26 @@ async def on_message(message: discord.Message):
         uwu_target_ids = uwuify_feature.uwu_targets.get(message.channel.id, set())
         has_transformable_content = bool(content or message.embeds)
 
-        # HOODIFY takes precedence when a user is active in both modes in the
-        # same channel, matching the existing routing order.
+        # SAFECHAT relays the original text/name without transforming it.
+        safechat_target_ids = safechat_feature.safechat_targets.get(message.channel.id, set())
+        if message.author.id in safechat_target_ids and has_transformable_content:
+            if message.author.id in textify_blacklist:
+                await safechat_feature.disable_safechat_for_user(message.author.id)
+                return
+            bot_member = message.guild.me if message.guild is not None else None
+            if bot_member is None:
+                return
+            permissions = message.channel.permissions_for(bot_member)
+            if not permissions.manage_messages or not permissions.manage_webhooks:
+                return
+            try:
+                await safechat_feature.send_safechat_message(message.channel, message.author, content, list(message.embeds))
+                await delete_original_message(message)
+            except Exception:
+                pass
+            return
+
+        # HOODIFY takes precedence over UWUIFY when a user is active in both modes.
         if message.author.id in hood_target_ids and has_transformable_content:
             if message.author.id in hood_user_blacklist:
                 await disable_hood_for_user(message.author.id)
@@ -890,7 +908,7 @@ async def on_message(message: discord.Message):
 
 
     if prefix_command in {
-        ",uwuify", ",unuwuify", ",hoodify", ",unhoodify", ",uwu", ",hood"
+        ",uwuify", ",unuwuify", ",hoodify", ",unhoodify", ",safechat", ",unsafechat", ",safechatcount", ",uwu", ",hood"
     } and uwu_hoodify_user_is_banned(message.author):
         await message.reply(
             "❌ You are banned from using UWUIFY and HOODIFY.",
@@ -3061,6 +3079,7 @@ staff_strike_expiry_task: asyncio.Task | None = None
 TEXTIFY_MODE_LOCK = asyncio.Lock()
 
 import hoodify_feature
+import safechat_feature
 import uwuify_feature
 import reviews as reviews_feature
 import leaderboard as leaderboard_feature
@@ -3069,6 +3088,7 @@ import blackjack as blackjack_feature
 import mines as mines_feature
 import slots as slots_feature
 from hoodify_feature import *
+from safechat_feature import *
 from uwuify_feature import *
 from reviews import *
 from reviews import (
