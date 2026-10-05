@@ -560,18 +560,37 @@ bot = discord.Client(intents=intents)
 
 
 class ExternalAppCommandTree(app_commands.CommandTree):
-    """Command tree with a global check that blocks External App interactions."""
+    """Command tree that rejects DMs and commands from servers where the bot is not installed."""
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        guild_id = interaction.guild_id
+        guild = interaction.guild
 
         # Never allow application commands from DMs.
-        if guild_id is None:
+        if guild is None:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "❌ John the Bot commands can only be used inside a server.",
+                        ephemeral=True,
+                    )
+            except Exception:
+                pass
             return False
 
-        # If the bot is not actually installed/member of the guild, this is an
-        # External App interaction. Do not execute any command.
-        if bot.get_guild(guild_id) is None:
+        # Do not rely only on the local guild cache. External App interactions
+        # can arrive even when the bot itself is not a member of the server.
+        # Check the bot member directly, using the cache first and REST as a
+        # fallback so legitimate slash commands do not time out.
+        bot_member = guild.me
+        if bot_member is None and bot.user is not None:
+            try:
+                bot_member = await guild.fetch_member(bot.user.id)
+            except (discord.NotFound, discord.Forbidden):
+                bot_member = None
+            except discord.HTTPException:
+                bot_member = None
+
+        if bot_member is None:
             try:
                 if not interaction.response.is_done():
                     await interaction.response.send_message(
