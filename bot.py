@@ -2498,7 +2498,8 @@ class SlashJelpView(discord.ui.View):
         self.pages = [
             ("General", "`/jelp` — Show this help menu\n`/ping` — Check bot latency"),
             ("Blackjack", "`/blackjack <bet>` — Play Blackjack with Kevin Bucks\n`/balance` — Check your Kevin Bucks balance\n`/daily` — Claim your daily Kevin Bucks"),
-            ("Slots", "`/slots <bet>` — Play Slots with Kevin Bucks\nOnly the person who started the game can use its buttons."),\n            ("SafeChat", "`/safechat` — Toggle SafeChat for yourself\nSafeChat relays your messages through a temporary webhook and replaces the original message."),
+            ("Slots", "`/slots <bet>` — Play Slots with Kevin Bucks\nOnly the person who started the game can use its buttons."),
+            ("SafeChat", "`/safechat` — Toggle SafeChat for yourself\nSafeChat relays your messages through a temporary webhook and replaces the original message."),
             ("UWUIFY & HOODIFY", "`/uwuify @user` — Enable UWUIFY\n`/unuwuify @user` — Disable UWUIFY\n`/uwucount` — Show active UWUIFY count\n\n`/hoodify @user` — Enable HOODIFY\n`/unhoodify @user` — Disable HOODIFY\n`/hoodcount` — Show active HOODIFY count"),
             ("Reviews", "`/review @user` — Leave a review\n`/updatereview @user` — Request a review update\n`/reviews @user` — View reviews\n`/deletereview ID` — Delete a review\n`/leaderboard` — View the review leaderboard"),
             ("Management", "`/safechat` — Toggle SafeChat for yourself\n`/safechatban @user` — Staff: ban a user from SafeChat\n`/safechatunban @user` — Staff: unban a user from SafeChat\n`/textify blacklist/unblacklist/status @user` — Manage Textify\n`/textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n`/blacklist add/remove/status @user` — Manage the second-role blacklist\n`/savedb` — Save the review database"),
