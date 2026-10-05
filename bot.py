@@ -3358,7 +3358,7 @@ async def on_ready():
             synced_commands = await tree.sync(guild=main_guild_object)
 
             synced_names = {command.name for command in synced_commands}
-            defined_names = {command.name for command in global_commands}
+            defined_names = {command.name for command in tree.get_commands()}
             print(
                 "Guild command sync: "
                 f"{len(synced_names)} synced / {len(defined_names)} defined"
