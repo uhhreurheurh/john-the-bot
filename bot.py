@@ -933,7 +933,7 @@ async def on_message(message: discord.Message):
 
 
     if prefix_command in {
-        ",uwuify", ",unuwuify", ",hoodify", ",unhoodify", ",safechat", ",safechatban", ",safechatunban", ",safechatcount", ",uwu", ",hood"
+        ",uwuify", ",unuwuify", ",hoodify", ",unhoodify", ",safechat", ",safechatban", ",safechatunban", ",uwu", ",hood"
     } and uwu_hoodify_user_is_banned(message.author):
         await message.reply(
             "❌ You are banned from using UWUIFY and HOODIFY.",
@@ -1775,20 +1775,8 @@ async def on_message(message: discord.Message):
             )
         return
     # -------------------------
-    # -------------------------
     # SAFECHAT PREFIX COMMANDS
     # -------------------------
-    if content.lower() in {",safechatcount", ",safechat count"}:
-        global_count = safechat_feature.get_active_safechat_target_count()
-        channel_count = len(safechat_feature.safechat_targets.get(message.channel.id, set()))
-        await message.reply(
-            f"🛡️ **SafeChat count**\n"
-            f"Global: **{global_count}** people\n"
-            f"This channel: **{channel_count}** people",
-            mention_author=False,
-        )
-        return
-
     safechat_parts = content.split(maxsplit=2)
 
     # Staff-only SafeChat ban/unban.
@@ -3257,8 +3245,7 @@ async def safechat_on_command(interaction: discord.Interaction, member: discord.
     try:
         await safechat_feature.set_safechat_target(interaction.channel, member)
         await interaction.followup.send(
-            f"✅ SafeChat is active for {member.mention} in this channel. "
-            f"Active people: **{safechat_feature.get_active_safechat_target_count()}**.",
+            f"✅ SafeChat is active for {member.mention} in this channel.",
             ephemeral=False,
         )
     except safechat_feature.SafeChatUserBlacklisted:
@@ -3347,21 +3334,6 @@ async def safechat_unban_command(interaction: discord.Interaction, member: disco
         ephemeral=False,
     )
 
-
-@safechat_group.command(name="count", description="Show how many people are currently using SafeChat.")
-async def safechat_count_command(interaction: discord.Interaction):
-    global_count = safechat_feature.get_active_safechat_target_count()
-    channel_count = (
-        len(safechat_feature.safechat_targets.get(interaction.channel.id, set()))
-        if isinstance(interaction.channel, discord.TextChannel)
-        else 0
-    )
-    await interaction.response.send_message(
-        f"🛡️ **SafeChat count**\n"
-        f"Global: **{global_count}** people\n"
-        f"This channel: **{channel_count}** people",
-        ephemeral=False,
-    )
 
 
 tree.add_command(safechat_group)
@@ -3646,7 +3618,6 @@ async def on_ready():
                 "unhoodify",
                 "hoodcount",
                 "safechat",
-                "safechatcount",
                 "slots",
             }
 
