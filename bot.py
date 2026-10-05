@@ -3299,3 +3299,593 @@ async def safechat_on_command(interaction: discord.Interaction, member: discord.
     except Exception:
         await interaction.followup.send("❌ SafeChat could not be enabled.", ephemeral=False)
 
+# Register the SafeChat slash-command group on the live command tree.
+tree.add_command(safechat_group)
+
+# BOT READY
+# =========================
+
+# Tracks whether the one allowed terminal status line has been shown.
+terminal_status_printed = False
+
+
+@bot.event
+async def on_ready():
+    global commands_synced, terminal_status_printed, review_db_restore_checked, staff_strike_expiry_task
+
+    if not terminal_status_printed:
+        print("Bot is alive")
+        terminal_status_printed = True
+
+    if not commands_synced:
+        main_guild_object = discord.Object(id=MAIN_SERVER)
+
+        try:
+            # Ensure imported feature commands are attached to the live CommandTree.
+            feature_commands = (
+                globals().get("uwu_command"),
+                globals().get("unuwuify_command"),
+                globals().get("uwucount_root_command"),
+                globals().get("hoodify_command"),
+                globals().get("unhoodify_command"),
+                globals().get("hoodcount_root_command"),
+                globals().get("blackjack_command"),
+                globals().get("balance_command"),
+                globals().get("daily_command"),
+                globals().get("slots_command"),
+            )
+            registered_names = {command.name for command in tree.get_commands()}
+            for command in feature_commands:
+                if isinstance(command, app_commands.Command) and command.name not in registered_names:
+                    tree.add_command(command)
+                    registered_names.add(command.name)
+
+            # Explicitly register command groups owned by feature modules.
+            feature_groups = (
+                globals().get("review_blacklist_group"),
+            )
+            registered_names = {command.name for command in tree.get_commands()}
+            for group in feature_groups:
+                if isinstance(group, app_commands.Group) and group.name not in registered_names:
+                    tree.add_command(group)
+                    registered_names.add(group.name)
+
+            # Sync the complete command tree directly to the main server.
+            # Do not clear/sync the global tree first, because doing so can
+            # leave Discord with only a subset of the imported commands.
+            tree.clear_commands(guild=main_guild_object)
+            tree.copy_global_to(guild=main_guild_object)
+            synced_commands = await tree.sync(guild=main_guild_object)
+
+            synced_names = {command.name for command in synced_commands}
+            defined_names = {command.name for command in global_commands}
+            print(
+                "Guild command sync: "
+                f"{len(synced_names)} synced / {len(defined_names)} defined"
+            )
+            required_commands = {
+                "uwuify",
+                "uwufy",
+                "blackjack",
+                "balance",
+                "daily",
+                "unuwuify",
+                "uwucount",
+                "hoodify",
+                "unhoodify",
+                "hoodcount",
+                "slots",
+            }
+
+            if required_commands.issubset(synced_names):
+                commands_synced = True
+                print(
+                    "Slash commands synced: "
+                    + ", ".join(sorted(synced_names))
+                )
+            else:
+                commands_synced = False
+                print(
+                    "Slash command sync incomplete. Missing: "
+                    + ", ".join(sorted(required_commands - synced_names))
+                )
+        except Exception as error:
+            commands_synced = False
+            print(
+                "Slash command sync failed: "
+                f"{type(error).__name__}: {error}"
+            )
+
+    if not review_db_restore_checked:
+        restored = await restore_review_db_from_github()
+        if restored or _review_db_has_reviews() or not GITHUB_TOKEN:
+            review_db_restore_checked = True
+
+    # Always ensure the restored database has the review schema.
+    _ensure_review_db_schema()
+    try:
+        await asyncio.to_thread(_ensure_shared_review_store)
+    except Exception as error:
+        print(f"Review store initialization failed: {type(error).__name__}: {error}")
+
+    global review_update_views_registered
+    if not review_update_views_registered:
+        await register_pending_review_update_views()
+        review_update_views_registered = True
+
+    global review_db_auto_sync_task
+    if review_db_auto_sync_task is None or review_db_auto_sync_task.done():
+        try:
+            success, error = await sync_review_db_to_github_locked()
+            if not success:
+                print(f"Review database initial save failed: {error}")
+        except Exception as error:
+            print(f"Review database initial save crashed: {type(error).__name__}: {error}")
+
+        review_db_auto_sync_task = asyncio.create_task(
+            review_db_auto_sync_worker()
+        )
+
+    if GITHUB_TOKEN and staff_strikes_feature.staff_strike_github_sync_error is None:
+        try:
+            await sync_staff_strikes_from_github()
+        except Exception:
+            pass
+
+    startup_expired = prune_expired_staff_strikes()
+    if startup_expired:
+        await handle_expired_staff_strikes(startup_expired)
+        await save_staff_strikes()
+
+    if staff_strike_expiry_task is None or staff_strike_expiry_task.done():
+        staff_strike_expiry_task = asyncio.create_task(
+            staff_strike_expiry_worker()
+        )
+
+    global user_blacklists_synced
+    if not user_blacklists_synced:
+        if await sync_user_blacklists_from_github():
+            user_blacklists_synced = True
+
+    await blackjack_feature.initialize()
+
+    if not kick_loop.is_running():
+        kick_loop.start()
+
+    if not tag_role_loop.is_running():
+        tag_role_loop.start()
+
+    if not uwu_webhook_cleanup_loop.is_running():
+        uwu_webhook_cleanup_loop.start()
+
+    if not hood_webhook_cleanup_loop.is_running():
+        hood_webhook_cleanup_loop.start()
+
+
+# =========================
+# KICK LOOP
+# =========================
+
+@tasks.loop(minutes=check_time)
+async def kick_loop():
+    main_guild = bot.get_guild(MAIN_SERVER)
+
+    if main_guild is None:
+        return
+
+    # Refresh the main-server member list so the bot does not rely on a stale
+    # cache when deciding whether someone is still in the main server.
+    main_source_members = await get_source_members_for_role_check(main_guild)
+    if main_source_members is None:
+        print("Kick check skipped: could not refresh main-server members.")
+        return
+
+    main_members = {
+        member.id
+        for member in main_source_members
+        if not member.bot
+    }
+
+    for server_id in tag_servers:
+        guild = bot.get_guild(server_id)
+
+        if guild is None:
+            print(f"Kick check skipped: source server {server_id} is not available.")
+            continue
+
+        bot_member = guild.me
+        if bot_member is None or not bot_member.guild_permissions.kick_members:
+            print(
+                f"Kick check skipped for {guild.name}: "
+                "bot does not have Kick Members permission."
+            )
+            continue
+
+        # Use a fresh member list for the tag server as well.
+        source_members = await get_source_members_for_role_check(guild)
+        if source_members is None:
+            print(
+                f"Kick check skipped for {guild.name}: "
+                "could not refresh source-server members."
+            )
+            continue
+
+        for member in source_members:
+            if member.bot:
+                continue
+
+            # Anyone with ANY protected role will never be kicked.
+            if any(role.id in PROTECTED_ROLE_IDS for role in member.roles):
+                continue
+
+            if member.id in main_members:
+                continue
+
+            # Discord hierarchy applies to kicks. The bot must be above the
+            # member it is trying to kick, and the owner can never be kicked.
+            if guild.owner_id == member.id:
+                print(
+                    f"Kick skipped for {member} ({member.id}) in {guild.name}: "
+                    "member is the server owner."
+                )
+                continue
+
+            if member.top_role >= bot_member.top_role:
+                print(
+                    f"Kick skipped for {member} ({member.id}) in {guild.name}: "
+                    f"member top role {member.top_role.id}/{member.top_role.position} "
+                    f"is not below bot top role "
+                    f"{bot_member.top_role.id}/{bot_member.top_role.position}."
+                )
+                continue
+
+            try:
+                try:
+                    await member.send(
+                        f"Hey {member.mention}, you were kicked from **{guild.name}** "
+                        f"because you are not in the main server.\n\n"
+                        f"Please join the main server here: {MAIN_SERVER_INVITE}"
+                    )
+                except Exception:
+                    pass
+
+                await guild.kick(
+                    member,
+                    reason="not in main server",
+                )
+
+                await send_kick_webhook(
+                    title="🚫 Member Kicked",
+                    description=(
+                        f"{member.mention} was kicked from a tag server "
+                        "because they are not in the main server."
+                    ),
+                    color=discord.Color.red(),
+                    fields=[
+                        ("User", f"{member} ({member.id})", True),
+                        ("Tag Server", f"{guild.name}\n{guild.id}", True),
+                        ("Reason", "Not a member of the main server", False),
+                    ],
+                )
+
+            except (discord.Forbidden, discord.HTTPException) as error:
+                print(
+                    f"Kick failed for {member} ({member.id}) in {guild.name}: "
+                    f"{type(error).__name__}: {error}"
+                )
+                await send_kick_webhook(
+                    title="⚠️ Kick Failed",
+                    description=(
+                        f"Failed to kick {member.mention} "
+                        f"from **{guild.name}**."
+                    ),
+                    color=discord.Color.orange(),
+                    fields=[
+                        ("User", f"{member} ({member.id})", True),
+                        ("Server", f"{guild.name}\n{guild.id}", True),
+                        ("Reason", "Discord rejected the kick request.", False),
+                        ("Error", f"{error}", False),
+                    ],
+                )
+            except Exception as error:
+                print(
+                    f"Unexpected kick error for {member} ({member.id}) in {guild.name}: "
+                    f"{type(error).__name__}: {error}"
+                )
+
+            await asyncio.sleep(1)
+
+# =========================
+# TAG ROLE LOOP
+# =========================
+
+@tasks.loop(seconds=tag_check_time)
+async def tag_role_loop():
+    main_guild = bot.get_guild(MAIN_SERVER)
+    if main_guild is None:
+        return
+
+    # Keep enforcing the automatic role-removal rule for the explicit
+    # trigger role and every configured staff hierarchy role.
+    if AUTO_REMOVE_TRIGGER_ROLE_IDS and AUTO_REMOVE_ROLE_ID:
+        for member in main_guild.members:
+            if member.bot:
+                continue
+            await remove_auto_role_if_needed(
+                member,
+                reason="Periodic automatic-role-removal check",
+            )
+
+    # Refresh the bot member so role-position checks use Discord's current data.
+    try:
+        bot_member = await main_guild.fetch_member(bot.user.id)
+    except (discord.NotFound, discord.HTTPException):
+        bot_member = main_guild.me
+
+    if bot_member is None or not bot_member.guild_permissions.manage_roles:
+        print("Role sync skipped: bot does not currently have Manage Roles.")
+        return
+
+    # First main-server tag role.
+    tag_role = main_guild.get_role(TAG_ROLE_ID)
+    first_role_ready = (
+        tag_role is not None
+        and not tag_role.is_default()
+        and not tag_role.managed
+        and bot_member.top_role > tag_role
+    )
+
+    # Second main-server tag role is completely independent from the first.
+    tag_role_2 = main_guild.get_role(TAG_ROLE_ID_2) if TAG_ROLE_ID_2 else None
+    second_role_ready = (
+        tag_role_2 is not None
+        and not tag_role_2.is_default()
+        and not tag_role_2.managed
+        and bot_member.top_role > tag_role_2
+    )
+
+    tagged_users: set[int] = set()
+    tagged_users_2: set[int] = set()
+
+    # -------------------------
+    # CHECK ALL FIRST-ROLE TAG SERVERS
+    # -------------------------
+    if first_role_ready:
+        first_role_check_failed = False
+        tagged_users: set[int] = set()
+
+        if len(tag_servers) != len(tag_server_role_ids):
+            first_role_check_failed = True
+
+        for server_id, tag_server_role_id in zip(tag_servers, tag_server_role_ids):
+            guild = bot.get_guild(server_id)
+            if guild is None:
+                first_role_check_failed = True
+                continue
+
+            tag_server_role = await get_source_role_for_check(guild, tag_server_role_id)
+            if tag_server_role is None:
+                first_role_check_failed = True
+                continue
+
+            source_members = await get_source_members_for_role_check(guild)
+            if source_members is None:
+                first_role_check_failed = True
+                continue
+
+            for source_member in source_members:
+                if tag_server_role.id in {role.id for role in source_member.roles}:
+                    tagged_users.add(source_member.id)
+
+        # Add immediately when at least one source server confirms the role.
+        for member in main_guild.members:
+            if member.bot or member.id not in tagged_users:
+                continue
+            if member.id == main_guild.owner_id:
+                continue
+            if tag_role not in member.roles:
+                try:
+                    await member.add_roles(
+                        tag_role,
+                        reason="User has a configured first tag role in a tag server",
+                    )
+                    await send_role_webhook(
+                        title="🏷️ Tag Role Added",
+                        description=f"{member.mention} was given the main tag role.",
+                        color=discord.Color.green(),
+                        fields=[
+                            ("User", f"{member} (`{member.id}`)", True),
+                            ("Role", f"{tag_role.mention}\n`{tag_role.id}`", True),
+                            ("Reason", "User has a configured tag role in a tag server.", False),
+                        ],
+                    )
+                except (discord.Forbidden, discord.HTTPException) as error:
+                    print(
+                        "First tag-role assignment failed for "
+                        f"{member} ({member.id}) -> role {tag_role.id} "
+                        f"(bot top role: {bot_member.top_role.id}/{bot_member.top_role.position}, "
+                        f"member top role: {member.top_role.id}/{member.top_role.position}, "
+                        f"target role: {tag_role.id}/{tag_role.position}): "
+                        f"{type(error).__name__}: {error}"
+                    )
+
+        # Only remove the main role when every configured source was checked.
+        if not first_role_check_failed:
+            for member in main_guild.members:
+                if member.bot or member.id in tagged_users:
+                    continue
+                if member.id == main_guild.owner_id:
+                    continue
+                if member.top_role >= bot_member.top_role:
+                    continue
+
+                if tag_role in member.roles:
+                    try:
+                        await member.remove_roles(
+                            tag_role,
+                            reason="User no longer has the configured first tag role",
+                        )
+                        await send_role_webhook(
+                            title="🏷️ Tag Role Removed",
+                            description=f"{member.mention} no longer has the configured first tag role in any tag server.",
+                            color=discord.Color.orange(),
+                            fields=[
+                                ("User", f"{member} (`{member.id}`)", True),
+                                ("Role", f"{tag_role.mention}\n`{tag_role.id}`", True),
+                                ("Reason", "User no longer has a configured tag role.", False),
+                            ],
+                        )
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
+
+    # -------------------------
+    # CHECK SECOND-ROLE SOURCE SERVERS
+    # -------------------------
+    if second_role_ready:
+        second_role_check_failed = False
+        tagged_users_2: set[int] = set()
+
+        for source_server_id, source_role_id in tag_server_role_ids_2.items():
+            if not source_role_id:
+                continue
+
+            source_guild = bot.get_guild(source_server_id)
+            if source_guild is None:
+                second_role_check_failed = True
+                continue
+
+            source_role = await get_source_role_for_check(source_guild, source_role_id)
+            if source_role is None:
+                second_role_check_failed = True
+                continue
+
+            source_members = await get_source_members_for_role_check(source_guild)
+            if source_members is None:
+                second_role_check_failed = True
+                continue
+
+            for source_member in source_members:
+                if source_role.id in {role.id for role in source_member.roles}:
+                    tagged_users_2.add(source_member.id)
+
+        # Add whenever the configured second source confirms the member.
+        for member in main_guild.members:
+            if member.bot:
+                continue
+
+            has_tag_2 = member.id in tagged_users_2
+            has_role_2 = tag_role_2 in member.roles
+            is_blacklisted = member.id in second_role_blacklist
+
+            if is_blacklisted:
+                if has_role_2 and member.id != main_guild.owner_id:
+                    try:
+                        await member.remove_roles(
+                            tag_role_2,
+                            reason="Member is on the second-role blacklist",
+                        )
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
+                continue
+
+            if has_tag_2 and not has_role_2:
+                if member.id == main_guild.owner_id:
+                    continue
+                try:
+                    await member.add_roles(
+                        tag_role_2,
+                        reason="User has the configured second tag role in a tag server",
+                    )
+                    await send_role_webhook(
+                        title="🏷️ Second Tag Role Added",
+                        description=f"{member.mention} was given the second main tag role.",
+                        color=discord.Color.green(),
+                        fields=[
+                            ("User", f"{member} (`{member.id}`)", True),
+                            ("Role", f"{tag_role_2.mention}\n`{tag_role_2.id}`", True),
+                            ("Reason", "User has the configured second tag role in a tag server.", False),
+                        ],
+                    )
+                except (discord.Forbidden, discord.HTTPException) as error:
+                    print(
+                        "Second tag-role assignment failed for "
+                        f"{member} ({member.id}) -> role {tag_role_2.id} "
+                        f"(bot top role: {bot_member.top_role.id}/{bot_member.top_role.position}, "
+                        f"member top role: {member.top_role.id}/{member.top_role.position}, "
+                        f"target role: {tag_role_2.id}/{tag_role_2.position}): "
+                        f"{type(error).__name__}: {error}"
+                    )
+
+        # Only remove when all configured second-role sources were checked.
+        if not second_role_check_failed:
+            for member in main_guild.members:
+                if member.bot or member.id in tagged_users_2:
+                    continue
+                if member.id == main_guild.owner_id:
+                    continue
+
+                if tag_role_2 in member.roles and member.id not in second_role_blacklist:
+                    try:
+                        await member.remove_roles(
+                            tag_role_2,
+                            reason="User no longer has the configured second tag role",
+                        )
+                        await send_role_webhook(
+                            title="🏷️ Second Tag Role Removed",
+                            description=f"{member.mention} no longer has the configured second tag role in any tag server.",
+                            color=discord.Color.orange(),
+                            fields=[
+                                ("User", f"{member} (`{member.id}`)", True),
+                                ("Role", f"{tag_role_2.mention}\n`{tag_role_2.id}`", True),
+                                ("Reason", "User no longer has a configured second tag role.", False),
+                            ],
+                        )
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
+# =========================
+# LOOP ERROR HANDLERS
+# =========================
+
+@kick_loop.error
+async def kick_loop_error(error):
+    # A single unexpected exception should not permanently stop the kick loop.
+    await asyncio.sleep(5)
+
+    if not bot.is_closed() and not kick_loop.is_running():
+        kick_loop.restart()
+
+
+@tag_role_loop.error
+async def tag_role_loop_error(error):
+    # A single unexpected exception should not permanently stop the role loop.
+    await asyncio.sleep(5)
+
+    if not bot.is_closed() and not tag_role_loop.is_running():
+        tag_role_loop.restart()
+
+
+# =========================
+# LOOP STARTUP
+# =========================
+
+@tag_role_loop.before_loop
+async def before_tag_role():
+    await bot.wait_until_ready()
+
+
+@kick_loop.before_loop
+async def before_kick():
+    await bot.wait_until_ready()
+
+
+if not BOT_TOKEN:
+    raise RuntimeError(
+        "BOT_TOKEN is not configured. "
+        "Set the BOT_TOKEN environment variable before starting the bot."
+    )
+
+
+# Stable pre-merge process lifecycle: discord.py owns one asyncio event loop.
+# Railway will restart the process if the worker exits.
+bot.run(BOT_TOKEN)
+
