@@ -243,9 +243,9 @@ async def send_safechat_message(
     embeds = embeds or []
 
     # Intentionally do not strip, rewrite, filter, or transform content.
-    # If this was a reply, append a real user mention for the replied-to author.
-    if reply_mention:
-        content = f"{content} {reply_mention}" if content else reply_mention
+    # If this was a reply, put the requested SafeChat reply header above it.
+    if reply_header:
+        content = f"{reply_header}\n{content}" if content else reply_header
 
     # Discord's webhook username is limited to 80 characters, so the original
     # display name is passed through unchanged up to Discord's own limit.
