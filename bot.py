@@ -886,7 +886,7 @@ async def on_message(message: discord.Message):
         # SAFECHAT relays the original text/name without transforming it.
         safechat_target_ids = safechat_feature.safechat_targets.get(message.channel.id, set())
         if message.author.id in safechat_target_ids and has_transformable_content:
-            if message.author.id in safechat_ban or message.author.id in textify_blacklist:
+            if message.author.id in safechat_ban:
                 await safechat_feature.disable_safechat_for_user(message.author.id)
                 return
             bot_member = message.guild.me if message.guild is not None else None
