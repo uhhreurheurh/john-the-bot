@@ -121,12 +121,10 @@ async def get_hood_webhook(channel: discord.TextChannel) -> discord.Webhook:
     if entry is not None:
         webhook = entry.get("webhook")
         if webhook is not None:
-            try:
-                await webhook.fetch()
-                _reset_hood_webhook_timer(channel_id, webhook)
-                return webhook
-            except (discord.NotFound, discord.HTTPException):
-                hood_webhooks.pop(channel_id, None)
+            # Reuse the cached webhook immediately. Fetching it on every
+        # message added an unnecessary Discord API round trip and noticeable latency.
+        _reset_hood_webhook_timer(channel_id, webhook)
+        return webhook
 
     webhook = await channel.create_webhook(
         name=HOOD_WEBHOOK_NAME,
