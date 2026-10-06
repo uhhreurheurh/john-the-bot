@@ -370,7 +370,8 @@ async def send_hood_message(
 
     ensure_hood_message_is_allowed(content)
     embeds = embeds or []
-    transformed_embeds = [hoodify_embed(embed) for embed in embeds]
+    image_embed_banned = has_image_embed_ban_role(target)
+    transformed_embeds = [] if image_embed_banned else [hoodify_embed(embed) for embed in embeds]
 
     webhook = await get_hood_webhook(channel)
     hood_text = hoodify_text(content)
@@ -400,6 +401,7 @@ async def send_hood_message(
                     replied_user=False,
                 ),
                 embeds=transformed_embeds if chunk_index == 0 else [],
+                suppress_embeds=image_embed_banned,
                 wait=True,
             )
         )
