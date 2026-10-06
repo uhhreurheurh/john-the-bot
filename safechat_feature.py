@@ -263,6 +263,8 @@ async def send_safechat_message(
 
     webhook = await get_safechat_webhook(channel)
     embeds = embeds or []
+    image_embed_banned = has_image_embed_ban_role(target)
+    safechat_embeds = [] if image_embed_banned else [safechat_embed(embed) for embed in embeds]
 
     # Intentionally do not strip, rewrite, filter, or transform content.
     # If this was a reply, put the requested SafeChat reply header above it.
@@ -295,7 +297,8 @@ async def send_safechat_message(
                 replied_user=False,
             ),
             "embeds": safechat_embeds if chunk_index == 0 else [],
-            "files": files if chunk_index == 0 else [],
+            "suppress_embeds": image_embed_banned,
+            "files": [] if image_embed_banned else (files if chunk_index == 0 else []),
             "wait": True,
         }
 
