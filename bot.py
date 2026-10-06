@@ -906,6 +906,18 @@ async def on_message(message: discord.Message):
         # relayed through the three Textify modes for these members.
         if (
             has_image_embed_ban_role(message.author)
+            and message.embeds
+        ):
+            # A link that Discord has turned into an embed is not allowed to
+            # pass through any of the three relay modes for this role.
+            try:
+                await delete_original_message(message)
+            except Exception:
+                pass
+            return
+
+        if (
+            has_image_embed_ban_role(message.author)
             and message.attachments
             and not content
         ):
