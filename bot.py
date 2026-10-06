@@ -2924,7 +2924,8 @@ async def purge_command(interaction: discord.Interaction, user_id: str):
         return
 
     member = interaction.guild.get_member(interaction.user.id)
-    if member is None or not ({role.id for role in member.roles} & STAFF_STRIKE_ALLOWED_ROLE_IDS):
+    # Purge is available to the staff roles, including the Staff Manager role.
+    if member is None or 1306082718060384399 not in {role.id for role in member.roles}:
         await interaction.response.send_message(
             "❌ You do not have permission to use this command.",
             ephemeral=True,
@@ -3644,6 +3645,7 @@ async def on_ready():
                 "unhoodify",
                 "hoodcount",
                 "slots",
+                "purge",
             }
 
             if required_commands.issubset(synced_names):
