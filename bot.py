@@ -2956,18 +2956,24 @@ async def purge_command(interaction: discord.Interaction, user_id: str):
         ephemeral=True,
     )
 
-    bulk_deleted, individually_deleted, total, failed = await purge_user_messages(
-        interaction.guild, target_id
-    )
-    total = bulk_deleted + individually_deleted
+    (
+        bulk_deleted,
+        individually_deleted,
+        total,
+        failed,
+        scan_errors,
+    ) = await purge_user_messages(interaction.guild, target_id)
+
+    status = "✅ Purge complete" if failed == 0 and scan_errors == 0 else "⚠️ Purge finished with issues"
 
     await interaction.edit_original_response(
         content=(
-            f"✅ Purge complete for {target_id}.\n"
+            f"{status} for {target_id}.\n"
             f"Deleted: {total}\n"
             f"Bulk (<14 days): {bulk_deleted}\n"
             f"Individual (14+ days): {individually_deleted}\n"
-            f"Failed/skipped: {failed}"
+            f"Failed deletions: {failed}\n"
+            f"Channel scan errors: {scan_errors}"
         )
     )
 
@@ -3752,17 +3758,24 @@ async def on_ready():
 async def purge_user_messages(
     guild: discord.Guild,
     user_id: int,
-) -> tuple[int, int, int, int]:
+) -> tuple[int, int, int, int, int]:
     """Delete every accessible message from one user in the guild.
 
     Recent messages are bulk-deleted in batches of up to 100 per channel.
-    Messages older than 14 days are deleted individually. The fourth return
-    value counts messages Discord refused to delete.
+    Messages older than 14 days are deleted individually.
+
+    Returns:
+        bulk_deleted: messages deleted with Discord's bulk endpoint.
+        individually_deleted: messages deleted one at a time.
+        total_deleted: total messages successfully deleted.
+        failed: messages found but not successfully deleted.
+        scan_errors: channels whose history could not be fully scanned.
     """
     cutoff = discord.utils.utcnow() - timedelta(days=14)
     recent_by_channel: dict[discord.TextChannel, list[discord.Message]] = {}
     old_messages: list[discord.Message] = []
     failed = 0
+    scan_errors = 0
 
     for channel in guild.text_channels:
         permissions = channel.permissions_for(guild.me)
@@ -3778,7 +3791,9 @@ async def purge_user_messages(
                 else:
                     old_messages.append(message)
         except (discord.Forbidden, discord.HTTPException):
-            continue
+            # This is a scan error, not a failed deletion. We do not know
+            # how many matching messages remain in the channel.
+            scan_errors += 1
 
     bulk_deleted = 0
     individually_deleted = 0
@@ -3797,11 +3812,17 @@ async def purge_user_messages(
                 await channel.delete_messages(batch)
                 bulk_deleted += len(batch)
             except discord.HTTPException:
+                # Fall back to individual deletion so a bulk failure does
+                # not make every message in the batch count as failed.
                 for message in batch:
                     try:
                         await message.delete()
                         individually_deleted += 1
-                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    except discord.NotFound:
+                        # It was already gone, so it was not a deletion
+                        # failure from the user's perspective.
+                        pass
+                    except (discord.Forbidden, discord.HTTPException):
                         failed += 1
 
     for message in old_messages:
@@ -3813,15 +3834,21 @@ async def purge_user_messages(
         try:
             await message.delete()
             individually_deleted += 1
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        except discord.NotFound:
+            # Already deleted; don't falsely report it as failed.
+            pass
+        except (discord.Forbidden, discord.HTTPException):
             failed += 1
 
+    total_deleted = bulk_deleted + individually_deleted
     return (
         bulk_deleted,
         individually_deleted,
-        bulk_deleted + individually_deleted,
+        total_deleted,
         failed,
+        scan_errors,
     )
+
 
 # =========================
 # KICK LOOP
