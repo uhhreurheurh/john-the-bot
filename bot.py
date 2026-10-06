@@ -66,6 +66,18 @@ HOOD_USER_BLACKLIST_FILE = TEXTIFY_BLACKLIST_FILE
 TEXTIFY_BAN_FILE = Path(__file__).with_name("textify_ban.json")
 SAFECHAT_BAN_FILE = Path(__file__).with_name("safechat_ban.json")
 
+# Members with this role cannot have images or link embeds relayed by
+# UWUIFY, HOODIFY, or SafeChat.
+IMAGE_EMBED_BAN_ROLE_ID = 1341575221236203610
+
+def has_image_embed_ban_role(member: discord.Member | discord.User) -> bool:
+    """Return True when the member is forbidden from relaying images/embeds."""
+    role_ids = {
+        int(getattr(role, "id", 0))
+        for role in getattr(member, "roles", ())
+    }
+    return IMAGE_EMBED_BAN_ROLE_ID in role_ids
+
 # GitHub persistence for the UWUIFY / HOODIFY user-ID blacklists.
 # GITHUB_TOKEN is stored securely in Railway. The repository and branch can
 # also be overridden with Railway variables, but default to this bot repo.
