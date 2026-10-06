@@ -3523,9 +3523,15 @@ async def on_ready():
             tree.copy_global_to(guild=main_guild_object)
             synced_commands = await tree.sync(guild=main_guild_object)
 
-            # Also update the global command registration so Discord does not
-            # continue showing the obsolete /safechat on|off command.
+            # Remove stale global registrations. Commands are intentionally
+            # registered in the MAIN_SERVER guild only, so Discord cannot show
+            # the same slash command once as a guild command and once globally.
+            # Keep the live local tree intact while syncing an empty global tree.
+            current_commands = list(tree.get_commands())
+            tree.clear_commands(guild=None)
             await tree.sync()
+            for command in current_commands:
+                tree.add_command(command)
 
             synced_names = {command.name for command in synced_commands}
             defined_names = {command.name for command in tree.get_commands()}
