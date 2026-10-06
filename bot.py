@@ -2910,12 +2910,12 @@ async def blacklist_status_command(
 
 
 @tree.command(
-    name="purgeuser",
+    name="purge",
     description="Delete all accessible messages from a user in this server.",
 )
 @app_commands.guilds(discord.Object(id=MAIN_SERVER))
 @app_commands.describe(user_id="The Discord user ID whose messages should be deleted")
-async def purgeuser_command(interaction: discord.Interaction, user_id: str):
+async def purge_command(interaction: discord.Interaction, user_id: str):
     if interaction.guild is None or interaction.guild.id != MAIN_SERVER:
         await interaction.response.send_message(
             "❌ This command can only be used in the main server.",
@@ -3740,9 +3740,14 @@ async def purge_user_messages(
     guild: discord.Guild,
     user_id: int,
 ) -> tuple[int, int, int]:
-    """Delete every accessible message from one user in the guild."""
+    """Delete every accessible message from one user in the guild.
+
+    Messages newer than 14 days are bulk-deleted in batches of up to 100,
+    grouped by channel. Older messages are deleted individually because
+    Discord does not allow them in the bulk-delete endpoint.
+    """
     cutoff = discord.utils.utcnow() - timedelta(days=14)
-    recent_messages: list[discord.Message] = []
+    recent_by_channel: dict[discord.TextChannel, list[discord.Message]] = {}
     old_messages: list[discord.Message] = []
 
     for channel in guild.text_channels:
@@ -3754,8 +3759,9 @@ async def purge_user_messages(
             async for message in channel.history(limit=None):
                 if message.author.id != user_id:
                     continue
+
                 if message.created_at >= cutoff:
-                    recent_messages.append(message)
+                    recent_by_channel.setdefault(channel, []).append(message)
                 else:
                     old_messages.append(message)
         except (discord.Forbidden, discord.HTTPException):
@@ -3764,22 +3770,27 @@ async def purge_user_messages(
     bulk_deleted = 0
     individually_deleted = 0
 
-    for start in range(0, len(recent_messages), 100):
-        batch = recent_messages[start:start + 100]
-        if not batch:
-            continue
-        channel = batch[0].channel
-        try:
-            await channel.delete_messages(batch)
-            bulk_deleted += len(batch)
-        except discord.HTTPException:
-            for message in batch:
-                try:
-                    await message.delete()
-                    individually_deleted += 1
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    pass
+    # Bulk deletion must only contain messages from one channel at a time.
+    for channel, messages in recent_by_channel.items():
+        for start in range(0, len(messages), 100):
+            batch = messages[start:start + 100]
+            if not batch:
+                continue
 
+            try:
+                await channel.delete_messages(batch)
+                bulk_deleted += len(batch)
+            except discord.HTTPException:
+                # Fall back to individual deletion if Discord rejects the
+                # bulk request (permissions, race, invalid message, etc.).
+                for message in batch:
+                    try:
+                        await message.delete()
+                        individually_deleted += 1
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                        pass
+
+    # Discord requires messages older than 14 days to be deleted individually.
     for message in old_messages:
         try:
             await message.delete()
@@ -3787,7 +3798,11 @@ async def purge_user_messages(
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             pass
 
-    return bulk_deleted, individually_deleted, len(recent_messages) + len(old_messages)
+    return (
+        bulk_deleted,
+        individually_deleted,
+        bulk_deleted + individually_deleted,
+    )
 
 # =========================
 # KICK LOOP
