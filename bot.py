@@ -2948,18 +2948,27 @@ async def purge_command(interaction: discord.Interaction, user_id: str):
         )
         return
 
-    await interaction.response.defer(ephemeral=True)
+    # Respond immediately so Discord does not leave the interaction on
+    # "John the Bot is thinking..." while the server-wide scan runs.
+    await interaction.response.send_message(
+        f"⏳ Purging messages from {target_id}...\n"
+        "This may take a while while I scan the server.",
+        ephemeral=True,
+    )
+
     bulk_deleted, individually_deleted, total, failed = await purge_user_messages(
         interaction.guild, target_id
     )
     total = bulk_deleted + individually_deleted
-    await interaction.followup.send(
-        f"✅ Purge complete for {target_id}.\n"
-        f"Deleted: {total}\n"
-        f"Bulk (<14 days): {bulk_deleted}\n"
-        f"Individual (14+ days): {individually_deleted}\n"
-        f"Failed/skipped: {failed}",
-        ephemeral=True,
+
+    await interaction.edit_original_response(
+        content=(
+            f"✅ Purge complete for {target_id}.\n"
+            f"Deleted: {total}\n"
+            f"Bulk (<14 days): {bulk_deleted}\n"
+            f"Individual (14+ days): {individually_deleted}\n"
+            f"Failed/skipped: {failed}"
+        )
     )
 
 # Register grouped slash-command roots.
