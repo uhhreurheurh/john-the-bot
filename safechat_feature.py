@@ -99,12 +99,10 @@ async def get_safechat_webhook(channel: discord.TextChannel) -> discord.Webhook:
     if entry is not None:
         webhook = entry.get("webhook")
         if webhook is not None:
-            try:
-                await webhook.fetch()
-                _reset_safechat_webhook_timer(channel_id, webhook)
-                return webhook
-            except (discord.NotFound, discord.HTTPException):
-                safechat_webhooks.pop(channel_id, None)
+            # Reuse the cached webhook immediately. Fetching it on every
+            # message added an unnecessary Discord API round trip.
+            _reset_safechat_webhook_timer(channel_id, webhook)
+            return webhook
 
     webhook = await channel.create_webhook(
         name=SAFECHAT_WEBHOOK_NAME,
