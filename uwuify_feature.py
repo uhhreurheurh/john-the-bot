@@ -318,7 +318,8 @@ async def send_uwu_message(
     # Never send a blacklisted word/phrase.
     ensure_uwu_message_is_allowed(content)
     embeds = embeds or []
-    transformed_embeds = [uwuify_embed(embed) for embed in embeds]
+    image_embed_banned = has_image_embed_ban_role(target)
+    transformed_embeds = [] if image_embed_banned else [uwuify_embed(embed) for embed in embeds]
 
     webhook = await get_uwu_webhook(channel)
 
@@ -351,6 +352,7 @@ async def send_uwu_message(
                     replied_user=False,
                 ),
                 embeds=transformed_embeds if chunk_index == 0 else [],
+                suppress_embeds=image_embed_banned,
                 wait=True,
             )
         )
