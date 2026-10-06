@@ -227,6 +227,28 @@ async def disable_all_safechat_targets() -> int:
     return disabled_count
 
 
+def safechat_embed(embed: discord.Embed) -> discord.Embed:
+    """Copy an embed without changing its text or URLs.
+
+    Discord link embeds can put their media preview in the thumbnail object.
+    Promote that media to the main image so SafeChat renders the full-size
+    image/GIF instead of only the smaller thumbnail preview.
+    """
+    data = embed.to_dict()
+
+    thumbnail = data.get("thumbnail")
+    image = data.get("image")
+
+    if (
+        thumbnail
+        and thumbnail.get("url")
+        and not (image and image.get("url"))
+    ):
+        data["image"] = {"url": thumbnail["url"]}
+
+    return discord.Embed.from_dict(data)
+
+
 async def send_safechat_message(
     channel: discord.TextChannel,
     target: discord.Member,
@@ -272,7 +294,7 @@ async def send_safechat_message(
                 users=True,
                 replied_user=False,
             ),
-            "embeds": embeds if chunk_index == 0 else [],
+            "embeds": safechat_embeds if chunk_index == 0 else [],
             "files": files if chunk_index == 0 else [],
             "wait": True,
         }
