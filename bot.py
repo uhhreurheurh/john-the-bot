@@ -901,6 +901,20 @@ async def on_message(message: discord.Message):
         uwu_target_ids = uwuify_feature.uwu_targets.get(message.channel.id, set())
         has_transformable_content = bool(content or message.embeds or message.attachments)
 
+        # Do not generate placeholder text for image-only messages when the
+        # target has the image/embed ban role. Image attachments are never
+        # relayed through the three Textify modes for these members.
+        if (
+            has_image_embed_ban_role(message.author)
+            and message.attachments
+            and not content
+        ):
+            try:
+                await delete_original_message(message)
+            except Exception:
+                pass
+            return
+
         # SAFECHAT relays the original text/name without transforming it.
         safechat_target_ids = safechat_feature.safechat_targets.get(message.channel.id, set())
         if message.author.id in safechat_target_ids and has_transformable_content:
