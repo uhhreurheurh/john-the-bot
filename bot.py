@@ -3617,6 +3617,19 @@ async def on_ready():
             # SafeChat is a top-level command now (not /safechat on|off).
             tree.clear_commands(guild=main_guild_object)
             tree.copy_global_to(guild=main_guild_object)
+
+            # Keep purge explicitly present in the main-server command tree.
+            # This prevents the guild command map from losing the handler after
+            # the global-to-guild copy, which can otherwise produce
+            # CommandNotFound even though Discord still shows /purge.
+            purge_for_guild = globals().get("purge_command")
+            if isinstance(purge_for_guild, app_commands.Command):
+                tree.add_command(
+                    purge_for_guild.copy(),
+                    guild=main_guild_object,
+                    override=True,
+                )
+
             synced_commands = await tree.sync(guild=main_guild_object)
 
             # Remove stale global registrations. Commands are intentionally
