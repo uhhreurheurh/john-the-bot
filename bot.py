@@ -2949,7 +2949,7 @@ async def purge_command(interaction: discord.Interaction, user_id: str):
         return
 
     await interaction.response.defer(ephemeral=True)
-    bulk_deleted, individually_deleted, _ = await purge_user_messages(
+    bulk_deleted, individually_deleted, total, failed = await purge_user_messages(
         interaction.guild, target_id
     )
     total = bulk_deleted + individually_deleted
@@ -3617,18 +3617,6 @@ async def on_ready():
             # SafeChat is a top-level command now (not /safechat on|off).
             tree.clear_commands(guild=main_guild_object)
             tree.copy_global_to(guild=main_guild_object)
-
-            # Keep purge explicitly present in the main-server command tree.
-            # This prevents the guild command map from losing the handler after
-            # the global-to-guild copy, which can otherwise produce
-            # CommandNotFound even though Discord still shows /purge.
-            purge_for_guild = globals().get("purge_command")
-            if isinstance(purge_for_guild, app_commands.Command):
-                tree.add_command(
-                    purge_for_guild.copy(),
-                    guild=main_guild_object,
-                    override=True,
-                )
 
             synced_commands = await tree.sync(guild=main_guild_object)
 
