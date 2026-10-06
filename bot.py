@@ -879,48 +879,6 @@ async def on_message(message: discord.Message):
 
 
 
-    if prefix_command == ",purgeuser":
-        if message.guild is None or message.guild.id != MAIN_SERVER:
-            return
-
-        member = message.guild.get_member(message.author.id)
-        if member is None or not ({role.id for role in member.roles} & STAFF_STRIKE_ALLOWED_ROLE_IDS):
-            await message.channel.send("❌ You do not have permission to use this command.")
-            return
-
-        purge_parts = content.split(maxsplit=1)
-        if len(purge_parts) != 2:
-            await message.channel.send("❌ Usage: ,purgeuser <user ID>")
-            return
-
-        try:
-            target_id = int(purge_parts[1].strip())
-        except ValueError:
-            await message.channel.send("❌ Please provide a valid Discord user ID.")
-            return
-
-        if target_id <= 0:
-            await message.channel.send("❌ Please provide a valid Discord user ID.")
-            return
-
-        status_message = await message.channel.send(
-            f"⏳ Purging messages from {target_id}..."
-        )
-        bulk_deleted, individually_deleted, _, failed = await purge_user_messages(
-            message.guild, target_id
-        )
-        total = bulk_deleted + individually_deleted
-        await status_message.edit(
-            content=(
-                f"✅ Purge complete for {target_id}.\n"
-                f"Deleted: {total}\n"
-                f"Bulk (<14 days): {bulk_deleted}\n"
-                f"Individual (14+ days): {individually_deleted}\n"
-                f"Failed/skipped: {failed}"
-            )
-        )
-        return
-
     # Active text-transform targets MUST be handled before the large prefix
     # command parser below. This keeps ordinary target messages from getting
     # swallowed by unrelated command handlers.
@@ -2910,73 +2868,6 @@ async def blacklist_status_command(
 
 
 
-@tree.command(
-    name="purge",
-    description="Delete all accessible messages from a user in this server.",
-)
-@app_commands.describe(user_id="The Discord user ID whose messages should be deleted")
-async def purge_command(interaction: discord.Interaction, user_id: str):
-    if interaction.guild is None or interaction.guild.id != MAIN_SERVER:
-        await interaction.response.send_message(
-            "❌ This command can only be used in the main server.",
-            ephemeral=True,
-        )
-        return
-
-    member = interaction.guild.get_member(interaction.user.id)
-    # Purge is available to the staff roles, including the Staff Manager role.
-    if member is None or 1306082718060384399 not in {role.id for role in member.roles}:
-        await interaction.response.send_message(
-            "❌ You do not have permission to use this command.",
-            ephemeral=True,
-        )
-        return
-
-    try:
-        target_id = int(user_id.strip())
-    except (ValueError, AttributeError):
-        await interaction.response.send_message(
-            "❌ Please provide a valid Discord user ID.",
-            ephemeral=True,
-        )
-        return
-
-    if target_id <= 0:
-        await interaction.response.send_message(
-            "❌ Please provide a valid Discord user ID.",
-            ephemeral=True,
-        )
-        return
-
-    # Respond immediately so Discord does not leave the interaction on
-    # "John the Bot is thinking..." while the server-wide scan runs.
-    await interaction.response.send_message(
-        f"⏳ Purging messages from {target_id}...\n"
-        "This may take a while while I scan the server.",
-        ephemeral=True,
-    )
-
-    (
-        bulk_deleted,
-        individually_deleted,
-        total,
-        failed,
-        scan_errors,
-    ) = await purge_user_messages(interaction.guild, target_id)
-
-    status = "✅ Purge complete" if failed == 0 and scan_errors == 0 else "⚠️ Purge finished with issues"
-
-    await interaction.edit_original_response(
-        content=(
-            f"{status} for {target_id}.\n"
-            f"Deleted: {total}\n"
-            f"Bulk (<14 days): {bulk_deleted}\n"
-            f"Individual (14+ days): {individually_deleted}\n"
-            f"Failed deletions: {failed}\n"
-            f"Channel scan errors: {scan_errors}"
-        )
-    )
-
 # Register grouped slash-command roots.
 uwuify_group.add_command(uwuify_hoodify_group)
 tree.add_command(textify_group)
@@ -3662,7 +3553,6 @@ async def on_ready():
                 "unhoodify",
                 "hoodcount",
                 "slots",
-                "purge",
             }
 
             if required_commands.issubset(synced_names):
@@ -3751,106 +3641,6 @@ async def on_ready():
 
 
 
-# =========================
-# PURGE USER MESSAGE HELPER
-# =========================
-
-async def purge_user_messages(
-    guild: discord.Guild,
-    user_id: int,
-) -> tuple[int, int, int, int, int]:
-    """Delete every accessible message from one user in the guild.
-
-    Recent messages are bulk-deleted in batches of up to 100 per channel.
-    Messages older than 14 days are deleted individually.
-
-    Returns:
-        bulk_deleted: messages deleted with Discord's bulk endpoint.
-        individually_deleted: messages deleted one at a time.
-        total_deleted: total messages successfully deleted.
-        failed: messages found but not successfully deleted.
-        scan_errors: channels whose history could not be fully scanned.
-    """
-    cutoff = discord.utils.utcnow() - timedelta(days=14)
-    recent_by_channel: dict[discord.TextChannel, list[discord.Message]] = {}
-    old_messages: list[discord.Message] = []
-    failed = 0
-    scan_errors = 0
-
-    for channel in guild.text_channels:
-        permissions = channel.permissions_for(guild.me)
-        if not permissions.view_channel or not permissions.read_message_history:
-            continue
-
-        try:
-            async for message in channel.history(limit=None):
-                if message.author.id != user_id:
-                    continue
-                if message.created_at >= cutoff:
-                    recent_by_channel.setdefault(channel, []).append(message)
-                else:
-                    old_messages.append(message)
-        except (discord.Forbidden, discord.HTTPException):
-            # This is a scan error, not a failed deletion. We do not know
-            # how many matching messages remain in the channel.
-            scan_errors += 1
-
-    bulk_deleted = 0
-    individually_deleted = 0
-
-    for channel, messages in recent_by_channel.items():
-        permissions = channel.permissions_for(guild.me)
-        if not permissions.manage_messages:
-            failed += len(messages)
-            continue
-
-        for start in range(0, len(messages), 100):
-            batch = messages[start:start + 100]
-            if not batch:
-                continue
-            try:
-                await channel.delete_messages(batch)
-                bulk_deleted += len(batch)
-            except discord.HTTPException:
-                # Fall back to individual deletion so a bulk failure does
-                # not make every message in the batch count as failed.
-                for message in batch:
-                    try:
-                        await message.delete()
-                        individually_deleted += 1
-                    except discord.NotFound:
-                        # It was already gone, so it was not a deletion
-                        # failure from the user's perspective.
-                        pass
-                    except (discord.Forbidden, discord.HTTPException):
-                        failed += 1
-
-    for message in old_messages:
-        channel = message.channel
-        permissions = channel.permissions_for(guild.me)
-        if not permissions.manage_messages:
-            failed += 1
-            continue
-        try:
-            await message.delete()
-            individually_deleted += 1
-        except discord.NotFound:
-            # Already deleted; don't falsely report it as failed.
-            pass
-        except (discord.Forbidden, discord.HTTPException):
-            failed += 1
-
-    total_deleted = bulk_deleted + individually_deleted
-    return (
-        bulk_deleted,
-        individually_deleted,
-        total_deleted,
-        failed,
-        scan_errors,
-    )
-
-
-# =========================
 # KICK LOOP
 # =========================
 
