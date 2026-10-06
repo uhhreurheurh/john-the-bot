@@ -878,6 +878,48 @@ async def on_message(message: discord.Message):
     prefix_command = prefix_command_parts[0] if prefix_command_parts else ""
 
 
+
+    if prefix_command == ",purgeuser":
+        if message.guild is None or message.guild.id != MAIN_SERVER:
+            return
+
+        member = message.guild.get_member(message.author.id)
+        if member is None or not ({role.id for role in member.roles} & STAFF_STRIKE_ALLOWED_ROLE_IDS):
+            await message.channel.send("❌ You do not have permission to use this command.")
+            return
+
+        purge_parts = content.split(maxsplit=1)
+        if len(purge_parts) != 2:
+            await message.channel.send("❌ Usage: ,purgeuser <user ID>")
+            return
+
+        try:
+            target_id = int(purge_parts[1].strip())
+        except ValueError:
+            await message.channel.send("❌ Please provide a valid Discord user ID.")
+            return
+
+        if target_id <= 0:
+            await message.channel.send("❌ Please provide a valid Discord user ID.")
+            return
+
+        status_message = await message.channel.send(
+            f"⏳ Purging messages from {target_id}..."
+        )
+        bulk_deleted, individually_deleted, _ = await purge_user_messages(
+            message.guild, target_id
+        )
+        total = bulk_deleted + individually_deleted
+        await status_message.edit(
+            content=(
+                f"✅ Purge complete for {target_id}.\n"
+                f"Deleted: {total}\n"
+                f"Bulk (<14 days): {bulk_deleted}\n"
+                f"Individual (14+ days): {individually_deleted}"
+            )
+        )
+        return
+
     # Active text-transform targets MUST be handled before the large prefix
     # command parser below. This keeps ordinary target messages from getting
     # swallowed by unrelated command handlers.
@@ -2866,6 +2908,58 @@ async def blacklist_status_command(
     )
 
 
+
+@tree.command(
+    name="purgeuser",
+    description="Delete all accessible messages from a user in this server.",
+)
+@app_commands.guilds(discord.Object(id=MAIN_SERVER))
+@app_commands.describe(user_id="The Discord user ID whose messages should be deleted")
+async def purgeuser_command(interaction: discord.Interaction, user_id: str):
+    if interaction.guild is None or interaction.guild.id != MAIN_SERVER:
+        await interaction.response.send_message(
+            "❌ This command can only be used in the main server.",
+            ephemeral=True,
+        )
+        return
+
+    member = interaction.guild.get_member(interaction.user.id)
+    if member is None or not ({role.id for role in member.roles} & STAFF_STRIKE_ALLOWED_ROLE_IDS):
+        await interaction.response.send_message(
+            "❌ You do not have permission to use this command.",
+            ephemeral=True,
+        )
+        return
+
+    try:
+        target_id = int(user_id.strip())
+    except (ValueError, AttributeError):
+        await interaction.response.send_message(
+            "❌ Please provide a valid Discord user ID.",
+            ephemeral=True,
+        )
+        return
+
+    if target_id <= 0:
+        await interaction.response.send_message(
+            "❌ Please provide a valid Discord user ID.",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    bulk_deleted, individually_deleted, _ = await purge_user_messages(
+        interaction.guild, target_id
+    )
+    total = bulk_deleted + individually_deleted
+    await interaction.followup.send(
+        f"✅ Purge complete for {target_id}.\n"
+        f"Deleted: {total}\n"
+        f"Bulk (<14 days): {bulk_deleted}\n"
+        f"Individual (14+ days): {individually_deleted}",
+        ephemeral=True,
+    )
+
 # Register grouped slash-command roots.
 uwuify_group.add_command(uwuify_hoodify_group)
 tree.add_command(textify_group)
@@ -3636,6 +3730,64 @@ async def on_ready():
     if not hood_webhook_cleanup_loop.is_running():
         hood_webhook_cleanup_loop.start()
 
+
+
+# =========================
+# PURGE USER MESSAGE HELPER
+# =========================
+
+async def purge_user_messages(
+    guild: discord.Guild,
+    user_id: int,
+) -> tuple[int, int, int]:
+    """Delete every accessible message from one user in the guild."""
+    cutoff = discord.utils.utcnow() - timedelta(days=14)
+    recent_messages: list[discord.Message] = []
+    old_messages: list[discord.Message] = []
+
+    for channel in guild.text_channels:
+        permissions = channel.permissions_for(guild.me)
+        if not permissions.view_channel or not permissions.read_message_history:
+            continue
+
+        try:
+            async for message in channel.history(limit=None):
+                if message.author.id != user_id:
+                    continue
+                if message.created_at >= cutoff:
+                    recent_messages.append(message)
+                else:
+                    old_messages.append(message)
+        except (discord.Forbidden, discord.HTTPException):
+            continue
+
+    bulk_deleted = 0
+    individually_deleted = 0
+
+    for start in range(0, len(recent_messages), 100):
+        batch = recent_messages[start:start + 100]
+        if not batch:
+            continue
+        channel = batch[0].channel
+        try:
+            await channel.delete_messages(batch)
+            bulk_deleted += len(batch)
+        except discord.HTTPException:
+            for message in batch:
+                try:
+                    await message.delete()
+                    individually_deleted += 1
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    pass
+
+    for message in old_messages:
+        try:
+            await message.delete()
+            individually_deleted += 1
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
+
+    return bulk_deleted, individually_deleted, len(recent_messages) + len(old_messages)
 
 # =========================
 # KICK LOOP
