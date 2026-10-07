@@ -1212,13 +1212,7 @@ async def on_message(message: discord.Message):
         )
 
         await message.reply(
-            embed=build_staff_strike_embed(
-                target,
-                strike,
-                active_count,
-                consequence=consequence,
-                sync_failed=not synced,
-            ),
+            "✅ Strike issued successfully.",
             mention_author=False,
         )
         return
