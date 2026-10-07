@@ -430,9 +430,8 @@ class BlackjackGame:
             add_balance(self.user.id, self.bet * 2)
         elif result == "push":
             add_balance(self.user.id, self.bet)
-        elif result == "timeout":
-            # Timing out is not a loss. Refund the original bet so an
-            # inactive/expired game cannot silently take the user's money.
+        elif result in {"timeout", "cancel"}:
+            # Ending/expiring a game is not a loss. Refund the original bet.
             add_balance(self.user.id, self.bet)
 
         await save_data()
@@ -475,6 +474,7 @@ def build_embed(game: BlackjackGame, *, result: Optional[str] = None) -> discord
             "push": "Push!",
             "bust": "Bust!",
             "timeout": "Game Expired",
+            "cancel": "Game Ended",
         }.get(result, "Game Over")
         color = {
             "blackjack": discord.Color.gold(),
@@ -483,6 +483,7 @@ def build_embed(game: BlackjackGame, *, result: Optional[str] = None) -> discord
             "push": discord.Color.orange(),
             "bust": discord.Color.red(),
             "timeout": discord.Color.orange(),
+            "cancel": discord.Color.orange(),
         }.get(result, discord.Color.blurple())
 
     dealer_text = format_dealer_hand(game.dealer, hide_first=result is None)
@@ -517,6 +518,7 @@ def build_embed(game: BlackjackGame, *, result: Optional[str] = None) -> discord
             "push": f"Your {game.bet:,} {CURRENCY_NAME} bet was returned.",
             "bust": f"-{game.bet:,} {CURRENCY_NAME}",
             "timeout": f"Game expired — your {game.bet:,} {CURRENCY_NAME} bet was refunded.",
+            "cancel": f"Game ended — your {game.bet:,} {CURRENCY_NAME} bet was refunded.",
         }.get(result, "")
         embed.add_field(name="Result", value=result_text, inline=False)
         embed.add_field(name="New Balance", value=f"**{balance:,} {CURRENCY_NAME}**", inline=True)
@@ -550,7 +552,7 @@ class BlackjackView(discord.ui.View):
         try:
             if self.game.message is not None:
                 await self.game.message.edit(
-                    embed=build_embed(self.game, result="lose"),
+                    embed=build_embed(self.game, result="timeout"),
                     view=None,
                 )
         except (discord.NotFound, discord.HTTPException):
