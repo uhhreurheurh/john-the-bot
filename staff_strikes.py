@@ -896,13 +896,7 @@ async def strike_command(
     )
 
     await interaction.followup.send(
-        embed=build_staff_strike_embed(
-            member,
-            strike,
-            active_count,
-            consequence=consequence,
-            sync_failed=not synced,
-        ),
+        "✅ Strike issued successfully.",
         ephemeral=False,
     )
 
