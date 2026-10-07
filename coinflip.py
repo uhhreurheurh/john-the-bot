@@ -13,7 +13,7 @@ fair coin determines the winner. The winner receives the full pot.
 from __future__ import annotations
 
 import asyncio
-import random
+import secrets
 from typing import Optional
 
 import discord
@@ -160,7 +160,7 @@ class CoinFlipBattleView(discord.ui.View):
                 opponent_balance - battle.bet,
             )
 
-            coin = random.choice(("Heads", "Tails"))
+            coin = secrets.choice(("Heads", "Tails"))
             winner = battle.challenger if coin == "Heads" else battle.opponent
 
             blackjack_feature.add_balance(winner.id, battle.bet * 2)
