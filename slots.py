@@ -131,17 +131,17 @@ class SlotsView(discord.ui.View):
 
     async def animate_spin(self, message: discord.Message, final_reels: tuple[str, str, str]) -> None:
         """Show a short reel animation before revealing the final result."""
-        for _ in range(7):
-            await asyncio.sleep(0.18)
-            rolling = spin_reels()
-            try:
-                await message.edit(embed=self.build_spinning_embed(rolling), view=self)
-            except (discord.NotFound, discord.HTTPException):
-                return
-
-        await asyncio.sleep(0.12)
-        self.reels = final_reels
         try:
+            for _ in range(7):
+                await asyncio.sleep(0.18)
+                rolling = spin_reels()
+                await message.edit(
+                    embed=self.build_spinning_embed(rolling),
+                    view=self,
+                )
+
+            await asyncio.sleep(0.12)
+            self.reels = final_reels
             await message.edit(embed=self.build_embed(), view=self)
         except (discord.NotFound, discord.HTTPException):
             return
@@ -199,7 +199,9 @@ class SlotsView(discord.ui.View):
                 view=self,
             )
 
-            await self.animate_spin(interaction.message, final_reels)
+            message = self.message or interaction.message
+            if message is not None:
+                await self.animate_spin(message, final_reels)
 
             for child in self.children:
                 if isinstance(child, discord.ui.Button):
