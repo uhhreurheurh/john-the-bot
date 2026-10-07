@@ -1211,17 +1211,16 @@ async def on_message(message: discord.Message):
             format_staff_strike(target, strike),
         )
 
-        response = (
-            format_staff_strike(target, strike)
-            + f"\n\nActive strikes: **{active_count}**"
+        await message.reply(
+            embed=build_staff_strike_embed(
+                target,
+                strike,
+                active_count,
+                consequence=consequence,
+                sync_failed=not synced,
+            ),
+            mention_author=False,
         )
-        if consequence is not None:
-            old_role, new_role = consequence
-            response += f"\nRole action: **{old_role} → {new_role}**"
-        if not synced:
-            response += "\n⚠️ GitHub sync failed; the strike was saved locally."
-
-        await message.reply(response, mention_author=False)
         return
 
     if spaced_parts and spaced_parts[0].lower() == ",removestrike":
