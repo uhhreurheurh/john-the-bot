@@ -757,11 +757,61 @@ def format_staff_strike(target: discord.Member, strike: dict) -> str:
     return (
         f"{target.mention} / {target.id}\n\n"
         f"strike #{int(strike['strike_number'])}: {strike['reason']}\n\n"
-        f"{int(round((
+        f"{int(round(( 
             _staff_strike_datetime(strike['expires_at'])
             - _staff_strike_datetime(strike['issued_at'])
         ).total_seconds() / 86400))}d"
     )
+
+
+def build_staff_strike_embed(
+    target: discord.Member,
+    strike: dict,
+    active_count: int,
+    *,
+    consequence: tuple[str, str] | None = None,
+    sync_failed: bool = False,
+) -> discord.Embed:
+    """Build the shared strike result embed used by slash and prefix commands."""
+    issued_at = _staff_strike_datetime(strike["issued_at"])
+    expires_at = _staff_strike_datetime(strike["expires_at"])
+    duration_days = (
+        int(round((expires_at - issued_at).total_seconds() / 86400))
+        if issued_at is not None and expires_at is not None
+        else 0
+    )
+
+    embed = discord.Embed(
+        title="⚔️ Strike Information",
+        color=discord.Color.blurple(),
+    )
+    embed.add_field(
+        name="User",
+        value=f"{target.mention} | `{target.id}`",
+        inline=False,
+    )
+    embed.add_field(
+        name=f"Strike #{int(strike['strike_number'])}",
+        value=(
+            f"**Reason:** {discord.utils.escape_markdown(str(strike['reason']))}\n"
+            f"**Duration:** {duration_days}d\n"
+            f"**Active Strikes:** {active_count}"
+        ),
+        inline=False,
+    )
+
+    if consequence is not None:
+        old_role, new_role = consequence
+        embed.add_field(
+            name="Role Action",
+            value=f"**{discord.utils.escape_markdown(old_role)} → {discord.utils.escape_markdown(new_role)}**",
+            inline=False,
+        )
+
+    if sync_failed:
+        embed.set_footer(text="⚠️ GitHub sync failed; the strike was saved locally.")
+
+    return embed
 
 
 def parse_staff_strike_duration(
@@ -845,15 +895,14 @@ async def strike_command(
         format_staff_strike(member, strike),
     )
 
-    extra = ""
-    if not synced:
-        extra = "\n⚠️ GitHub sync failed; the strike was saved locally."
-    elif consequence is not None:
-        old_role, new_role = consequence
-        extra = f"\nRole action: **{old_role} → {new_role}**"
-
     await interaction.followup.send(
-        "✅ Strike issued successfully.",
+        embed=build_staff_strike_embed(
+            member,
+            strike,
+            active_count,
+            consequence=consequence,
+            sync_failed=not synced,
+        ),
         ephemeral=False,
     )
 
