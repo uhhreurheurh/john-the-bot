@@ -1618,6 +1618,7 @@ async def on_message(message: discord.Message):
                     ("Blackjack", "`,blackjack <bet>` — Play Blackjack with Kevin Bucks\n`,balance` — Check your Kevin Bucks balance\n`,daily` — Claim your daily Kevin Bucks"),
                     ("Mines", "`,mines <bet> [mines]` — Play Mines with Kevin Bucks\nUse 1–12 mines; the default is 3."),
                     ("Slots", "`,slots <bet>` — Play Slots with Kevin Bucks\nOnly the person who started the game can use its buttons."),
+                     ("Coin Flip Battle", "`,coinflipbattle @user <bet>` — Challenge another player\nThe challenged player must accept; the coin decides the winner."),
                     ("Reviews", "`,review @user` — Leave a review\n`,updatereview @user` — Request a review update\n`,reviews @user` — View reviews\n`,deletereview ID` — Delete a review\n`,leaderboard` — View the review leaderboard\n`,reviewblacklist add/remove/status @user` — Manage the review blacklist"),
                     ("Staff & Management", "`,strike @user <7-40d> <reason>` — Issue a staff strike\n`,removestrike @user <number>` — Remove a staff strike\n`,safechatban @user` — Staff: ban a user from SafeChat\n`,safechatunban @user` — Staff: unban a user from SafeChat\n\n`,textify blacklist/unblacklist/status @user` — Manage the Textify blacklist\n`,textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n`,blacklist add/remove/status @user` — Manage the second-role blacklist\n`,savedb` — Save the review database"),
                 ]
@@ -2001,6 +2002,10 @@ async def on_message(message: discord.Message):
 
     # Slots prefix command.
     if await slots_feature.handle_prefix(message):
+        return
+
+    # Coin Flip Battle prefix command.
+    if await coinflip_feature.handle_prefix(message):
         return
 
     # Review, leaderboard, and remaining staff prefix commands.
@@ -2480,6 +2485,7 @@ class SlashJelpView(discord.ui.View):
             ("General", "`/jelp` — Show this help menu\n`/ping` — Check bot latency"),
             ("Blackjack", "`/blackjack <bet>` — Play Blackjack with Kevin Bucks\n`/balance` — Check your Kevin Bucks balance\n`/daily` — Claim your daily Kevin Bucks"),
             ("Slots", "`/slots <bet>` — Play Slots with Kevin Bucks\nOnly the person who started the game can use its buttons."),
+            ("Coin Flip Battle", "`/coinflipbattle @user <bet>` — Challenge another player\nThe challenged player must accept; the coin decides the winner."),
             ("SafeChat", "`/safechat` — Toggle SafeChat for yourself\nSafeChat relays your messages through a temporary webhook and replaces the original message."),
             ("UWUIFY & HOODIFY", "`/uwuify @user` — Enable UWUIFY\n`/unuwuify @user` — Disable UWUIFY\n`/uwucount` — Show active UWUIFY count\n\n`/hoodify @user` — Enable HOODIFY\n`/unhoodify @user` — Disable HOODIFY\n`/hoodcount` — Show active HOODIFY count"),
             ("Reviews", "`/review @user` — Leave a review\n`/updatereview @user` — Request a review update\n`/reviews @user` — View reviews\n`/deletereview ID` — Delete a review\n`/leaderboard` — View the review leaderboard"),
@@ -3331,6 +3337,7 @@ import staff_strikes as staff_strikes_feature
 import blackjack as blackjack_feature
 import mines as mines_feature
 import slots as slots_feature
+import coinflip as coinflip_feature
 from hoodify_feature import *
 from safechat_feature import *
 from uwuify_feature import *
@@ -3346,6 +3353,7 @@ from staff_strikes import *
 from blackjack import *
 from mines import *
 from slots import *
+from coinflip import *
 
 # =========================
 # SAFECHAT SLASH COMMANDS
