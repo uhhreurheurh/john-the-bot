@@ -591,6 +591,19 @@ class BlackjackView(discord.ui.View):
         )
         self.stop()
 
+    @discord.ui.button(label="End", style=discord.ButtonStyle.danger, emoji="🛑")
+    async def end_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await self.game.finish("cancel")
+        await interaction.response.edit_message(
+            embed=build_embed(self.game, result="cancel"),
+            view=None,
+        )
+        self.stop()
+
     @discord.ui.button(label="Double", style=discord.ButtonStyle.secondary, emoji="💰")
     async def double_button(
         self,
