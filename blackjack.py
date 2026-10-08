@@ -353,6 +353,8 @@ class BlackjackGame:
         self.dealer: list[Card] = []
         self.message: Optional[discord.Message] = None
         self.finished = False
+        self.created_at = datetime.now(timezone.utc)
+        self.last_activity = self.created_at
 
         self.player.append(self.deck.pop())
         self.dealer.append(self.deck.pop())
@@ -435,6 +437,24 @@ class BlackjackGame:
             add_balance(self.user.id, self.bet)
 
         await save_data()
+
+
+async def cleanup_stale_game(user_id: int) -> bool:
+    """Refund and remove a stale in-memory game so a user cannot get stuck."""
+    game = active_games.get(user_id)
+    if game is None or game.finished:
+        active_games.pop(user_id, None)
+        return False
+    now = datetime.now(timezone.utc)
+    if (now - game.last_activity).total_seconds() < GAME_TIMEOUT_SECONDS:
+        return False
+    await game.finish("timeout")
+    try:
+        if game.message is not None:
+            await game.message.edit(embed=build_embed(game, result="timeout"), view=None)
+    except (discord.NotFound, discord.HTTPException):
+        pass
+    return True
 
 
 def game_result(game: BlackjackGame) -> str:
@@ -564,6 +584,7 @@ class BlackjackView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
+        self.game.last_activity = datetime.now(timezone.utc)
         result = await self.game.hit()
 
         if result in {"bust", "21", "finished"}:
@@ -583,6 +604,7 @@ class BlackjackView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
+        self.game.last_activity = datetime.now(timezone.utc)
         await self.game.stand()
         final_result = game_result(self.game)
         await interaction.response.edit_message(
@@ -610,6 +632,7 @@ class BlackjackView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
+        self.game.last_activity = datetime.now(timezone.utc)
         if len(self.game.player) != 2:
             await interaction.response.send_message(
                 "❌ You can only double down on your initial two cards.",
@@ -638,6 +661,8 @@ async def start_blackjack(
     channel: discord.abc.Messageable,
     bet: int,
 ) -> tuple[Optional[BlackjackGame], str]:
+    await cleanup_stale_game(user.id)
+
     if user.id in active_games:
         return None, "❌ You already have an active Blackjack game."
 
@@ -798,6 +823,25 @@ async def handle_prefix(message: discord.Message) -> bool:
         return False
 
     command = parts[0].lower()
+
+    if command in {",blackjackcleanup", ",bjcleanup"}:
+        cleaned = await cleanup_stale_game(message.author.id)
+        if cleaned:
+            await message.reply(
+                "✅ Your stale Blackjack game was cleaned up and your bet was refunded.",
+                mention_author=False,
+            )
+        elif message.author.id in active_games:
+            await message.reply(
+                "ℹ️ Your Blackjack game is still active. Use the **End** button to end it.",
+                mention_author=False,
+            )
+        else:
+            await message.reply(
+                "ℹ️ You don't have an active Blackjack game.",
+                mention_author=False,
+            )
+        return True
 
     if command == ",blackjack":
         if len(parts) != 2:
