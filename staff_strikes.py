@@ -407,24 +407,24 @@ def _fall_through_capped_staff_ranks(
     return desired_role, desired_name
 
 
-async def send_staff_strike_log(channel_id: int, content: str) -> bool:
-    """Send a normal-text staff strike role-change message."""
+async def send_staff_strike_log(channel_id: int, content: str) -> discord.Message | None:
+    """Send a normal-text staff strike role-change message and return it."""
     guild = bot.get_guild(MAIN_SERVER)
     if guild is None:
-        return False
+        return None
 
     channel = guild.get_channel(channel_id)
     if channel is None:
         try:
             channel = await bot.fetch_channel(channel_id)
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            return False
+            return None
 
     if not hasattr(channel, "send"):
-        return False
+        return None
 
     try:
-        await channel.send(
+        return await channel.send(
             content,
             allowed_mentions=discord.AllowedMentions(
                 everyone=False,
@@ -433,9 +433,8 @@ async def send_staff_strike_log(channel_id: int, content: str) -> bool:
                 replied_user=False,
             ),
         )
-        return True
     except (discord.Forbidden, discord.HTTPException):
-        return False
+        return None
 
 
 async def resolve_main_guild_member(user_id: int) -> discord.Member | None:
