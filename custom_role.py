@@ -352,7 +352,7 @@ async def _place_role_above_anchor(
         current_anchor = guild.get_role(CUSTOM_ROLE_ANCHOR_ROLE_ID) or anchor_role
         try:
             await moving_role.move(
-                above=current_anchor,
+                below=current_anchor,
                 reason=reason,
             )
         except (discord.Forbidden, discord.HTTPException, TypeError, ValueError) as error:
