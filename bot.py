@@ -1718,7 +1718,7 @@ async def on_message(message: discord.Message):
                      ("Coin Flip Battle", "`,coinflipbattle @user <bet>` — Challenge another player\nThe challenged player must accept; the coin decides the winner."),
                     ("Reviews", "`,review @user` — Leave a review\n`,updatereview @user` — Request a review update\n`,reviews @user` — View reviews\n`,deletereview ID` — Delete a review\n`,leaderboard` — View the review leaderboard\n`,reviewblacklist add/remove/status @user` — Manage the review blacklist"),
                     ("Staff & Management", "`,strike @user <7-40d> <reason>` — Issue a staff strike\n`,removestrike @user <number>` — Remove a staff strike\n`,safechatban @user` — Staff: ban a user from SafeChat\n`,safechatunban @user` — Staff: unban a user from SafeChat\n\n`,textify blacklist/unblacklist/status @user` — Manage the Textify blacklist\n`,textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n`,blacklist add/remove/status @user` — Manage the second-role blacklist\n`,savedb` — Save the review database"),
-                    ("Custom Roles", ",custom role create <color> [second-color] <name> — Create your role\n,custom role color <color> [second-color] — Change its color\n,custom role random — Random color\n,custom role rename <name> — Rename it\n,custom role icon <https-url> — Set its icon\n,custom role remove — Delete it"),
+                    ("Custom Roles", ",cr create <color> [second-color] <name> — Create your role\n,cr color <color> [second-color] — Change its color\n,cr random — Random color\n,cr rename <name> — Rename it\n,cr icon <https-url> — Set its icon\n,cr remove — Delete it\nAlias for ,custom role."),
                 ]
 
             def update_buttons(self):
