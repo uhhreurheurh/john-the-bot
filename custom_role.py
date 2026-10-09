@@ -200,22 +200,56 @@ async def _persist_registry() -> bool:
         return False
 
 
+# Common color names accepted by prefix and slash commands.
+NAMED_COLOR_HEX = {
+    "black": "#000000", "white": "#FFFFFF", "red": "#FF0000",
+    "green": "#008000", "lime": "#00FF00", "lime green": "#32CD32",
+    "blue": "#0000FF", "navy": "#000080", "navy blue": "#000080",
+    "dark blue": "#00008B", "light blue": "#ADD8E6", "sky blue": "#87CEEB",
+    "royal blue": "#4169E1", "steel blue": "#4682B4",
+    "cornflower blue": "#6495ED", "midnight blue": "#191970",
+    "yellow": "#FFFF00", "gold": "#FFD700", "goldenrod": "#DAA520",
+    "orange": "#FFA500", "dark orange": "#FF8C00", "coral": "#FF7F50",
+    "tomato": "#FF6347", "pink": "#FFC0CB", "light pink": "#FFB6C1",
+    "hot pink": "#FF69B4", "deep pink": "#FF1493", "purple": "#800080",
+    "dark purple": "#301934", "violet": "#EE82EE", "indigo": "#4B0082",
+    "lavender": "#E6E6FA", "plum": "#DDA0DD", "orchid": "#DA70D6",
+    "magenta": "#FF00FF", "fuchsia": "#FF00FF", "cyan": "#00FFFF",
+    "aqua": "#00FFFF", "teal": "#008080", "turquoise": "#40E0D0",
+    "dark cyan": "#008B8B", "olive": "#808000", "olive green": "#808000",
+    "dark green": "#006400", "forest green": "#228B22", "sea green": "#2E8B57",
+    "light green": "#90EE90", "spring green": "#00FF7F",
+    "mint green": "#98FF98", "emerald": "#50C878", "brown": "#A52A2A",
+    "chocolate": "#D2691E", "tan": "#D2B48C", "beige": "#F5F5DC",
+    "khaki": "#F0E68C", "peach": "#FFE5B4", "rose": "#FF007F",
+    "crimson": "#DC143C", "maroon": "#800000", "dark red": "#8B0000",
+    "firebrick": "#B22222", "salmon": "#FA8072", "silver": "#C0C0C0",
+    "grey": "#808080", "gray": "#808080", "dark grey": "#A9A9A9",
+    "dark gray": "#A9A9A9", "light grey": "#D3D3D3", "light gray": "#D3D3D3",
+    "slate grey": "#708090", "slate gray": "#708090", "charcoal": "#36454F",
+    "periwinkle": "#CCCCFF", "blurple": "#5865F2", "brand green": "#57F287",
+}
+
+
+def _normalize_color_name(value: str) -> str:
+    return " ".join(value.strip().lower().replace("-", " ").replace("_", " ").split())
+
+
 def _parse_color(value: str | None) -> discord.Colour | None:
     if not value:
         return None
 
     candidate = value.strip()
-    named = {
-        "black", "white", "red", "green", "blue", "blurple", "yellow",
-        "orange", "purple", "magenta", "teal", "dark_blue", "dark_green",
-        "dark_red", "dark_purple", "gold", "light_grey", "dark_grey",
-        "grey", "pink", "fuchsia", "brand_green",
-    }
-    normalized = candidate.lower().replace("-", "_").replace(" ", "_")
-    if normalized in named:
-        factory = getattr(discord.Colour, normalized, None)
-        if callable(factory):
+    normalized = _normalize_color_name(candidate)
+    if normalized in NAMED_COLOR_HEX:
+        return discord.Colour.from_str(NAMED_COLOR_HEX[normalized])
+
+    factory = getattr(discord.Colour, normalized.replace(" ", "_"), None)
+    if callable(factory):
+        try:
             return factory()
+        except (TypeError, ValueError):
+            pass
 
     try:
         return discord.Colour.from_str(candidate)
@@ -223,14 +257,24 @@ def _parse_color(value: str | None) -> discord.Colour | None:
         return None
 
 
+def _parse_color_prefix(
+    parts: list[str],
+    start_index: int,
+    *,
+    max_words: int = 3,
+) -> tuple[discord.Colour | None, int]:
+    """Parse a color from the longest recognized prefix of command arguments."""
+    available = min(max_words, len(parts) - start_index)
+    for word_count in range(available, 0, -1):
+        candidate = " ".join(parts[start_index:start_index + word_count])
+        parsed = _parse_color(candidate)
+        if parsed is not None:
+            return parsed, word_count
+    return None, 0
+
+
 def _is_explicit_color_token(value: str) -> bool:
-    candidate = value.strip()
-    return bool(
-        candidate.startswith("#")
-        or candidate.lower().startswith("0x")
-        or re.fullmatch(r"[0-9a-fA-F]{6}", candidate)
-        or re.fullmatch(r"rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)", candidate, flags=re.IGNORECASE)
-    )
+    return _parse_color(value) is not None
 
 
 async def _bot_member_with_role_permission(guild: discord.Guild) -> discord.Member:
@@ -246,7 +290,108 @@ async def _bot_member_with_role_permission(guild: discord.Guild) -> discord.Memb
     return bot_member
 
 
-async def _owned_role(guild: discord.Guild, member: discord.Member) -> discord.Role | None:
+async def _find_anchor_role(guild: discord.Guild) -> discord.Role | None:
+    anchor_role = guild.get_role(CUSTOM_ROLE_ANCHOR_ROLE_ID)
+    if anchor_role is not None:
+        return anchor_role
+
+    try:
+        fetched_roles = await guild.fetch_roles()
+    except (discord.Forbidden, discord.HTTPException):
+        return None
+    return next(
+        (candidate for candidate in fetched_roles if candidate.id == CUSTOM_ROLE_ANCHOR_ROLE_ID),
+        None,
+    )
+
+
+async def _place_role_above_anchor(
+    guild: discord.Guild,
+    role: discord.Role,
+    *,
+    required: bool = False,
+    reason: str = "Keeping a custom role above its reference role",
+) -> discord.Role:
+    """Position a custom role directly above the reference role and verify it."""
+    try:
+        fetched_roles = await guild.fetch_roles()
+    except (discord.Forbidden, discord.HTTPException) as error:
+        if required:
+            raise CustomRoleError(
+                "❌ I couldn't check the server's role order. Please try again."
+            ) from error
+        return role
+
+    anchor_role = next(
+        (candidate for candidate in fetched_roles if candidate.id == CUSTOM_ROLE_ANCHOR_ROLE_ID),
+        None,
+    )
+    fresh_role = next((candidate for candidate in fetched_roles if candidate.id == role.id), None)
+
+    if anchor_role is None:
+        if required:
+            raise CustomRoleError(
+                f"❌ I couldn't find the required reference role ({CUSTOM_ROLE_ANCHOR_ROLE_ID})."
+            )
+        return fresh_role or role
+
+    if fresh_role is not None and fresh_role > anchor_role:
+        return fresh_role
+
+    bot_member = await _bot_member_with_role_permission(guild)
+    if bot_member.top_role <= anchor_role:
+        raise CustomRoleError(
+            f"❌ Move my highest role above <@&{CUSTOM_ROLE_ANCHOR_ROLE_ID}> "
+            "so I can place custom roles above it."
+        )
+
+    # Use a relative move rather than a numeric position, which can be stale
+    # while Discord is still assigning the newly-created role's position.
+    for _attempt in range(2):
+        moving_role = guild.get_role(role.id) or fresh_role or role
+        current_anchor = guild.get_role(CUSTOM_ROLE_ANCHOR_ROLE_ID) or anchor_role
+        try:
+            await moving_role.move(
+                above=current_anchor,
+                reason=reason,
+            )
+        except (discord.Forbidden, discord.HTTPException, TypeError, ValueError) as error:
+            raise CustomRoleError(
+                "❌ Discord wouldn't move the custom role above the reference role. "
+                "Check my Manage Roles permission and role hierarchy."
+            ) from error
+
+        try:
+            fetched_roles = await guild.fetch_roles()
+        except (discord.Forbidden, discord.HTTPException) as error:
+            raise CustomRoleError(
+                "❌ I moved the role but couldn't verify its position. Please try again."
+            ) from error
+
+        anchor_role = next(
+            (candidate for candidate in fetched_roles if candidate.id == CUSTOM_ROLE_ANCHOR_ROLE_ID),
+            None,
+        )
+        fresh_role = next((candidate for candidate in fetched_roles if candidate.id == role.id), None)
+        if anchor_role is None or fresh_role is None:
+            if required:
+                raise CustomRoleError("❌ I couldn't verify the custom role's new position.")
+            return fresh_role or role
+        if fresh_role > anchor_role:
+            return fresh_role
+
+    raise CustomRoleError(
+        f"❌ Discord did not place the role above <@&{CUSTOM_ROLE_ANCHOR_ROLE_ID}>. "
+        "Please check my role hierarchy."
+    )
+
+
+async def _owned_role(
+    guild: discord.Guild,
+    member: discord.Member,
+    *,
+    ensure_position: bool = False,
+) -> discord.Role | None:
     await _ensure_registry_loaded()
     role_id = _role_registry.get(member.id)
     if role_id is None:
@@ -254,6 +399,13 @@ async def _owned_role(guild: discord.Guild, member: discord.Member) -> discord.R
 
     role = guild.get_role(role_id)
     if role is not None:
+        if ensure_position:
+            role = await _place_role_above_anchor(
+                guild,
+                role,
+                required=False,
+                reason=f"Correcting custom role position for {member} ({member.id})",
+            )
         return role
 
     _role_registry.pop(member.id, None)
@@ -299,31 +451,16 @@ async def _create_role(
 
         bot_member = await _bot_member_with_role_permission(guild)
 
-        anchor_role = guild.get_role(CUSTOM_ROLE_ANCHOR_ROLE_ID)
-        if anchor_role is None:
-            try:
-                fetched_roles = await guild.fetch_roles()
-                anchor_role = next(
-                    (candidate for candidate in fetched_roles
-                     if candidate.id == CUSTOM_ROLE_ANCHOR_ROLE_ID),
-                    None,
-                )
-            except (discord.Forbidden, discord.HTTPException):
-                anchor_role = None
-
+        anchor_role = await _find_anchor_role(guild)
         if anchor_role is None:
             raise CustomRoleError(
                 f"❌ I couldn't find the required reference role "
                 f"({CUSTOM_ROLE_ANCHOR_ROLE_ID}) in this server."
             )
 
-        # Role.edit(position=...) requires the requested position to remain
-        # below the bot's highest role. Leave this check before role creation
-        # so a hierarchy problem doesn't leave an unassigned role behind.
-        custom_role_position = anchor_role.position + 1
-        if bot_member.top_role.position <= custom_role_position:
+        if bot_member.top_role <= anchor_role:
             raise CustomRoleError(
-                f"❌ Move my highest role higher than <@&{CUSTOM_ROLE_ANCHOR_ROLE_ID}> "
+                f"❌ Move my highest role above <@&{CUSTOM_ROLE_ANCHOR_ROLE_ID}> "
                 "so I can place custom roles immediately above it."
             )
 
@@ -343,22 +480,23 @@ async def _create_role(
         try:
             # Keep every newly-created custom role immediately above the
             # configured reference role, not near the bot's highest role.
-            role = await role.edit(
-                position=custom_role_position,
-                reason=(
-                    f"Positioning custom role above reference role "
-                    f"{CUSTOM_ROLE_ANCHOR_ROLE_ID}"
-                ),
+            role = await _place_role_above_anchor(
+                guild,
+                role,
+                required=True,
+                reason=f"Positioning custom role above reference role {CUSTOM_ROLE_ANCHOR_ROLE_ID}",
             )
             await member.add_roles(
                 role,
                 reason="Assigning the member's custom role",
             )
-        except (discord.Forbidden, discord.HTTPException) as error:
+        except (CustomRoleError, discord.Forbidden, discord.HTTPException) as error:
             try:
                 await role.delete(reason="Rolling back a custom role that could not be assigned")
             except (discord.Forbidden, discord.HTTPException):
                 pass
+            if isinstance(error, CustomRoleError):
+                raise
             raise CustomRoleError(
                 "❌ I couldn't finish setting up or assigning the role. Check the bot's role hierarchy "
                 "and Manage Roles permission."
@@ -385,7 +523,7 @@ async def _change_color(
 ) -> str:
     _validate_gradient(guild, secondary)
     async with _role_mutation_lock:
-        role = await _owned_role(guild, member)
+        role = await _owned_role(guild, member, ensure_position=True)
         if role is None:
             raise CustomRoleError("❌ You don't have a custom role yet. Use custom role create first.")
         bot_member = await _bot_member_with_role_permission(guild)
@@ -410,7 +548,7 @@ async def _randomize_color(
     member: discord.Member,
 ) -> str:
     async with _role_mutation_lock:
-        role = await _owned_role(guild, member)
+        role = await _owned_role(guild, member, ensure_position=True)
         if role is None:
             raise CustomRoleError("❌ You don't have a custom role yet. Use custom role create first.")
         bot_member = await _bot_member_with_role_permission(guild)
@@ -432,7 +570,7 @@ async def _rename_role(
 ) -> str:
     role_name = _validate_name(new_name)
     async with _role_mutation_lock:
-        role = await _owned_role(guild, member)
+        role = await _owned_role(guild, member, ensure_position=True)
         if role is None:
             raise CustomRoleError("❌ You don't have a custom role yet. Use custom role create first.")
         bot_member = await _bot_member_with_role_permission(guild)
@@ -480,7 +618,7 @@ async def _set_icon(
         raise CustomRoleError("❌ This server does not have Discord's Role Icons feature enabled.")
     icon_data = await asyncio.to_thread(_download_icon, url)
     async with _role_mutation_lock:
-        role = await _owned_role(guild, member)
+        role = await _owned_role(guild, member, ensure_position=True)
         if role is None:
             raise CustomRoleError("❌ You don't have a custom role yet. Use custom role create first.")
         bot_member = await _bot_member_with_role_permission(guild)
@@ -565,8 +703,8 @@ custom_role_group = app_commands.Group(
 @custom_role_group.command(name="create", description="Create your own custom role.")
 @app_commands.describe(
     name="The name for your role",
-    color="Primary color, such as #FF00FF or red",
-    second_color="Optional second color for a gradient (requires Enhanced Role Styles)",
+    color="Color name such as red or dark blue, or hex such as #FF00FF",
+    second_color="Optional named or hex second color for a gradient (requires Enhanced Role Styles)",
 )
 async def custom_role_create(
     interaction: discord.Interaction,
@@ -587,8 +725,8 @@ async def custom_role_create(
 
 @custom_role_group.command(name="color", description="Change your custom role's color.")
 @app_commands.describe(
-    color="Primary color, such as #FF00FF or red",
-    second_color="Optional second color for a gradient",
+    color="Color name such as red or dark blue, or hex such as #FF00FF",
+    second_color="Optional named or hex second color for a gradient",
 )
 async def custom_role_color(
     interaction: discord.Interaction,
@@ -672,64 +810,43 @@ async def handle_prefix(message: discord.Message) -> bool:
         return True
 
     if action in {"create", "color"}:
-        color_index = action_index + 1
-        expected_prefix = (
-            ",custom role create <color> [second-color] <name>"
-            if command == ",custom"
-            else ",cr create <color> [second-color] <name>"
-            if command == ",cr"
-            else ",customrole create <color> [second-color] <name>"
-        )
-        if len(parts) <= color_index:
-            await message.reply(
-                f"Usage: {expected_prefix}",
-                mention_author=False,
-            )
-            return True
-
-        primary = _parse_color(parts[color_index])
+        color_start = action_index + 1
+        primary, primary_words = _parse_color_prefix(parts, color_start)
         if primary is None:
             await message.reply(
-                "❌ Invalid color. Use a hex color such as #FF00FF, 0xFF00FF, or a supported color name.",
+                "❌ Invalid color. Use a hex value like #FF00FF or a color name like red, blue, or dark blue.",
                 mention_author=False,
             )
             return True
 
-        rest = parts[color_index + 1:]
-        secondary = None
+        rest = parts[color_start + primary_words:]
         if action == "create":
-            if len(rest) >= 2 and _is_explicit_color_token(rest[0]):
-                secondary = _parse_color(rest[0])
-                if secondary is None:
-                    await message.reply("❌ The second color is invalid.", mention_author=False)
-                    return True
-                rest = rest[1:]
+            secondary = None
+            # A second color is consumed only when at least one role-name word follows it.
+            if len(rest) >= 2:
+                possible_secondary, secondary_words = _parse_color_prefix(rest, 0)
+                if possible_secondary is not None and len(rest) > secondary_words:
+                    secondary = possible_secondary
+                    rest = rest[secondary_words:]
+
             name = " ".join(rest).strip()
             if not name:
                 await message.reply(
-                    "Usage: ,custom role create <color> [second-color] <name>",
+                    "Usage: ,cr create <color> [second-color] <name> (colors may be names or hex codes)",
                     mention_author=False,
                 )
                 return True
             operation = _create_role
             args = (name, primary, secondary)
         else:
-            if len(rest) > 1:
-                await message.reply(
-                    "Usage: ,custom role color <color> [second-color]",
-                    mention_author=False,
-                )
-                return True
+            secondary = None
             if rest:
-                if not _is_explicit_color_token(rest[0]):
+                secondary, secondary_words = _parse_color_prefix(rest, 0)
+                if secondary is None or secondary_words != len(rest):
                     await message.reply(
-                        "❌ For a second color, use a hex value such as #00FF00.",
+                        "Usage: ,cr color <color> [second-color] (colors may be names or hex codes)",
                         mention_author=False,
                     )
-                    return True
-                secondary = _parse_color(rest[0])
-                if secondary is None:
-                    await message.reply("❌ The second color is invalid.", mention_author=False)
                     return True
             operation = _change_color
             args = (primary, secondary)
@@ -762,7 +879,7 @@ async def handle_prefix(message: discord.Message) -> bool:
         args = ()
     else:
         await message.reply(
-            "Custom role commands: ,cr create, color, random, rename, icon, and remove (alias for ,custom role).",
+            "Custom role commands: ,cr create, color, random, rename, icon, and remove. Colors accept names (red, blue, dark blue) or hex (#FF00FF). Alias for ,custom role.",
             mention_author=False,
         )
         return True
