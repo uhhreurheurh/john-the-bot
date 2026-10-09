@@ -1,22 +1,14 @@
 {
   "strikes": [
     {
-      "user_id": 1403862921678950480,
-      "strike_number": 1,
-      "reason": "false mute",
-      "issued_by": 191233879175200768,
-      "issued_at": "2026-10-02T18:34:38.640454+00:00",
-      "expires_at": "2026-10-09T18:34:38.640454+00:00",
-      "original_staff_role_id": 1371738883401711656
-    },
-    {
       "user_id": 1116894145349431316,
       "strike_number": 1,
       "reason": "cropped naked guy",
       "issued_by": 259156901600821248,
       "issued_at": "2026-10-07T22:20:07.671022+00:00",
       "expires_at": "2026-10-14T22:20:07.671022+00:00",
-      "original_staff_role_id": 1518416402141417472
+      "original_staff_role_id": 1518416402141417472,
+      "log_message_id": null
     },
     {
       "user_id": 259156901600821248,
@@ -25,7 +17,8 @@
       "issued_by": 191233879175200768,
       "issued_at": "2026-10-09T00:33:39.897517+00:00",
       "expires_at": "2026-11-08T00:33:39.897517+00:00",
-      "original_staff_role_id": 1397677852056354948
+      "original_staff_role_id": 1397677852056354948,
+      "log_message_id": null
     },
     {
       "user_id": 259156901600821248,
@@ -34,7 +27,8 @@
       "issued_by": 191233879175200768,
       "issued_at": "2026-10-09T00:33:57.182394+00:00",
       "expires_at": "2026-10-17T00:33:57.182394+00:00",
-      "original_staff_role_id": 1397677852056354948
+      "original_staff_role_id": 1397677852056354948,
+      "log_message_id": null
     }
   ],
   "permanent_demotions": {
