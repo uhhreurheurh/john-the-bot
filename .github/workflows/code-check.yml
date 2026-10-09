@@ -21,7 +21,7 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
 
       - name: Compile Python files
-        run: python -m py_compile bot.py uwuify_feature.py hoodify_feature.py reviews.py leaderboard.py staff_strikes.py
+        run: python -m py_compile bot.py custom_role.py uwuify_feature.py hoodify_feature.py reviews.py leaderboard.py staff_strikes.py
 
       - name: Import and command-tree smoke test
         env:
@@ -29,6 +29,7 @@ jobs:
         run: |
           python - <<'PY'
           import discord
+          from discord import app_commands
 
           # bot.py calls bot.run() at the end; replace it for the smoke test.
           discord.Client.run = lambda self, token: None
@@ -39,11 +40,21 @@ jobs:
 
           required = {
               'uwuify', 'unuwuify', 'uwucount',
-              'hoodify', 'unhoodify', 'hoodcount',
+              'hoodify', 'unhoodify', 'hoodcount', 'custom',
           }
           registered = {command.name for command in bot.tree.get_commands()}
           missing = required - registered
           assert not missing, f'Missing root commands: {sorted(missing)}'
+
+          custom_group = bot.tree.get_command('custom')
+          assert isinstance(custom_group, app_commands.Group), 'Missing /custom group'
+          custom_role_group = custom_group.get_command('role')
+          assert isinstance(custom_role_group, app_commands.Group), 'Missing /custom role group'
+          custom_subcommands = {command.name for command in custom_role_group.commands}
+          expected_custom_subcommands = {'create', 'color', 'random', 'rename', 'icon', 'remove'}
+          assert expected_custom_subcommands <= custom_subcommands, (
+              f'Missing custom role subcommands: {sorted(expected_custom_subcommands - custom_subcommands)}'
+          )
 
           sample = uwuify.uwu('hello how are you?', flags=bot.UWU_FLAGS)
           assert isinstance(sample, str) and sample, 'UWUIFY produced no text'
