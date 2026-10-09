@@ -115,6 +115,7 @@ def load_staff_strikes() -> list[dict]:
             "issued_at": issued_at,
             "expires_at": expires_at,
             "original_staff_role_id": original_staff_role_id,
+            "log_message_id": (int(item["log_message_id"]) if item.get("log_message_id") else None),
         })
 
     return cleaned
@@ -841,6 +842,7 @@ def create_staff_strike(
             if original_staff_role_id is not None
             else None
         ),
+        "log_message_id": None,
     }
     staff_strikes.append(strike)
     return strike
@@ -902,6 +904,7 @@ def _github_get_staff_strikes() -> tuple[bool, list[dict], str | None, dict[int,
                     if item.get("original_staff_role_id") is not None
                     else None
                 ),
+                "log_message_id": (int(item["log_message_id"]) if item.get("log_message_id") else None),
             })
         except (KeyError, TypeError, ValueError):
             continue
@@ -1193,10 +1196,13 @@ async def strike_command(
     )
     synced = await save_staff_strikes()
 
-    await send_staff_strike_log(
+    log_message = await send_staff_strike_log(
         STAFF_STRIKE_ACTIVE_CHANNEL_ID,
         format_staff_strike(member, strike),
     )
+    if log_message is not None:
+        strike["log_message_id"] = log_message.id
+        await save_staff_strikes()
 
     await interaction.followup.send(
         "✅ Strike issued successfully.",
