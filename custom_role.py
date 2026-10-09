@@ -738,24 +738,15 @@ async def _send_interaction_response(
 
 
 def _response_embed(message: str) -> discord.Embed:
-    """Format custom-role command replies as compact embeds."""
+    """Format custom-role command replies as embeds without a title."""
     lowered = message.lower()
     if message.startswith(("❌", "⛔")) or "failed" in lowered or "error" in lowered:
         color = discord.Colour.red()
-        title = "Custom Role — Error"
-    elif "color" in lowered or "colour" in lowered or "hex code" in lowered or "gradient" in lowered:
-        color = discord.Colour.from_rgb(212, 179, 195)
-        title = "Custom Role — Appearance Updated"
-    elif "renamed" in lowered or "name was successfully changed" in lowered:
-        color = discord.Colour.from_rgb(212, 179, 195)
-        title = "Custom Role — Renamed"
     elif "removed" in lowered:
         color = discord.Colour.dark_grey()
-        title = "Custom Role — Removed"
     else:
         color = discord.Colour.from_rgb(212, 179, 195)
-        title = "Custom Role"
-    return discord.Embed(title=title, description=message, colour=color)
+    return discord.Embed(description=message, colour=color)
 
 
 async def _run_slash(
