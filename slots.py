@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import time
 from typing import Optional
 
 import discord
@@ -66,6 +67,7 @@ class SlotsView(discord.ui.View):
         self.payout = 0
         self.message: Optional[discord.Message] = None
         self.finished = False
+        self.created_at = time.monotonic()
         self.lock = asyncio.Lock()
         self._resolve_spin()
 
@@ -211,7 +213,9 @@ class SlotsView(discord.ui.View):
 
     async def on_timeout(self) -> None:
         self.finished = True
-        active_slots_games.pop(self.user.id, None)
+        # Only clear this game if it is still the active one for this user.
+        if active_slots_games.get(self.user.id) is self:
+            active_slots_games.pop(self.user.id, None)
         for child in self.children:
             child.disabled = True
 
@@ -227,8 +231,20 @@ async def start_slots(
     channel: discord.abc.Messageable,
     bet: int,
 ):
-    if user.id in active_slots_games:
-        return None, "You already have an active Slots game."
+    existing = active_slots_games.get(user.id)
+    if existing is not None:
+        # Discord may occasionally miss a View timeout; recover stale locks on next use.
+        stale = (
+            existing.finished
+            or time.monotonic() - existing.created_at >= GAME_TIMEOUT_SECONDS + 5
+        )
+        if stale:
+            existing.finished = True
+            existing.stop()
+            if active_slots_games.get(user.id) is existing:
+                active_slots_games.pop(user.id, None)
+        else:
+            return None, "You already have an active Slots game."
 
     balance = blackjack_feature.get_balance(user.id)
 
@@ -260,24 +276,41 @@ async def send_slots(target, user: discord.abc.User, bet: int) -> None:
 
     if view is None:
         if isinstance(target, discord.Interaction):
-            await target.response.send_message(error, ephemeral=False)
+            if target.response.is_done():
+                await target.edit_original_response(content=error, embed=None, view=None)
+            else:
+                await target.response.send_message(error, ephemeral=False)
         else:
             await target.send(error)
         return
 
     await blackjack_feature.save_data()
 
-    if isinstance(target, discord.Interaction):
-        await target.response.send_message(
-            embed=view.build_spinning_embed(spin_reels()),
-            view=view,
-        )
-        view.message = await target.original_response()
+    # Disable the button during the initial animation, then enable it once the
+    # result is displayed. Slash commands edit the deferred response.
+    for child in view.children:
+        if isinstance(child, discord.ui.Button):
+            child.disabled = True
 
-        for child in view.children:
-            if isinstance(child, discord.ui.Button):
-                child.disabled = True
-        await view.message.edit(view=view)
+    try:
+        if isinstance(target, discord.Interaction):
+            if target.response.is_done():
+                await target.edit_original_response(
+                    content=None,
+                    embed=view.build_spinning_embed(spin_reels()),
+                    view=view,
+                )
+            else:
+                await target.response.send_message(
+                    embed=view.build_spinning_embed(spin_reels()),
+                    view=view,
+                )
+            view.message = await target.original_response()
+        else:
+            view.message = await target.send(
+                embed=view.build_spinning_embed(spin_reels()),
+                view=view,
+            )
 
         await view.animate_spin(view.message, view.reels)
 
@@ -285,19 +318,12 @@ async def send_slots(target, user: discord.abc.User, bet: int) -> None:
             if isinstance(child, discord.ui.Button):
                 child.disabled = False
         await view.message.edit(view=view)
-    else:
-        for child in view.children:
-            if isinstance(child, discord.ui.Button):
-                child.disabled = True
-        view.message = await target.send(
-            embed=view.build_spinning_embed(spin_reels()),
-            view=view,
-        )
-        await view.animate_spin(view.message, view.reels)
-        for child in view.children:
-            if isinstance(child, discord.ui.Button):
-                child.disabled = False
-        await view.message.edit(view=view)
+    except Exception:
+        view.finished = True
+        view.stop()
+        if active_slots_games.get(user.id) is view:
+            active_slots_games.pop(user.id, None)
+        raise
 
 
 @bot_module.tree.command(
@@ -318,6 +344,8 @@ async def slots_command(
         )
         return
 
+    # Acknowledge within Discord's 3-second application-command response window.
+    await interaction.response.defer(thinking=True, ephemeral=False)
     await send_slots(interaction, interaction.user, bet)
 
 
