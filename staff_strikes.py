@@ -5,13 +5,20 @@ from bot import _github_contents_url, _github_request_json
 
 # Strike tiers, counted in currently active (unexpired) strikes:
 #   1        no role consequence
-#   2        demoted one rank
-#   3+       every staff role removed. This is a permanent demotion: expiry
-#            does not restore the rank, an admin restores it by hand.
+#   2        one-rank demotion by default, optionally permanent
+#   3+       every staff role removed; reinstatement is a human decision.
 # Three is also the cap, because a fully demoted member holds no staff role
 # and strike_command refuses members without one.
 STAFF_STRIKE_ACTIVATION_THRESHOLD = 2
 STAFF_STRIKE_DEMOTION_THRESHOLD = 3
+STAFF_MANAGER_OR_HIGHER_ROLE_IDS = {
+    1518416402141417472,  # Co Owner
+    1397677852056354948,  # Director
+    1371738883401711656,  # Staff Manager
+}
+STAFF_STRIKE_DUPLICATE_WINDOW_SECONDS = 5.0
+_recent_staff_strike_submissions: dict[tuple, float] = {}
+staff_permanent_demotions: dict[int, dict] = {}
 
 # Ranks that may only be held by one member at a time. Whenever the strike
 # system would place someone into one of these and another member already holds
@@ -23,8 +30,11 @@ SINGLE_HOLDER_STAFF_ROLE_IDS = {
 }
 
 def load_staff_strikes() -> list[dict]:
-    """Load all staff strikes from local disk."""
+    """Load strikes and permanent-demotion state, supporting the legacy list format."""
+    global staff_permanent_demotions
+
     if not STAFF_STRIKES_FILE.exists():
+        staff_permanent_demotions.clear()
         return []
 
     try:
@@ -33,14 +43,53 @@ def load_staff_strikes() -> list[dict]:
     except (json.JSONDecodeError, OSError, TypeError):
         return []
 
-    if not isinstance(data, list):
+    if isinstance(data, list):
+        raw_strikes = data
+        raw_permanent_demotions = {}
+    elif isinstance(data, dict):
+        raw_strikes = data.get("strikes", [])
+        raw_permanent_demotions = data.get("permanent_demotions", {})
+    else:
         return []
 
-    cleaned = []
-    for item in data:
+    if not isinstance(raw_strikes, list):
+        return []
+    if not isinstance(raw_permanent_demotions, dict):
+        raw_permanent_demotions = {}
+
+    cleaned_permanent_demotions = {}
+    for raw_user_id, item in raw_permanent_demotions.items():
         if not isinstance(item, dict):
             continue
+        try:
+            user_id = int(item.get("user_id", raw_user_id))
+            original_role_id = int(item["original_role_id"])
+            demoted_role_id = (
+                int(item["demoted_role_id"])
+                if item.get("demoted_role_id") is not None
+                else None
+            )
+            issued_by = int(item["issued_by"])
+            issued_at = str(item["issued_at"])
+            reason = str(item.get("reason", "")).strip()
+        except (KeyError, TypeError, ValueError):
+            continue
+        cleaned_permanent_demotions[user_id] = {
+            "user_id": user_id,
+            "original_role_id": original_role_id,
+            "demoted_role_id": demoted_role_id,
+            "issued_by": issued_by,
+            "issued_at": issued_at,
+            "reason": reason,
+        }
 
+    staff_permanent_demotions.clear()
+    staff_permanent_demotions.update(cleaned_permanent_demotions)
+
+    cleaned = []
+    for item in raw_strikes:
+        if not isinstance(item, dict):
+            continue
         try:
             user_id = int(item["user_id"])
             strike_number = int(item["strike_number"])
@@ -55,10 +104,8 @@ def load_staff_strikes() -> list[dict]:
             )
         except (KeyError, TypeError, ValueError):
             continue
-
         if not reason or strike_number < 1:
             continue
-
         cleaned.append({
             "user_id": user_id,
             "strike_number": strike_number,
@@ -73,10 +120,17 @@ def load_staff_strikes() -> list[dict]:
 
 
 def _save_staff_strikes_local(strikes: list[dict]) -> None:
-    """Persist staff strikes to the local filesystem."""
+    """Persist active strikes and permanent-demotion state locally."""
+    data = {
+        "strikes": strikes,
+        "permanent_demotions": {
+            str(user_id): record
+            for user_id, record in staff_permanent_demotions.items()
+        },
+    }
     try:
         with STAFF_STRIKES_FILE.open("w", encoding="utf-8") as file:
-            json.dump(strikes, file, indent=2)
+            json.dump(data, file, indent=2)
             file.write("\n")
     except OSError:
         pass
@@ -139,6 +193,9 @@ def get_next_staff_role(role_id: int) -> tuple[str, int] | None:
 
 def get_original_staff_role_id(user_id: int) -> int | None:
     """Get the role the member had before strike consequences were applied."""
+    permanent_record = staff_permanent_demotions.get(int(user_id))
+    if permanent_record and permanent_record.get("original_role_id"):
+        return int(permanent_record["original_role_id"])
     for strike in staff_strikes:
         if int(strike.get("user_id", 0)) != int(user_id):
             continue
@@ -146,6 +203,157 @@ def get_original_staff_role_id(user_id: int) -> int | None:
         if original_role_id:
             return int(original_role_id)
     return None
+
+
+def is_duplicate_staff_strike_submission(
+    issuer_id: int,
+    user_id: int,
+    days: int,
+    reason: str,
+) -> bool:
+    """Ignore rapid repeated submissions with identical strike details."""
+    now = asyncio.get_running_loop().time()
+    expired_keys = [
+        key for key, submitted_at in _recent_staff_strike_submissions.items()
+        if now - submitted_at > STAFF_STRIKE_DUPLICATE_WINDOW_SECONDS
+    ]
+    for key in expired_keys:
+        _recent_staff_strike_submissions.pop(key, None)
+
+    key = (
+        int(issuer_id),
+        int(user_id),
+        int(days),
+        " ".join(reason.casefold().split()),
+    )
+    previous = _recent_staff_strike_submissions.get(key)
+    if previous is not None and now - previous <= STAFF_STRIKE_DUPLICATE_WINDOW_SECONDS:
+        return True
+    _recent_staff_strike_submissions[key] = now
+    return False
+
+
+def register_permanent_staff_demotion(
+    member: discord.Member,
+    *,
+    original_role_id: int,
+    issued_by: int,
+    reason: str,
+) -> dict:
+    """Persist the demoted rank until Staff Manager or higher promotes the member."""
+    next_role_info = get_next_staff_role(original_role_id)
+    next_role = (
+        member.guild.get_role(next_role_info[1])
+        if next_role_info is not None
+        else None
+    )
+    next_name = next_role_info[0] if next_role_info is not None else "Permanently Demoted"
+    if next_role is not None:
+        next_role, next_name = _fall_through_capped_staff_ranks(
+            member, next_role, next_name, None
+        )
+
+    record = {
+        "user_id": int(member.id),
+        "original_role_id": int(original_role_id),
+        "demoted_role_id": int(next_role.id) if next_role is not None else None,
+        "issued_by": int(issued_by),
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+        "reason": reason.strip(),
+    }
+    staff_permanent_demotions[int(member.id)] = record
+    return record
+
+
+def staff_promotion_command_allowed(member: discord.Member) -> bool:
+    return any(role.id in STAFF_MANAGER_OR_HIGHER_ROLE_IDS for role in member.roles)
+
+
+async def staff_promotion_command_check(interaction: discord.Interaction) -> bool:
+    if interaction.guild_id != MAIN_SERVER:
+        raise app_commands.CheckFailure(
+            "This command can only be used in the main server."
+        )
+    if not isinstance(interaction.user, discord.Member):
+        raise app_commands.CheckFailure("Could not verify your server roles.")
+    if not staff_promotion_command_allowed(interaction.user):
+        raise app_commands.CheckFailure(
+            "Only Staff Manager or higher can approve this promotion."
+        )
+    return True
+
+
+async def perform_staff_promotion(
+    actor: discord.Member,
+    member: discord.Member,
+    target_role: discord.Role,
+) -> tuple[bool, str]:
+    """Apply a Staff Manager+-approved promotion and clear a permanent demotion."""
+    if not staff_promotion_command_allowed(actor):
+        return False, "❌ Only Staff Manager or higher can promote a permanently demoted member."
+    if member.guild.id != MAIN_SERVER or actor.guild.id != MAIN_SERVER:
+        return False, "❌ This command can only be used in the main server."
+    if target_role.id not in STAFF_ROLE_IDS:
+        return False, "❌ Choose a role from the configured staff hierarchy."
+
+    actor_info = get_staff_role_for_member(actor)
+    target_index = next(
+        (i for i, (_, role_id) in enumerate(STAFF_ROLE_HIERARCHY) if role_id == target_role.id),
+        None,
+    )
+    actor_index = next(
+        (i for i, (_, role_id) in enumerate(STAFF_ROLE_HIERARCHY) if actor_info and role_id == actor_info[1].id),
+        None,
+    )
+    if target_index is None or actor_index is None or target_index < actor_index:
+        return False, "❌ You cannot promote someone to a rank higher than your own."
+    if member.id not in staff_permanent_demotions:
+        return False, f"❌ {member.mention} does not have an active permanent-demotion record."
+
+    member_info = get_staff_role_for_member(member)
+    desired_role, _ = _fall_through_capped_staff_ranks(
+        member,
+        target_role,
+        target_role.name,
+        member_info[1] if member_info else None,
+    )
+    if desired_role is None or desired_role.id != target_role.id:
+        return False, f"❌ **{target_role.name}** is already held by someone else or cannot be assigned safely."
+
+    bot_member = member.guild.me
+    if (
+        bot_member is None
+        or not bot_member.guild_permissions.manage_roles
+        or bot_member.top_role <= target_role
+        or member.top_role >= bot_member.top_role
+    ):
+        return False, "❌ I cannot manage that rank. Check the bot's role hierarchy and Manage Roles permission."
+
+    managed_roles = [
+        member.guild.get_role(role_id)
+        for _, role_id in STAFF_ROLE_HIERARCHY
+    ]
+    managed_roles = [role for role in managed_roles if role is not None and role in member.roles]
+    try:
+        remove_roles = [
+            role for role in managed_roles
+            if next(i for i, (_, role_id) in enumerate(STAFF_ROLE_HIERARCHY) if role_id == role.id) < target_index
+            and not role.managed and not role.is_default()
+            and bot_member.top_role > role
+        ]
+        if remove_roles:
+            await member.remove_roles(*remove_roles, reason=f"Promotion approved by {actor.id}")
+        if target_role not in member.roles:
+            await member.add_roles(target_role, reason=f"Promotion approved by {actor.id}")
+    except (discord.Forbidden, discord.HTTPException):
+        return False, "❌ Discord rejected the role change. Check the bot's role permissions."
+
+    staff_permanent_demotions.pop(int(member.id), None)
+    synced = await save_staff_strikes()
+    response = f"✅ Promoted {member.mention} to **{target_role.name}** and cleared the permanent demotion."
+    if not synced:
+        response += "\n⚠️ The change was saved locally, but GitHub sync failed."
+    return True, response
 
 
 def _staff_role_is_held_by_another(member: discord.Member, role: discord.Role) -> bool:
@@ -290,11 +498,26 @@ async def apply_staff_strike_consequences(
         original_role = current_info[1]
         original_role_name = current_info[0]
 
-    if active_count < STAFF_STRIKE_ACTIVATION_THRESHOLD:
+    permanent_record = staff_permanent_demotions.get(int(member.id))
+
+    if active_count >= STAFF_STRIKE_DEMOTION_THRESHOLD:
+        # Three active strikes still trigger a full staff-role removal.
+        desired_role = None
+        desired_name = "Suspended"
+    elif permanent_record is not None:
+        # A second-strike permanent demotion survives expiry/removal of strikes.
+        locked_role_id = permanent_record.get("demoted_role_id")
+        desired_role = member.guild.get_role(int(locked_role_id)) if locked_role_id else None
+        desired_name = desired_role.name if desired_role is not None else "Permanently Demoted"
+        if locked_role_id and desired_role is None and current_info is not None:
+            # If the configured role was deleted, hold the visible rank rather than stripping roles.
+            desired_role = current_info[1]
+            desired_name = current_info[0]
+    elif active_count < STAFF_STRIKE_ACTIVATION_THRESHOLD:
         # No active consequence below the activation threshold.
         desired_role = original_role
         desired_name = original_role_name if desired_role is not None else "No Staff Role"
-    elif active_count < STAFF_STRIKE_DEMOTION_THRESHOLD:
+    else:
         next_role_info = get_next_staff_role(original_role_id) if original_role_id else None
         next_role = (
             member.guild.get_role(next_role_info[1])
@@ -305,18 +528,11 @@ async def apply_staff_strike_consequences(
             desired_role = next_role
             desired_name = next_role_info[0]
         else:
-            # Already at the lowest configured rank, so there is nothing to
-            # demote to. Hold the rank here; full demotion belongs to the
-            # demotion threshold, not this one.
+            # At the lowest rank, a temporary demotion cannot go lower.
             desired_role = original_role
             desired_name = (
                 original_role_name if desired_role is not None else "No Staff Role"
             )
-    else:
-        # At the demotion threshold every staff role is removed. This is
-        # permanent: nothing here restores the rank when strikes expire.
-        desired_role = None
-        desired_name = "Suspended"
 
     if desired_role is not None:
         # Never place a second member into a single-holder rank.
@@ -340,7 +556,9 @@ async def apply_staff_strike_consequences(
     current_staff_role = current_info[1] if current_info is not None else None
     current_name = current_info[0] if current_info is not None else (
         "Suspended"
-        if current_staff_role is None and active_count >= STAFF_STRIKE_DEMOTION_THRESHOLD
+        if active_count >= STAFF_STRIKE_DEMOTION_THRESHOLD
+        else "Permanently Demoted"
+        if permanent_record is not None and permanent_record.get("demoted_role_id") is None
         else "No Staff Role"
     )
 
@@ -427,6 +645,8 @@ async def apply_staff_strike_consequences(
         actual_name = refreshed_info[0] if refreshed_info is not None else (
             "Suspended"
             if active_count >= STAFF_STRIKE_DEMOTION_THRESHOLD
+            else "Permanently Demoted"
+            if permanent_record is not None and permanent_record.get("demoted_role_id") is None
             else "No Staff Role"
         )
         # Compare the member's effective top rank before and after rather than
@@ -529,6 +749,12 @@ async def handle_expired_staff_strikes(
                     f"(permanent demotion at {STAFF_STRIKE_DEMOTION_THRESHOLD} strikes; "
                     "reinstate by hand)",
                 )
+            elif int(user_id) in staff_permanent_demotions:
+                await send_staff_strike_log(
+                    STAFF_STRIKE_EXPIRED_CHANNEL_ID,
+                    f"<@{user_id}> {before_name} to {after_name} "
+                    "(second-strike permanent demotion remains; Staff Manager or higher must promote)",
+                )
             else:
                 await send_staff_strike_log(
                     STAFF_STRIKE_EXPIRED_CHANNEL_ID,
@@ -595,42 +821,43 @@ STAFF_STRIKE_SYNC_LOCK = asyncio.Lock()
 staff_strike_github_sync_error: str | None = None
 
 
-def _github_get_staff_strikes() -> tuple[bool, list[dict], str | None]:
-    """Fetch the staff strike file from GitHub.
-
-    Returns (exists, strikes, blob_sha).
-    """
+def _github_get_staff_strikes() -> tuple[bool, list[dict], str | None, dict[int, dict]]:
+    """Fetch active strikes and permanent-demotion state, accepting legacy list files."""
     encoded_branch = urllib.parse.quote(GITHUB_BRANCH, safe="")
     url = f"{_github_contents_url(STAFF_STRIKES_FILE)}?ref={encoded_branch}"
-
     try:
         payload = _github_request_json(url)
     except RuntimeError as error:
         if str(error).startswith("GitHub API HTTP 404:"):
-            return False, [], None
+            return False, [], None, {}
         raise
 
     encoded_content = payload.get("content", "")
     if not encoded_content:
-        return True, [], payload.get("sha")
+        return True, [], payload.get("sha"), {}
 
     try:
-        decoded = base64.b64decode(
-            "".join(str(encoded_content).split())
-        ).decode("utf-8")
+        decoded = base64.b64decode("".join(str(encoded_content).split())).decode("utf-8")
         data = json.loads(decoded)
     except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise RuntimeError(
             f"GitHub strike file {STAFF_STRIKES_FILE.name!r} has invalid JSON."
         ) from error
 
-    if not isinstance(data, list):
-        raise RuntimeError(
-            f"GitHub strike file {STAFF_STRIKES_FILE.name!r} must contain a JSON list."
-        )
+    if isinstance(data, list):
+        raw_strikes, raw_permanent_demotions = data, {}
+    elif isinstance(data, dict):
+        raw_strikes = data.get("strikes", [])
+        raw_permanent_demotions = data.get("permanent_demotions", {})
+    else:
+        raise RuntimeError("Staff strike JSON has an unsupported format.")
+    if not isinstance(raw_strikes, list):
+        raise RuntimeError("The strikes field must be a JSON list.")
+    if not isinstance(raw_permanent_demotions, dict):
+        raw_permanent_demotions = {}
 
     cleaned = []
-    for item in data:
+    for item in raw_strikes:
         if not isinstance(item, dict):
             continue
         try:
@@ -650,25 +877,48 @@ def _github_get_staff_strikes() -> tuple[bool, list[dict], str | None]:
         except (KeyError, TypeError, ValueError):
             continue
 
-    return True, cleaned, payload.get("sha")
+    cleaned_permanent = {}
+    for raw_user_id, item in raw_permanent_demotions.items():
+        if not isinstance(item, dict):
+            continue
+        try:
+            user_id = int(item.get("user_id", raw_user_id))
+            cleaned_permanent[user_id] = {
+                "user_id": user_id,
+                "original_role_id": int(item["original_role_id"]),
+                "demoted_role_id": (
+                    int(item["demoted_role_id"])
+                    if item.get("demoted_role_id") is not None
+                    else None
+                ),
+                "issued_by": int(item["issued_by"]),
+                "issued_at": str(item["issued_at"]),
+                "reason": str(item.get("reason", "")).strip(),
+            }
+        except (KeyError, TypeError, ValueError):
+            continue
+    return True, cleaned, payload.get("sha"), cleaned_permanent
 
 
-def _github_save_staff_strikes(strikes: list[dict]) -> None:
-    """Create or update the staff strike file in GitHub."""
-    exists, _, blob_sha = _github_get_staff_strikes()
-    serialized = json.dumps(strikes, indent=2) + "\n"
-
+def _github_save_staff_strikes(
+    strikes: list[dict],
+    permanent_demotions: dict[int, dict],
+) -> None:
+    """Create or update the combined staff strike state file in GitHub."""
+    exists, _, blob_sha, _ = _github_get_staff_strikes()
+    serialized = json.dumps({
+        "strikes": strikes,
+        "permanent_demotions": {
+            str(user_id): record for user_id, record in permanent_demotions.items()
+        },
+    }, indent=2) + "\n"
     payload = {
         "message": f"Update {STAFF_STRIKES_FILE.name}",
-        "content": base64.b64encode(
-            serialized.encode("utf-8")
-        ).decode("ascii"),
+        "content": base64.b64encode(serialized.encode("utf-8")).decode("ascii"),
         "branch": GITHUB_BRANCH,
     }
-
     if exists and blob_sha:
         payload["sha"] = blob_sha
-
     _github_request_json(
         _github_contents_url(STAFF_STRIKES_FILE),
         method="PUT",
@@ -677,20 +927,18 @@ def _github_save_staff_strikes(strikes: list[dict]) -> None:
 
 
 async def save_staff_strikes() -> bool:
-    """Save locally and sync staff strikes to GitHub when configured."""
+    """Save local strikes and permanent-demotion state, then sync to GitHub."""
     global staff_strike_github_sync_error
-
     _save_staff_strikes_local(staff_strikes)
-
     if not GITHUB_TOKEN:
         staff_strike_github_sync_error = "GITHUB_TOKEN is not configured."
         return False
-
     async with STAFF_STRIKE_SYNC_LOCK:
         try:
             await asyncio.to_thread(
                 _github_save_staff_strikes,
                 list(staff_strikes),
+                dict(staff_permanent_demotions),
             )
             staff_strike_github_sync_error = None
             return True
@@ -700,29 +948,28 @@ async def save_staff_strikes() -> bool:
 
 
 async def sync_staff_strikes_from_github() -> bool:
-    """Load staff strike records from GitHub."""
+    """Load strike records and permanent-demotion state from GitHub."""
     global staff_strikes, staff_strike_github_sync_error
-
     if not GITHUB_TOKEN:
         staff_strike_github_sync_error = "GITHUB_TOKEN is not configured."
         return False
-
     async with STAFF_STRIKE_SYNC_LOCK:
         try:
-            exists, remote_strikes, _ = await asyncio.to_thread(
+            exists, remote_strikes, _, remote_permanent = await asyncio.to_thread(
                 _github_get_staff_strikes
             )
-
             if exists:
                 staff_strikes.clear()
                 staff_strikes.extend(remote_strikes)
+                staff_permanent_demotions.clear()
+                staff_permanent_demotions.update(remote_permanent)
                 _save_staff_strikes_local(staff_strikes)
             else:
                 await asyncio.to_thread(
                     _github_save_staff_strikes,
                     list(staff_strikes),
+                    dict(staff_permanent_demotions),
                 )
-
             staff_strike_github_sync_error = None
             return True
         except Exception as error:
@@ -840,13 +1087,19 @@ def parse_staff_strike_duration(
     member="The staff member receiving the strike",
     reason="Reason for the strike",
     days="How many days the strike should last (7-40)",
+    demotion="For the second active strike, choose temporary or permanent demotion.",
 )
+@app_commands.choices(demotion=[
+    app_commands.Choice(name="Temporary demotion", value="temporary"),
+    app_commands.Choice(name="Permanent demotion", value="permanent"),
+])
 @app_commands.check(staff_strike_command_check)
 async def strike_command(
     interaction: discord.Interaction,
     member: discord.Member,
     reason: str,
     days: app_commands.Range[int, 7, 40],
+    demotion: app_commands.Choice[str] | None = None,
 ):
     """Issue a time-limited staff strike."""
     await interaction.response.defer(ephemeral=False)
@@ -873,6 +1126,20 @@ async def strike_command(
         return
 
     original_role_id = get_original_staff_role_id(member.id) or current_staff_info[1].id
+    active_before = len(get_user_staff_strikes(member.id))
+    demotion_value = demotion.value if demotion is not None else "temporary"
+    if demotion_value == "permanent" and active_before + 1 != STAFF_STRIKE_ACTIVATION_THRESHOLD:
+        await interaction.followup.send(
+            "❌ Choose permanent demotion only when this will be the member's second active strike.",
+            ephemeral=False,
+        )
+        return
+    if is_duplicate_staff_strike_submission(interaction.user.id, member.id, int(days), reason):
+        await interaction.followup.send(
+            "⚠️ This looks like a duplicate strike submission. No additional strike was added.",
+            ephemeral=False,
+        )
+        return
 
     strike = create_staff_strike(
         user_id=member.id,
@@ -882,6 +1149,13 @@ async def strike_command(
         original_staff_role_id=original_role_id,
     )
     active_count = len(get_user_staff_strikes(member.id))
+    if active_count == STAFF_STRIKE_ACTIVATION_THRESHOLD and demotion_value == "permanent":
+        register_permanent_staff_demotion(
+            member,
+            original_role_id=original_role_id,
+            issued_by=interaction.user.id,
+            reason=reason,
+        )
     consequence = await apply_staff_strike_consequences(
         member,
         active_count=active_count,
@@ -899,6 +1173,25 @@ async def strike_command(
         "✅ Strike issued successfully.",
         ephemeral=False,
     )
+
+
+@tree.command(
+    name="staffpromote",
+    description="Promote a permanently demoted staff member (Staff Manager or higher).",
+)
+@app_commands.describe(
+    member="The permanently demoted staff member",
+    role="The staff rank to promote them to",
+)
+@app_commands.check(staff_promotion_command_check)
+async def staffpromote_command(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    role: discord.Role,
+):
+    await interaction.response.defer(ephemeral=False)
+    _, response = await perform_staff_promotion(interaction.user, member, role)
+    await interaction.followup.send(response, ephemeral=False)
 
 
 @tree.command(
