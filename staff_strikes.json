@@ -20,15 +20,6 @@
     },
     {
       "user_id": 191233879175200768,
-      "strike_number": 1,
-      "reason": "test",
-      "issued_by": 191233879175200768,
-      "issued_at": "2026-10-09T00:13:00.902950+00:00",
-      "expires_at": "2026-10-17T00:13:00.902950+00:00",
-      "original_staff_role_id": 1371739870380425236
-    },
-    {
-      "user_id": 191233879175200768,
       "strike_number": 2,
       "reason": "hhh",
       "issued_by": 191233879175200768,
