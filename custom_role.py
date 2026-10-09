@@ -241,6 +241,9 @@ def _parse_color(value: str | None) -> discord.Colour | None:
 
     candidate = value.strip()
     normalized = _normalize_color_name(candidate)
+    bare_hex = candidate.removeprefix("#").removeprefix("0x").removeprefix("0X")
+    if re.fullmatch(r"[0-9a-fA-F]{6}", bare_hex):
+        return discord.Colour(int(bare_hex, 16))
     if normalized in NAMED_COLOR_HEX:
         return discord.Colour.from_str(NAMED_COLOR_HEX[normalized])
 
@@ -434,7 +437,7 @@ async def _create_role(
     guild: discord.Guild,
     member: discord.Member,
     name: str,
-    primary: discord.Colour,
+    primary: discord.Colour | None,
     secondary: discord.Colour | None,
 ) -> str:
     role_name = _validate_name(name)
@@ -464,13 +467,10 @@ async def _create_role(
                 "so I can place custom roles immediately above it."
             )
 
-        if primary.value == 0:
-            raise CustomRoleError("❌ Please use a visible color instead of the default role color.")
-
         role = await guild.create_role(
             name=role_name,
             permissions=discord.Permissions.none(),
-            colour=primary,
+            colour=primary or discord.Colour.default(),
             secondary_colour=secondary,
             hoist=False,
             mentionable=False,
@@ -504,9 +504,15 @@ async def _create_role(
 
         _role_registry[member.id] = role.id
         saved = await _persist_registry()
-        response = f"✅ Created {role.mention} for you."
+        if primary is None:
+            response = f"🎨 {member.mention}: Cool, you were assigned a custom role: {role.mention}."
+        else:
+            response = (
+                f"🎨 {member.mention}: Cool, you were assigned a custom role "
+                f"with hex code **{primary}**: {role.mention}."
+            )
         if secondary is not None:
-            response += " It uses a two-color gradient."
+            response += f" The second color is **{secondary}**."
         if not saved:
             response += (
                 "\n⚠️ The role was created, but its registry could not sync to GitHub. "
@@ -537,10 +543,14 @@ async def _change_color(
             secondary_colour=secondary,
             reason=f"Custom role color changed by {member} ({member.id})",
         )
-        return (
-            f"✅ Updated the color of {role.mention} to {primary}."
-            + (f" Secondary color: {secondary}." if secondary is not None else " The role now uses a solid color.")
+        response = (
+            f"🎨 {member.mention}: Your custom role color was changed to **{primary}**"
         )
+        if secondary is not None:
+            response += f" and **{secondary}**."
+        else:
+            response += "."
+        return response
 
 
 async def _randomize_color(
@@ -580,7 +590,7 @@ async def _rename_role(
             name=role_name,
             reason=f"Custom role renamed by {member} ({member.id})",
         )
-        return f"✅ Your custom role is now named {role_name}."
+        return f"✅ {member.mention}: Your custom role name was successfully changed to **{role_name}**."
 
 
 def _download_icon(url: str) -> bytes:
@@ -703,21 +713,27 @@ custom_role_group = app_commands.Group(
 @custom_role_group.command(name="create", description="Create your own custom role.")
 @app_commands.describe(
     name="The name for your role",
-    color="Color name such as red or dark blue, or hex such as #FF00FF",
+    color="Optional: color name or hex (with or without #); leave blank for no color",
     second_color="Optional named or hex second color for a gradient (requires Enhanced Role Styles)",
 )
 async def custom_role_create(
     interaction: discord.Interaction,
     name: str,
-    color: str,
+    color: str | None = None,
     second_color: str | None = None,
 ):
-    primary = _parse_color(color)
+    primary = _parse_color(color) if color else None
     secondary = _parse_color(second_color) if second_color else None
-    if primary is None or (second_color and secondary is None):
+    if (color and primary is None) or (second_color and secondary is None):
         await _send_interaction_response(
             interaction,
-            "❌ Invalid color. Use a hex color such as #FF00FF, 0xFF00FF, or a supported color name.",
+            "❌ Invalid color. Use a hex color like d4b3c3 or #d4b3c3, or a supported color name.",
+        )
+        return
+    if secondary is not None and primary is None:
+        await _send_interaction_response(
+            interaction,
+            "❌ Choose a primary color before adding a second gradient color.",
         )
         return
     await _run_slash(interaction, _create_role, name, primary, secondary)
@@ -738,7 +754,7 @@ async def custom_role_color(
     if primary is None or (second_color and secondary is None):
         await _send_interaction_response(
             interaction,
-            "❌ Invalid color. Use a hex color such as #FF00FF, 0xFF00FF, or a supported color name.",
+            "❌ Invalid color. Use a hex color such as d4b3c3 or #d4b3c3, or a supported color name.",
         )
         return
     await _run_slash(interaction, _change_color, primary, secondary)
@@ -812,18 +828,13 @@ async def handle_prefix(message: discord.Message) -> bool:
     if action in {"create", "color"}:
         color_start = action_index + 1
         primary, primary_words = _parse_color_prefix(parts, color_start)
-        if primary is None:
-            await message.reply(
-                "❌ Invalid color. Use a hex value like #FF00FF or a color name like red, blue, or dark blue.",
-                mention_author=False,
-            )
-            return True
+        rest = parts[color_start + primary_words:] if primary is not None else parts[color_start:]
 
-        rest = parts[color_start + primary_words:]
         if action == "create":
             secondary = None
-            # A second color is consumed only when at least one role-name word follows it.
-            if len(rest) >= 2:
+            # If a primary color was supplied, accept an optional second color
+            # before the role name. Otherwise all arguments form the role name.
+            if primary is not None and len(rest) >= 2:
                 possible_secondary, secondary_words = _parse_color_prefix(rest, 0)
                 if possible_secondary is not None and len(rest) > secondary_words:
                     secondary = possible_secondary
@@ -832,19 +843,31 @@ async def handle_prefix(message: discord.Message) -> bool:
             name = " ".join(rest).strip()
             if not name:
                 await message.reply(
-                    "Usage: ,cr create <color> [second-color] <name> (colors may be names or hex codes)",
+                    "Usage: ,cr create <name> [color] or ,cr create <color> <name> (color is optional)",
+                    mention_author=False,
+                )
+                return True
+            if secondary is not None and primary is None:
+                await message.reply(
+                    "❌ Choose a primary color before adding a second gradient color.",
                     mention_author=False,
                 )
                 return True
             operation = _create_role
             args = (name, primary, secondary)
         else:
+            if primary is None:
+                await message.reply(
+                    "❌ Please provide a color. Use d4b3c3, #d4b3c3, red, or dark blue.",
+                    mention_author=False,
+                )
+                return True
             secondary = None
             if rest:
                 secondary, secondary_words = _parse_color_prefix(rest, 0)
                 if secondary is None or secondary_words != len(rest):
                     await message.reply(
-                        "Usage: ,cr color <color> [second-color] (colors may be names or hex codes)",
+                        "Usage: ,cr color <color> [second-color] (hex values may be entered with or without #)",
                         mention_author=False,
                     )
                     return True
