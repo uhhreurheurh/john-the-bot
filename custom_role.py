@@ -295,7 +295,7 @@ async def _create_role(
                 "custom role color, or custom role remove to manage it."
             )
 
-        await _bot_member_with_role_permission(guild)
+        bot_member = await _bot_member_with_role_permission(guild)
         if primary.value == 0:
             raise CustomRoleError("❌ Please use a visible color instead of the default role color.")
 
@@ -310,6 +310,13 @@ async def _create_role(
         )
 
         try:
+            # Place the role just below the bot's highest role so the custom
+            # color is visible over lower roles whenever hierarchy allows it.
+            if bot_member.top_role.position > 1:
+                role = await role.edit(
+                    position=max(1, bot_member.top_role.position - 1),
+                    reason="Positioning a member's custom role below the bot role",
+                )
             await member.add_roles(
                 role,
                 reason="Assigning the member's custom role",
@@ -320,7 +327,7 @@ async def _create_role(
             except (discord.Forbidden, discord.HTTPException):
                 pass
             raise CustomRoleError(
-                "❌ I created the role but Discord would not assign it. Check the bot's role hierarchy "
+                "❌ I couldn't finish setting up or assigning the role. Check the bot's role hierarchy "
                 "and Manage Roles permission."
             ) from error
 
