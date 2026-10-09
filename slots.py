@@ -171,6 +171,8 @@ class SlotsView(discord.ui.View):
                 )
                 return
 
+            # Keep the stale-lock recovery aligned with the View's inactivity timeout.
+            self.created_at = time.monotonic()
             balance = blackjack_feature.get_balance(self.user.id)
             if self.bet > balance:
                 await interaction.response.send_message(
