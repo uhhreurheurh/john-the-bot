@@ -29,6 +29,8 @@ ALLOWED_ROLE_IDS = {
     1341594605686358047,
 }
 REGISTRY_FILE = Path(__file__).with_name("custom_roles.json")
+# New custom roles are placed immediately above this existing server role.
+CUSTOM_ROLE_ANCHOR_ROLE_ID = 1354259084114661509
 MAX_ICON_BYTES = 256 * 1024
 
 _role_registry: dict[int, int] = {}
@@ -296,6 +298,35 @@ async def _create_role(
             )
 
         bot_member = await _bot_member_with_role_permission(guild)
+
+        anchor_role = guild.get_role(CUSTOM_ROLE_ANCHOR_ROLE_ID)
+        if anchor_role is None:
+            try:
+                fetched_roles = await guild.fetch_roles()
+                anchor_role = next(
+                    (candidate for candidate in fetched_roles
+                     if candidate.id == CUSTOM_ROLE_ANCHOR_ROLE_ID),
+                    None,
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                anchor_role = None
+
+        if anchor_role is None:
+            raise CustomRoleError(
+                f"❌ I couldn't find the required reference role "
+                f"({CUSTOM_ROLE_ANCHOR_ROLE_ID}) in this server."
+            )
+
+        # Role.edit(position=...) requires the requested position to remain
+        # below the bot's highest role. Leave this check before role creation
+        # so a hierarchy problem doesn't leave an unassigned role behind.
+        custom_role_position = anchor_role.position + 1
+        if bot_member.top_role.position <= custom_role_position:
+            raise CustomRoleError(
+                f"❌ Move my highest role higher than <@&{CUSTOM_ROLE_ANCHOR_ROLE_ID}> "
+                "so I can place custom roles immediately above it."
+            )
+
         if primary.value == 0:
             raise CustomRoleError("❌ Please use a visible color instead of the default role color.")
 
@@ -310,13 +341,15 @@ async def _create_role(
         )
 
         try:
-            # Place the role just below the bot's highest role so the custom
-            # color is visible over lower roles whenever hierarchy allows it.
-            if bot_member.top_role.position > 1:
-                role = await role.edit(
-                    position=max(1, bot_member.top_role.position - 1),
-                    reason="Positioning a member's custom role below the bot role",
-                )
+            # Keep every newly-created custom role immediately above the
+            # configured reference role, not near the bot's highest role.
+            role = await role.edit(
+                position=custom_role_position,
+                reason=(
+                    f"Positioning custom role above reference role "
+                    f"{CUSTOM_ROLE_ANCHOR_ROLE_ID}"
+                ),
+            )
             await member.add_roles(
                 role,
                 reason="Assigning the member's custom role",
