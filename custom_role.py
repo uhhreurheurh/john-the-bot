@@ -497,11 +497,12 @@ def _validate_gradient(guild: discord.Guild, secondary: discord.Colour | None) -
 async def _create_role(
     guild: discord.Guild,
     member: discord.Member,
-    name: str,
+    name: str | None,
     primary: discord.Colour | None,
     secondary: discord.Colour | None,
 ) -> str:
-    role_name = _validate_name(name)
+    # Bare create commands use the account's Discord username by default.
+    role_name = _validate_name(name or member.name)
     _validate_gradient(guild, secondary)
 
     async with _role_mutation_lock:
@@ -796,13 +797,13 @@ custom_role_group = app_commands.Group(
 
 @custom_role_group.command(name="create", description="Create your own custom role.")
 @app_commands.describe(
-    name="The name for your role",
+    name="Optional role name; defaults to your Discord username",
     color="Optional: color name or hex (with or without #); leave blank for no color",
     second_color="Optional named or hex second color for a gradient (requires Enhanced Role Styles)",
 )
 async def custom_role_create(
     interaction: discord.Interaction,
-    name: str,
+    name: str | None = None,
     color: str | None = None,
     second_color: str | None = None,
 ):
@@ -916,21 +917,16 @@ async def handle_prefix(message: discord.Message) -> bool:
 
         if action == "create":
             secondary = None
-            # If a primary color was supplied, accept an optional second color
-            # before the role name. Otherwise all arguments form the role name.
+            # Optional colors come first when recognized; any remaining words
+            # become a custom role name. With no name, use the author's username.
             if primary is not None and len(rest) >= 2:
                 possible_secondary, secondary_words = _parse_color_prefix(rest, 0)
                 if possible_secondary is not None and len(rest) > secondary_words:
                     secondary = possible_secondary
                     rest = rest[secondary_words:]
 
-            name = " ".join(rest).strip()
-            if not name:
-                await message.reply(
-                    "Usage: ,cr create <name> [color] or ,cr create <color> <name> (color is optional)",
-                    mention_author=False,
-                )
-                return True
+            # If no custom name was provided, use the command author's username.
+            name = " ".join(rest).strip() or message.author.name
             if secondary is not None and primary is None:
                 await message.reply(
                     "❌ Choose a primary color before adding a second gradient color.",
