@@ -1,38 +1,32 @@
-[
-  {
-    "user_id": 1403862921678950480,
-    "strike_number": 1,
-    "reason": "false mute",
-    "issued_by": 191233879175200768,
-    "issued_at": "2026-10-02T18:34:38.640454+00:00",
-    "expires_at": "2026-10-09T18:34:38.640454+00:00",
-    "original_staff_role_id": 1371738883401711656
-  },
-  {
-    "user_id": 1116894145349431316,
-    "strike_number": 1,
-    "reason": "cropped naked guy",
-    "issued_by": 259156901600821248,
-    "issued_at": "2026-10-07T22:20:07.671022+00:00",
-    "expires_at": "2026-10-14T22:20:07.671022+00:00",
-    "original_staff_role_id": 1518416402141417472
-  },
-  {
-    "user_id": 191233879175200768,
-    "strike_number": 1,
-    "reason": "test",
-    "issued_by": 191233879175200768,
-    "issued_at": "2026-10-09T00:13:00.902950+00:00",
-    "expires_at": "2026-10-17T00:13:00.902950+00:00",
-    "original_staff_role_id": 1371739870380425236
-  },
-  {
-    "user_id": 191233879175200768,
-    "strike_number": 2,
-    "reason": "test5",
-    "issued_by": 191233879175200768,
-    "issued_at": "2026-10-09T00:13:14.188605+00:00",
-    "expires_at": "2026-10-17T00:13:14.188605+00:00",
-    "original_staff_role_id": 1371739870380425236
-  }
-]
+{
+  "strikes": [
+    {
+      "user_id": 1403862921678950480,
+      "strike_number": 1,
+      "reason": "false mute",
+      "issued_by": 191233879175200768,
+      "issued_at": "2026-10-02T18:34:38.640454+00:00",
+      "expires_at": "2026-10-09T18:34:38.640454+00:00",
+      "original_staff_role_id": 1371738883401711656
+    },
+    {
+      "user_id": 1116894145349431316,
+      "strike_number": 1,
+      "reason": "cropped naked guy",
+      "issued_by": 259156901600821248,
+      "issued_at": "2026-10-07T22:20:07.671022+00:00",
+      "expires_at": "2026-10-14T22:20:07.671022+00:00",
+      "original_staff_role_id": 1518416402141417472
+    },
+    {
+      "user_id": 191233879175200768,
+      "strike_number": 1,
+      "reason": "test",
+      "issued_by": 191233879175200768,
+      "issued_at": "2026-10-09T00:13:00.902950+00:00",
+      "expires_at": "2026-10-17T00:13:00.902950+00:00",
+      "original_staff_role_id": 1371739870380425236
+    }
+  ],
+  "permanent_demotions": {}
+}
