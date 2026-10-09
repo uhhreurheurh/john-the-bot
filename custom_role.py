@@ -31,6 +31,19 @@ ALLOWED_ROLE_IDS = {
 REGISTRY_FILE = Path(__file__).with_name("custom_roles.json")
 # New custom roles are placed immediately above this existing server role.
 CUSTOM_ROLE_ANCHOR_ROLE_ID = 1354259084114661509
+# Never let custom-role commands touch staff roles, even if the persisted
+# registry is stale or corrupted. Keep this list in sync with the server's
+# staff hierarchy.
+PROTECTED_STAFF_ROLE_IDS = {
+    1518416402141417472,  # Co-owner
+    1397677852056354948,  # Director
+    1371738883401711656,  # Staff manager
+    1371739870380425236,  # Head admin
+    1371738346900029510,  # Admin
+    1371739816227504160,  # Head mod
+    1371738357897494589,  # Mod
+    1371738371441037343,  # Trial mod
+}
 MAX_ICON_BYTES = 256 * 1024
 
 _role_registry: dict[int, int] = {}
@@ -389,6 +402,47 @@ async def _place_role_above_anchor(
     )
 
 
+async def _validate_custom_role_safety(
+    guild: discord.Guild,
+    role: discord.Role,
+    *,
+    repair_permissions: bool = True,
+) -> discord.Role:
+    """Fail closed if a registered custom role could grant elevated access."""
+    if role.id in PROTECTED_STAFF_ROLE_IDS or role.id == CUSTOM_ROLE_ANCHOR_ROLE_ID:
+        raise CustomRoleError("❌ Security check blocked this action: that is a protected server role.")
+
+    # Custom roles must never carry permissions. Repair unexpected permissions
+    # to prevent Administrator or other elevated permissions from persisting.
+    if role.permissions.value != 0:
+        if not repair_permissions:
+            raise CustomRoleError("❌ Security check blocked this action because the role has permissions.")
+        try:
+            await role.edit(
+                permissions=discord.Permissions.none(),
+                reason="Security safeguard: remove permissions from a custom role",
+            )
+            role = guild.get_role(role.id) or role
+        except (discord.Forbidden, discord.HTTPException) as error:
+            raise CustomRoleError(
+                "❌ Security check blocked this action because I could not remove permissions from the custom role."
+            ) from error
+        if role.permissions.value != 0:
+            raise CustomRoleError("❌ Security check blocked this action because the role still has permissions.")
+
+    protected_roles = [
+        guild.get_role(role_id)
+        for role_id in PROTECTED_STAFF_ROLE_IDS
+    ]
+    for protected in protected_roles:
+        if protected is not None and role.position >= protected.position:
+            raise CustomRoleError(
+                "❌ Security check blocked this action: custom roles must stay below all staff roles. "
+                "Please move the reference role lower than the staff hierarchy."
+            )
+    return role
+
+
 async def _owned_role(
     guild: discord.Guild,
     member: discord.Member,
@@ -402,6 +456,12 @@ async def _owned_role(
 
     role = guild.get_role(role_id)
     if role is not None:
+        # Never let a bad registry entry turn a staff role into a "custom" role.
+        if role.id in PROTECTED_STAFF_ROLE_IDS or role.id == CUSTOM_ROLE_ANCHOR_ROLE_ID:
+            raise CustomRoleError(
+                "❌ Security check blocked this action because your registry points to a protected server role."
+            )
+        role = await _validate_custom_role_safety(guild, role)
         if ensure_position:
             role = await _place_role_above_anchor(
                 guild,
@@ -409,6 +469,7 @@ async def _owned_role(
                 required=False,
                 reason=f"Correcting custom role position for {member} ({member.id})",
             )
+            role = await _validate_custom_role_safety(guild, role)
         return role
 
     _role_registry.pop(member.id, None)
@@ -486,6 +547,7 @@ async def _create_role(
                 required=True,
                 reason=f"Positioning custom role above reference role {CUSTOM_ROLE_ANCHOR_ROLE_ID}",
             )
+            role = await _validate_custom_role_safety(guild, role, repair_permissions=False)
             await member.add_roles(
                 role,
                 reason="Assigning the member's custom role",
