@@ -690,6 +690,34 @@ async def handle_expired_staff_strikes(
     for strike in expired_strikes:
         by_user.setdefault(int(strike["user_id"]), []).append(strike)
 
+    # Update each original strike log in place so expiry does not create
+    # a second, separate log entry. Older strikes without a saved message ID
+    # are safely skipped.
+    guild = bot.get_guild(MAIN_SERVER)
+    channel = guild.get_channel(STAFF_STRIKE_ACTIVE_CHANNEL_ID) if guild else None
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(STAFF_STRIKE_ACTIVE_CHANNEL_ID)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            channel = None
+
+    for strike in expired_strikes:
+        message_id = strike.get("log_message_id")
+        if not message_id or channel is None or not hasattr(channel, "fetch_message"):
+            continue
+        try:
+            message = await channel.fetch_message(int(message_id))
+            original_content = message.content
+            if "Strike expired" not in original_content:
+                expires_at = _staff_strike_datetime(strike.get("expires_at", ""))
+                expiry_text = (
+                    f"\n\n✅ **Strike expired**"
+                    + (f" <t:{int(expires_at.timestamp())}:R>" if expires_at else "")
+                )
+                await message.edit(content=original_content + expiry_text)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
+            pass
+
     for user_id, user_expired in by_user.items():
         member = await resolve_main_guild_member(user_id)
         if member is None:
