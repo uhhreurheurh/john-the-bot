@@ -418,11 +418,10 @@ async def _validate_custom_role_safety(
         if not repair_permissions:
             raise CustomRoleError("❌ Security check blocked this action because the role has permissions.")
         try:
-            await role.edit(
+            role = await role.edit(
                 permissions=discord.Permissions.none(),
                 reason="Security safeguard: remove permissions from a custom role",
             )
-            role = guild.get_role(role.id) or role
         except (discord.Forbidden, discord.HTTPException) as error:
             raise CustomRoleError(
                 "❌ Security check blocked this action because I could not remove permissions from the custom role."
