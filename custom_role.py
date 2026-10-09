@@ -644,7 +644,7 @@ async def handle_prefix(message: discord.Message) -> bool:
     try:
         parts = shlex.split(content)
     except ValueError:
-        if content.lower().startswith((",custom role", ",customrole")):
+        if content.lower().startswith((",custom role", ",customrole", ",cr")):
             await message.reply(
                 "❌ I couldn't parse those arguments. Put quotes around a role name with special characters.",
                 mention_author=False,
@@ -660,7 +660,7 @@ async def handle_prefix(message: discord.Message) -> bool:
         if len(parts) < 2 or parts[1].lower() != "role":
             return False
         action_index = 2
-    elif command == ",customrole":
+    elif command in {",customrole", ",cr"}:
         action_index = 1
     else:
         return False
@@ -676,6 +676,8 @@ async def handle_prefix(message: discord.Message) -> bool:
         expected_prefix = (
             ",custom role create <color> [second-color] <name>"
             if command == ",custom"
+            else ",cr create <color> [second-color] <name>"
+            if command == ",cr"
             else ",customrole create <color> [second-color] <name>"
         )
         if len(parts) <= color_index:
@@ -760,7 +762,7 @@ async def handle_prefix(message: discord.Message) -> bool:
         args = ()
     else:
         await message.reply(
-            "Custom role commands: ,custom role create, color, random, rename, icon, and remove.",
+            "Custom role commands: ,cr create, color, random, rename, icon, and remove (alias for ,custom role).",
             mention_author=False,
         )
         return True
