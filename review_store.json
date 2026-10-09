@@ -2239,6 +2239,23 @@
       "reviewed_by": 191233879175200768,
       "created_at": "2026-10-03 19:23:57",
       "reviewed_at": "2026-10-03 20:05:55"
+    },
+    {
+      "id": 14,
+      "review_id": 103,
+      "target_id": 1549799569448112128,
+      "reviewer_id": 1512484378050302053,
+      "old_rating": 4,
+      "old_comment": "He’s not that bad he’s pretty cool we all a big family except swiv he’s a fucking bitch.",
+      "new_rating": 1,
+      "new_comment": "Worst nigga to be around actually gives me a headache every time it’s active no joke",
+      "update_reason": "Stupid bitch boy",
+      "status": "pending",
+      "approval_message_id": null,
+      "approval_channel_id": null,
+      "reviewed_by": null,
+      "created_at": "2026-10-09 22:15:39",
+      "reviewed_at": null
     }
   ],
   "review_id_sequence": 6
