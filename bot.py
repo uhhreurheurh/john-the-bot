@@ -1718,6 +1718,7 @@ async def on_message(message: discord.Message):
                      ("Coin Flip Battle", "`,coinflipbattle @user <bet>` — Challenge another player\nThe challenged player must accept; the coin decides the winner."),
                     ("Reviews", "`,review @user` — Leave a review\n`,updatereview @user` — Request a review update\n`,reviews @user` — View reviews\n`,deletereview ID` — Delete a review\n`,leaderboard` — View the review leaderboard\n`,reviewblacklist add/remove/status @user` — Manage the review blacklist"),
                     ("Staff & Management", "`,strike @user <7-40d> <reason>` — Issue a staff strike\n`,removestrike @user <number>` — Remove a staff strike\n`,safechatban @user` — Staff: ban a user from SafeChat\n`,safechatunban @user` — Staff: unban a user from SafeChat\n\n`,textify blacklist/unblacklist/status @user` — Manage the Textify blacklist\n`,textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n`,blacklist add/remove/status @user` — Manage the second-role blacklist\n`,savedb` — Save the review database"),
+                    ("Custom Roles", ",custom role create <color> [second-color] <name> — Create your role\n,custom role color <color> [second-color] — Change its color\n,custom role random — Random color\n,custom role rename <name> — Rename it\n,custom role icon <https-url> — Set its icon\n,custom role remove — Delete it"),
                 ]
 
             def update_buttons(self):
@@ -2103,6 +2104,10 @@ async def on_message(message: discord.Message):
 
     # Coin Flip Battle prefix command.
     if await coinflip_feature.handle_prefix(message):
+        return
+
+    # Staff-restricted personal custom-role commands.
+    if await custom_role_feature.handle_prefix(message):
         return
 
     # Review, leaderboard, and remaining staff prefix commands.
@@ -2587,6 +2592,7 @@ class SlashJelpView(discord.ui.View):
             ("UWUIFY & HOODIFY", "`/uwuify @user` — Enable UWUIFY\n`/unuwuify @user` — Disable UWUIFY\n`/uwucount` — Show active UWUIFY count\n\n`/hoodify @user` — Enable HOODIFY\n`/unhoodify @user` — Disable HOODIFY\n`/hoodcount` — Show active HOODIFY count"),
             ("Reviews", "`/review @user` — Leave a review\n`/updatereview @user` — Request a review update\n`/reviews @user` — View reviews\n`/deletereview ID` — Delete a review\n`/leaderboard` — View the review leaderboard"),
             ("Management", "`/safechat` — Toggle SafeChat for yourself\n`/safechatban @user` — Staff: ban a user from SafeChat\n`/safechatunban @user` — Staff: unban a user from SafeChat\n`/textify blacklist/unblacklist/status @user` — Manage Textify\n`/textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n`/blacklist add/remove/status @user` — Manage the second-role blacklist\n`/savedb` — Save the review database"),
+            ("Custom Roles", "/custom role create <name> <color> [second_color] — Create your role\n/custom role color <color> [second_color] — Change its color\n/custom role random — Random color\n/custom role rename <name> — Rename it\n/custom role icon <url> — Set its icon\n/custom role remove — Delete it"),
         ]
     def update_buttons(self):
         self.previous.disabled = self.page == 0
@@ -3435,6 +3441,7 @@ import blackjack as blackjack_feature
 import mines as mines_feature
 import slots as slots_feature
 import coinflip as coinflip_feature
+import custom_role as custom_role_feature
 from hoodify_feature import *
 from safechat_feature import *
 from uwuify_feature import *
