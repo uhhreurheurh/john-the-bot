@@ -35,6 +35,7 @@ CUSTOM_ROLE_ANCHOR_ROLE_ID = 1354259084114661509
 # registry is stale or corrupted. Keep this list in sync with the server's
 # staff hierarchy.
 PROTECTED_STAFF_ROLE_IDS = {
+    1306082718060384399,  # Additional Staff Manager+-authorized role
     1518416402141417472,  # Co-owner
     1397677852056354948,  # Director
     1371738883401711656,  # Staff manager
