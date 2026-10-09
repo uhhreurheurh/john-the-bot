@@ -667,10 +667,32 @@ async def _send_interaction_response(
     *,
     followup: bool = False,
 ) -> None:
+    embed = _response_embed(message)
     if followup or interaction.response.is_done():
-        await interaction.followup.send(message, ephemeral=False)
+        await interaction.followup.send(embed=embed, ephemeral=False)
     else:
-        await interaction.response.send_message(message, ephemeral=False)
+        await interaction.response.send_message(embed=embed, ephemeral=False)
+
+
+def _response_embed(message: str) -> discord.Embed:
+    """Format custom-role command replies as compact embeds."""
+    lowered = message.lower()
+    if message.startswith(("❌", "⛔")) or "failed" in lowered or "error" in lowered:
+        color = discord.Colour.red()
+        title = "Custom Role — Error"
+    elif "color" in lowered or "colour" in lowered or "hex code" in lowered or "gradient" in lowered:
+        color = discord.Colour.from_rgb(212, 179, 195)
+        title = "Custom Role — Appearance Updated"
+    elif "renamed" in lowered or "name was successfully changed" in lowered:
+        color = discord.Colour.from_rgb(212, 179, 195)
+        title = "Custom Role — Renamed"
+    elif "removed" in lowered:
+        color = discord.Colour.dark_grey()
+        title = "Custom Role — Removed"
+    else:
+        color = discord.Colour.from_rgb(212, 179, 195)
+        title = "Custom Role"
+    return discord.Embed(title=title, description=message, colour=color)
 
 
 async def _run_slash(
@@ -921,5 +943,5 @@ async def handle_prefix(message: discord.Message) -> bool:
     except Exception as error:
         response = f"❌ The custom role action failed: {type(error).__name__}: {error}"
 
-    await message.reply(response, mention_author=False)
+    await message.reply(embed=_response_embed(response), mention_author=False)
     return True
