@@ -17,15 +17,6 @@
       "issued_at": "2026-10-07T22:20:07.671022+00:00",
       "expires_at": "2026-10-14T22:20:07.671022+00:00",
       "original_staff_role_id": 1518416402141417472
-    },
-    {
-      "user_id": 191233879175200768,
-      "strike_number": 2,
-      "reason": "hhh",
-      "issued_by": 191233879175200768,
-      "issued_at": "2026-10-09T00:30:27.262397+00:00",
-      "expires_at": "2026-11-01T00:30:27.262397+00:00",
-      "original_staff_role_id": 1371739870380425236
     }
   ],
   "permanent_demotions": {
