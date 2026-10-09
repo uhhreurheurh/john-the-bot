@@ -1114,6 +1114,75 @@ async def on_message(message: discord.Message):
             await message.reply(response, mention_author=False)
             return
 
+    if spaced_parts and spaced_parts[0].lower() == ",staffpromote":
+        if not (
+            message.guild is not None
+            and message.guild.id == MAIN_SERVER
+            and isinstance(message.author, discord.Member)
+            and staff_promotion_command_allowed(message.author)
+        ):
+            await message.reply(
+                "❌ Only Staff Manager or higher can use this command in the main server.",
+                mention_author=False,
+            )
+            return
+
+        promote_parts = content.split(maxsplit=2)
+        if len(promote_parts) < 3:
+            await message.reply(
+                "Usage: ,staffpromote @user @staff-role",
+                mention_author=False,
+            )
+            return
+
+        target = message.mentions[0] if message.mentions else None
+        target_token = promote_parts[1].strip("<@!>")
+        if target is None:
+            try:
+                target_id = int(target_token)
+            except ValueError:
+                target_id = 0
+            if target_id:
+                target = message.guild.get_member(target_id)
+                if target is None:
+                    try:
+                        target = await message.guild.fetch_member(target_id)
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                        target = None
+
+        if target is None:
+            await message.reply(
+                "❌ Mention a valid member or provide their user ID.",
+                mention_author=False,
+            )
+            return
+
+        target_role = message.role_mentions[0] if message.role_mentions else None
+        if target_role is None:
+            role_token = promote_parts[2].strip()
+            try:
+                role_id = int(role_token.strip("<@&>"))
+            except ValueError:
+                role_id = 0
+            if role_id:
+                target_role = message.guild.get_role(role_id)
+            if target_role is None:
+                target_role = next(
+                    (role for role in message.guild.roles if role.name.casefold() == role_token.casefold()),
+                    None,
+                )
+
+        if target_role is None:
+            await message.reply(
+                "❌ Mention a configured staff role or provide its exact name/ID.",
+                mention_author=False,
+            )
+            return
+
+        _, response = await perform_staff_promotion(message.author, target, target_role)
+        await message.reply(response, mention_author=False)
+        return
+
     if spaced_parts and spaced_parts[0].lower() == ",strike":
         if not (
             message.guild is not None
@@ -1130,7 +1199,7 @@ async def on_message(message: discord.Message):
         strike_parts = content.split(maxsplit=3)
         if len(strike_parts) < 4:
             await message.reply(
-                "Usage: ,strike @user 7 false mute",
+                "Usage: ,strike @user 7 [temporary|permanent] reason",
                 mention_author=False,
             )
             return
@@ -1167,7 +1236,15 @@ async def on_message(message: discord.Message):
             )
             return
 
-        reason = strike_parts[3].strip()
+        reason_arg = strike_parts[3].strip()
+        reason_parts = reason_arg.split(maxsplit=1)
+        demotion_value = "temporary"
+        if reason_parts and reason_parts[0].lower() in {"temporary", "permanent"}:
+            demotion_value = reason_parts[0].lower()
+            reason = reason_parts[1].strip() if len(reason_parts) > 1 else ""
+        else:
+            reason = reason_arg
+
         if not reason:
             await message.reply(
                 "❌ You must provide a reason for the strike.",
@@ -1189,6 +1266,19 @@ async def on_message(message: discord.Message):
             return
 
         original_role_id = get_original_staff_role_id(target.id) or current_staff_info[1].id
+        active_before = len(get_user_staff_strikes(target.id))
+        if demotion_value == "permanent" and active_before + 1 != STAFF_STRIKE_ACTIVATION_THRESHOLD:
+            await message.reply(
+                "❌ Choose permanent demotion only when this will be the member's second active strike.",
+                mention_author=False,
+            )
+            return
+        if is_duplicate_staff_strike_submission(message.author.id, target.id, days, reason):
+            await message.reply(
+                "⚠️ This looks like a duplicate strike submission. No additional strike was added.",
+                mention_author=False,
+            )
+            return
 
         strike = create_staff_strike(
             user_id=target.id,
@@ -1198,6 +1288,13 @@ async def on_message(message: discord.Message):
             original_staff_role_id=original_role_id,
         )
         active_count = len(get_user_staff_strikes(target.id))
+        if active_count == STAFF_STRIKE_ACTIVATION_THRESHOLD and demotion_value == "permanent":
+            register_permanent_staff_demotion(
+                target,
+                original_role_id=original_role_id,
+                issued_by=message.author.id,
+                reason=reason,
+            )
         consequence = await apply_staff_strike_consequences(
             target,
             active_count=active_count,
