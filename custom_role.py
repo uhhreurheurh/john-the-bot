@@ -208,7 +208,7 @@ async def _custom_role_access_expiry_worker() -> None:
         except Exception:
             # A temporary persistence issue must not stop future expiry checks.
             pass
-        await asyncio.sleep(60)
+        await asyncio.sleep(10)
 
 
 def start_access_expiry_cleanup() -> None:
