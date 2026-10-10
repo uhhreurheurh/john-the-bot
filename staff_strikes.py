@@ -155,6 +155,10 @@ def _staff_strike_datetime(value: str) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+# Explicit backfill for the historical strike log reported by the owner.
+# The reconciliation skips it automatically after it has the expiry marker.
+LEGACY_STAFF_STRIKE_LOG_MESSAGE_IDS_TO_REPAIR = {1555649241873907826}
+
 _legacy_staff_strike_log_reconciliation_complete = False
 
 
@@ -219,8 +223,60 @@ async def reconcile_expired_staff_strike_log_messages() -> int:
     cutoff = now - timedelta(days=45)  # Maximum strike duration is 40 days.
     updated = 0
     retry_needed = False
+
+    # Check the exact reported message first so it is repaired even if its
+    # historical wording differs from the current strike-log format.
+    for legacy_message_id in LEGACY_STAFF_STRIKE_LOG_MESSAGE_IDS_TO_REPAIR:
+        try:
+            legacy_message = await channel.fetch_message(legacy_message_id)
+        except discord.NotFound:
+            continue
+        except (discord.Forbidden, discord.HTTPException) as error:
+            retry_needed = True
+            print(
+                f"Could not fetch legacy strike log {legacy_message_id}: "
+                f"{type(error).__name__}: {error}"
+            )
+            continue
+
+        legacy_content = legacy_message.content or ""
+        if not legacy_content or "Strike expired" in legacy_content:
+            continue
+        duration_match = re.search(
+            r"(?:^|\n)(\d{1,2})\s*(?:d|days?)\s*$",
+            legacy_content,
+            flags=re.IGNORECASE,
+        )
+        if duration_match is None:
+            print(
+                f"Could not parse the duration in legacy strike log {legacy_message_id}; "
+                "it was left unchanged."
+            )
+            retry_needed = True
+            continue
+        days = int(duration_match.group(1))
+        if not 1 <= days <= 40:
+            continue
+        expires_at = legacy_message.created_at + timedelta(days=days)
+        if expires_at > now:
+            continue
+        try:
+            await legacy_message.edit(
+                content=legacy_content
+                + f"\n\n✅ **Strike expired** <t:{int(expires_at.timestamp())}:R>"
+            )
+            updated += 1
+        except discord.NotFound:
+            continue
+        except (discord.Forbidden, discord.HTTPException) as error:
+            retry_needed = True
+            print(
+                f"Could not update legacy strike log {legacy_message_id}: "
+                f"{type(error).__name__}: {error}"
+            )
+
     try:
-        async for message in channel.history(limit=None, after=cutoff, oldest_first=False):
+        async for message in channel.history(limit=2000, after=cutoff, oldest_first=False):
             if bot.user is not None and message.author.id != bot.user.id:
                 continue
             content = message.content or ""
@@ -265,8 +321,7 @@ async def reconcile_expired_staff_strike_log_messages() -> int:
         return updated
 
     _legacy_staff_strike_log_reconciliation_complete = not retry_needed
-    if updated:
-        print(f"Staff strike log reconciliation updated {updated} expired historical message(s).")
+    print(f"Staff strike log reconciliation completed; updated {updated} expired historical message(s).")
     return updated
 
 
