@@ -51,7 +51,7 @@ jobs:
           custom_role_group = custom_group.get_command('role')
           assert isinstance(custom_role_group, app_commands.Group), 'Missing /custom role group'
           custom_subcommands = {command.name for command in custom_role_group.commands}
-          expected_custom_subcommands = {'create', 'color', 'random', 'rename', 'icon', 'remove'}
+          expected_custom_subcommands = {'create', 'color', 'random', 'rename', 'icon', 'remove', 'share', 'unshare'}
           assert expected_custom_subcommands <= custom_subcommands, (
               f'Missing custom role subcommands: {sorted(expected_custom_subcommands - custom_subcommands)}'
           )
