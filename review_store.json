@@ -2032,6 +2032,14 @@
       "rating": 5,
       "comment": "Very good admin, I think has only insulted me once which is very king, also left a gold review so I like kovak hooray",
       "created_at": "2026-10-10 13:33:01"
+    },
+    {
+      "id": 288,
+      "target_id": 1036557333121212486,
+      "reviewer_id": 1041696919564595241,
+      "rating": 5,
+      "comment": "gave me a booster role when I was naked",
+      "created_at": "2026-10-10 13:35:26"
     }
   ],
   "review_update_requests": [
