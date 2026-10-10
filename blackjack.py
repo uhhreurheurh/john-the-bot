@@ -104,6 +104,7 @@ def _default_data() -> dict:
         "daily_claims": {},
         "chat_activity": {},
         "custom_role_access": {},
+        "expired_custom_roles": {},
     }
 
 
@@ -148,6 +149,7 @@ def load_data() -> dict:
         daily_claims = data.get("daily_claims", {})
         chat_activity = data.get("chat_activity", {})
         custom_role_access = data.get("custom_role_access", {})
+        expired_custom_roles = data.get("expired_custom_roles", {})
 
         if not isinstance(balances, dict):
             balances = {}
@@ -155,6 +157,8 @@ def load_data() -> dict:
             daily_claims = {}
         if not isinstance(custom_role_access, dict):
             custom_role_access = {}
+        if not isinstance(expired_custom_roles, dict):
+            expired_custom_roles = {}
 
         return {
             "balances": {
@@ -170,6 +174,11 @@ def load_data() -> dict:
                 str(user_id): str(expires_at)
                 for user_id, expires_at in custom_role_access.items()
                 if expires_at not in (None, "")
+            },
+            "expired_custom_roles": {
+                str(user_id): snapshot
+                for user_id, snapshot in expired_custom_roles.items()
+                if isinstance(snapshot, dict)
             },
         }
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
@@ -327,11 +336,14 @@ async def restore_data_from_github() -> bool:
             daily_claims = remote.get("daily_claims", {})
             chat_activity = remote.get("chat_activity", {})
             custom_role_access = remote.get("custom_role_access", {})
+            expired_custom_roles = remote.get("expired_custom_roles", {})
 
             if not isinstance(balances, dict) or not isinstance(daily_claims, dict):
                 return False
             if not isinstance(custom_role_access, dict):
                 custom_role_access = {}
+            if not isinstance(expired_custom_roles, dict):
+                expired_custom_roles = {}
 
             data["balances"] = {
                 str(user_id): max(0, int(balance))
@@ -346,6 +358,11 @@ async def restore_data_from_github() -> bool:
                 str(user_id): str(expires_at)
                 for user_id, expires_at in custom_role_access.items()
                 if expires_at not in (None, "")
+            }
+            data["expired_custom_roles"] = {
+                str(user_id): snapshot
+                for user_id, snapshot in expired_custom_roles.items()
+                if isinstance(snapshot, dict)
             }
             _save_local()
             return True
