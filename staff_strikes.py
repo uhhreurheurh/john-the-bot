@@ -230,6 +230,7 @@ async def reconcile_expired_staff_strike_log_messages() -> int:
         try:
             legacy_message = await channel.fetch_message(legacy_message_id)
         except discord.NotFound:
+            print(f"Legacy strike log {legacy_message_id} was not found in the active-strike channel.")
             continue
         except (discord.Forbidden, discord.HTTPException) as error:
             retry_needed = True
@@ -240,32 +241,68 @@ async def reconcile_expired_staff_strike_log_messages() -> int:
             continue
 
         legacy_content = legacy_message.content or ""
-        if not legacy_content or "Strike expired" in legacy_content:
+        embed_parts = []
+        for embed in legacy_message.embeds:
+            if embed.title:
+                embed_parts.append(embed.title)
+            if embed.description:
+                embed_parts.append(embed.description)
+            if embed.footer and embed.footer.text:
+                embed_parts.append(embed.footer.text)
+            if embed.author and embed.author.name:
+                embed_parts.append(embed.author.name)
+            for field in embed.fields:
+                if field.name:
+                    embed_parts.append(field.name)
+                if field.value:
+                    embed_parts.append(field.value)
+        searchable_text = "\n".join(part for part in [legacy_content, *embed_parts] if part)
+
+        if not searchable_text:
+            retry_needed = True
+            print(f"Legacy strike log {legacy_message_id} has no readable content or embed text.")
             continue
+        if "Strike expired" in searchable_text:
+            print(f"Legacy strike log {legacy_message_id} already has an expiry marker.")
+            continue
+
         duration_match = re.search(
-            r"(?:^|\n)(\d{1,2})\s*(?:d|days?)\s*$",
-            legacy_content,
+            r"(?:^|\n)\s*(\d{1,2})\s*(?:d|days?)\s*$",
+            searchable_text,
             flags=re.IGNORECASE,
         )
         if duration_match is None:
-            print(
-                f"Could not parse the duration in legacy strike log {legacy_message_id}; "
-                "it was left unchanged."
+            duration_match = re.search(
+                r"\b(?:duration|expires?(?: in)?)\s*[:\-]?\s*(\d{1,2})\s*(?:d|days?)\b",
+                searchable_text,
+                flags=re.IGNORECASE,
             )
+        if duration_match is None:
             retry_needed = True
+            print(
+                f"Could not find a strike duration in legacy message {legacy_message_id}; "
+                "left it unchanged."
+            )
             continue
+
         days = int(duration_match.group(1))
         if not 1 <= days <= 40:
+            print(f"Legacy strike log {legacy_message_id} has an invalid duration ({days} days); left unchanged.")
             continue
         expires_at = legacy_message.created_at + timedelta(days=days)
         if expires_at > now:
-            continue
-        try:
-            await legacy_message.edit(
-                content=legacy_content
-                + f"\n\n✅ **Strike expired** <t:{int(expires_at.timestamp())}:R>"
+            print(
+                f"Legacy strike log {legacy_message_id} has not expired yet; "
+                f"duration {days}d, estimated expiry {expires_at.isoformat()}."
             )
+            continue
+
+        try:
+            marker = f"✅ **Strike expired** <t:{int(expires_at.timestamp())}:R>"
+            updated_content = legacy_content + ("\n\n" if legacy_content else "") + marker
+            await legacy_message.edit(content=updated_content)
             updated += 1
+            print(f"Updated legacy strike log {legacy_message_id} with an expiry marker.")
         except discord.NotFound:
             continue
         except (discord.Forbidden, discord.HTTPException) as error:
