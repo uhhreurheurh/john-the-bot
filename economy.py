@@ -24,6 +24,7 @@ CHAT_COOLDOWN_SECONDS = 60
 CHAT_DAILY_CAP = 500
 CHAT_BOOSTED_DAILY_CAP = 1_000
 CHAT_BOOST_DURATION = timedelta(hours=1)
+CUSTOM_ROLE_ACCESS_DURATION = timedelta(days=14)
 DATA_SYNC_DELAY_SECONDS = 120
 
 SHOP_ITEMS = {
@@ -36,6 +37,11 @@ SHOP_ITEMS = {
         "name": "Daily Boost",
         "cost": 400,
         "description": "Double your next daily claim from 500 to 1,000 Kevin Bucks.",
+    },
+    "customrole": {
+        "name": "Custom Role Access (14 days)",
+        "cost": 5000,
+        "description": "Unlock ,cr / /custom role commands for 14 days. Access is removed automatically when the pass expires.",
     },
 }
 
@@ -214,14 +220,14 @@ def _shop_embed() -> discord.Embed:
         description="Spend your Kevin Bucks on boosts for the shared server economy.",
         color=discord.Color.blurple(),
     )
-    for key in ("chatboost", "dailyboost"):
+    for key in ("chatboost", "dailyboost", "customrole"):
         item = SHOP_ITEMS[key]
         embed.add_field(
             name=f"{item['name']} — {item['cost']:,} KB",
             value=item["description"],
             inline=False,
         )
-    embed.set_footer(text="Use ,buy chatboost or ,buy dailyboost to purchase an item.")
+    embed.set_footer(text="Use ,buy chatboost, ,buy dailyboost, or ,buy customrole to purchase an item.")
     return embed
 
 
@@ -234,6 +240,11 @@ def _normalize_item(raw: str) -> Optional[str]:
         "daily": "dailyboost",
         "dailyboost": "dailyboost",
         "doubledaily": "dailyboost",
+        "custom": "customrole",
+        "role": "customrole",
+        "customrole": "customrole",
+        "customroleaccess": "customrole",
+        "roleaccess": "customrole",
     }
     return aliases.get(normalized)
 
@@ -257,6 +268,14 @@ async def _purchase(user_id: int, raw_item: str) -> tuple[bool, str]:
         else:
             base_time = now
         new_until = base_time + CHAT_BOOST_DURATION
+    elif item_key == "customrole":
+        access = blackjack_feature.data.setdefault("custom_role_access", {})
+        if not isinstance(access, dict):
+            access = {}
+            blackjack_feature.data["custom_role_access"] = access
+        current_until = _parse_timestamp(access.get(str(user_id)))
+        base_time = current_until if current_until is not None and current_until > now else now
+        new_until = base_time + CUSTOM_ROLE_ACCESS_DURATION
 
     balance = blackjack_feature.get_balance(user_id)
     if balance < item["cost"]:
@@ -271,6 +290,15 @@ async def _purchase(user_id: int, raw_item: str) -> tuple[bool, str]:
         response = (
             f"Purchased **Chat Boost** for {item['cost']:,} Kevin Bucks. "
             f"Your boost is active until **{until_text}**."
+        )
+    elif item_key == "customrole":
+        access = blackjack_feature.data.setdefault("custom_role_access", {})
+        access[str(user_id)] = new_until.isoformat()
+        until_text = new_until.strftime("%Y-%m-%d %H:%M UTC")
+        response = (
+            f"Purchased **Custom Role Access (14 days)** for {item['cost']:,} Kevin Bucks. "
+            f"You can use ,cr / /custom role commands until **{until_text}**. "
+            "Renewing early extends access by another 14 days."
         )
     else:
         state["daily_multiplier"] = 2
@@ -301,9 +329,24 @@ def _inventory_text(user_id: int) -> str:
         if int(state.get("daily_multiplier", 1)) >= 2
         else "None"
     )
+    access = blackjack_feature.data.get("custom_role_access", {})
+    raw_access_until = access.get(str(user_id)) if isinstance(access, dict) else None
+    access_until = _parse_timestamp(raw_access_until)
+    if access_until is not None and access_until > now:
+        remaining_seconds = int((access_until - now).total_seconds())
+        days, remainder = divmod(remaining_seconds, 86400)
+        hours = remainder // 3600
+        custom_role_status = (
+            f"Active — **{days}d {hours}h** remaining "
+            f"(expires {access_until.strftime('%Y-%m-%d %H:%M UTC')})"
+        )
+    else:
+        custom_role_status = "Not active"
+
     return (
         f"**Chat Boost:** {chat_status}\n"
-        f"**Daily Boost:** {daily_status}"
+        f"**Daily Boost:** {daily_status}\n"
+        f"**Custom Role Access:** {custom_role_status}"
     )
 
 
@@ -324,6 +367,7 @@ async def shop_command(interaction: discord.Interaction):
     item=[
         app_commands.Choice(name="Chat Boost — 750 KB", value="chatboost"),
         app_commands.Choice(name="Daily Boost — 400 KB", value="dailyboost"),
+        app_commands.Choice(name="Custom Role Access (14 days) — 5,000 KB", value="customrole"),
     ]
 )
 async def buy_command(
@@ -371,7 +415,7 @@ async def handle_prefix(message: discord.Message) -> bool:
     if command == ",buy":
         if len(parts) != 2:
             await message.reply(
-                "Usage: ,buy chatboost or ,buy dailyboost",
+                "Usage: ,buy chatboost, ,buy dailyboost, or ,buy customrole",
                 mention_author=False,
             )
             return True
