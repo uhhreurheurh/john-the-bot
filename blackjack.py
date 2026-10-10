@@ -74,7 +74,35 @@ def _default_data() -> dict:
     return {
         "balances": {},
         "daily_claims": {},
+        "chat_activity": {},
     }
+
+
+def _normalize_chat_activity(raw) -> dict:
+    if not isinstance(raw, dict):
+        return {}
+
+    normalized = {}
+    for user_id, state in raw.items():
+        if not isinstance(state, dict):
+            continue
+        try:
+            earned_today = max(0, int(state.get("earned_today", 0)))
+        except (TypeError, ValueError):
+            earned_today = 0
+        try:
+            daily_multiplier = 2 if int(state.get("daily_multiplier", 1)) >= 2 else 1
+        except (TypeError, ValueError):
+            daily_multiplier = 1
+
+        normalized[str(user_id)] = {
+            "last_reward_at": str(state.get("last_reward_at", "") or ""),
+            "day": str(state.get("day", "") or ""),
+            "earned_today": earned_today,
+            "boost_until": str(state.get("boost_until", "") or ""),
+            "daily_multiplier": daily_multiplier,
+        }
+    return normalized
 
 
 def load_data() -> dict:
@@ -89,6 +117,7 @@ def load_data() -> dict:
 
         balances = data.get("balances", {})
         daily_claims = data.get("daily_claims", {})
+        chat_activity = data.get("chat_activity", {})
 
         if not isinstance(balances, dict):
             balances = {}
@@ -104,6 +133,7 @@ def load_data() -> dict:
                 str(user_id): str(timestamp)
                 for user_id, timestamp in daily_claims.items()
             },
+            "chat_activity": _normalize_chat_activity(chat_activity),
         }
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return _default_data()
@@ -258,6 +288,7 @@ async def restore_data_from_github() -> bool:
 
             balances = remote.get("balances", {})
             daily_claims = remote.get("daily_claims", {})
+            chat_activity = remote.get("chat_activity", {})
 
             if not isinstance(balances, dict) or not isinstance(daily_claims, dict):
                 return False
@@ -270,6 +301,7 @@ async def restore_data_from_github() -> bool:
                 str(user_id): str(timestamp)
                 for user_id, timestamp in daily_claims.items()
             }
+            data["chat_activity"] = _normalize_chat_activity(chat_activity)
             _save_local()
             return True
         except Exception:
@@ -799,12 +831,17 @@ async def daily_command(interaction: discord.Interaction):
             pass
 
     data["daily_claims"][user_id] = now.isoformat()
-    balance = add_balance(interaction.user.id, DAILY_AMOUNT)
+    activity_state = data.setdefault("chat_activity", {}).setdefault(user_id, {})
+    multiplier = 2 if int(activity_state.get("daily_multiplier", 1)) >= 2 else 1
+    activity_state["daily_multiplier"] = 1
+    reward_amount = DAILY_AMOUNT * multiplier
+    balance = add_balance(interaction.user.id, reward_amount)
     await save_data()
 
     await interaction.response.send_message(
-        f"💰 You claimed **{DAILY_AMOUNT:,} {CURRENCY_NAME}**!\n"
-        f"New balance: **{balance:,} {CURRENCY_NAME}**"
+        f"💰 You claimed **{reward_amount:,} {CURRENCY_NAME}**!"
+        + (" (Daily Boost used!)" if multiplier > 1 else "")
+        + f"\nNew balance: **{balance:,} {CURRENCY_NAME}**"
     )
 
 
@@ -895,11 +932,16 @@ async def handle_prefix(message: discord.Message) -> bool:
                 pass
 
         data["daily_claims"][user_id] = now.isoformat()
-        balance = add_balance(message.author.id, DAILY_AMOUNT)
+        activity_state = data.setdefault("chat_activity", {}).setdefault(user_id, {})
+        multiplier = 2 if int(activity_state.get("daily_multiplier", 1)) >= 2 else 1
+        activity_state["daily_multiplier"] = 1
+        reward_amount = DAILY_AMOUNT * multiplier
+        balance = add_balance(message.author.id, reward_amount)
         await save_data()
 
+        reward_note = " (Daily Boost used!)" if multiplier > 1 else ""
         await message.reply(
-            f"💰 You claimed **{DAILY_AMOUNT:,} {CURRENCY_NAME}**! "
+            f"💰 You claimed **{reward_amount:,} {CURRENCY_NAME}**!{reward_note} "
             f"New balance: **{balance:,} {CURRENCY_NAME}**",
             mention_author=False,
         )
