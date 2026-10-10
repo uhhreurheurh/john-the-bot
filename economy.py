@@ -185,8 +185,6 @@ async def award_chat_activity(message: discord.Message) -> None:
 
     # Role perks scale both the reward and its corresponding daily cap.
     # The paid Chat Boost stacks with the role multiplier.
-    shop_multiplier = 2 if shop_boosted else 1
-    multiplier = role_multiplier * shop_multiplier
     base_daily_cap = CHAT_BOOSTED_DAILY_CAP if shop_boosted else CHAT_DAILY_CAP
     daily_cap = base_daily_cap * role_multiplier
     remaining = daily_cap - int(state.get("earned_today", 0))
