@@ -3544,6 +3544,7 @@ from reviews import (
 from leaderboard import *
 from staff_strikes import *
 from blackjack import *
+from economy import shop_command, buy_command, inventory_command
 from mines import *
 from slots import *
 from coinflip import *
