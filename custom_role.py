@@ -864,6 +864,7 @@ def _looks_like_unicode_emoji(value: str) -> bool:
         return False
 
     has_emoji_base = False
+    has_keycap = "\u20e3" in value
     for character in value:
         codepoint = ord(character)
         if (
@@ -873,9 +874,12 @@ def _looks_like_unicode_emoji(value: str) -> bool:
             or 0x1F1E6 <= codepoint <= 0x1F1FF
             or codepoint in {
                 0x00A9, 0x00AE, 0x203C, 0x2049, 0x2122, 0x2139,
-                0x3030, 0x303D, 0x3297, 0x3299, 0x0023, 0x002A,
-                *range(0x0030, 0x003A),
+                0x3030, 0x303D, 0x3297, 0x3299,
             }
+            or (
+                has_keycap
+                and codepoint in {0x0023, 0x002A, *range(0x0030, 0x003A)}
+            )
         ):
             has_emoji_base = True
             continue
