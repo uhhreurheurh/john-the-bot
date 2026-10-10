@@ -91,6 +91,49 @@ def _member_is_authorized(member: discord.Member | discord.User) -> bool:
     return expires_at is not None and expires_at > datetime.now(timezone.utc)
 
 
+async def _snapshot_expired_custom_role(
+    user_id: int,
+    role: discord.Role,
+) -> None:
+    """Persist enough safe role styling to recreate it after the owner renews."""
+    snapshots = blackjack_feature.data.setdefault("expired_custom_roles", {})
+    if not isinstance(snapshots, dict):
+        snapshots = {}
+        blackjack_feature.data["expired_custom_roles"] = snapshots
+
+    secondary = getattr(role, "secondary_colour", None)
+    snapshot = {
+        "name": role.name,
+        "colour": int(getattr(role, "colour", discord.Colour.default()).value),
+        "secondary_colour": int(secondary.value) if secondary is not None else None,
+        "hoist": bool(role.hoist),
+        "mentionable": bool(role.mentionable),
+        "shared_with": sorted(_role_shares.get(user_id, set()))[:MAX_SHARED_MEMBERS],
+        "icon": None,
+    }
+
+    icon = getattr(role, "display_icon", None)
+    if isinstance(icon, str):
+        snapshot["icon"] = {"type": "unicode", "value": icon}
+    elif icon is not None:
+        # Upload-backed role icons are exposed as Discord assets. Store their
+        # small image bytes before deleting the role, if Discord permits reading.
+        try:
+            icon_bytes = await icon.read()
+            if icon_bytes and len(icon_bytes) <= MAX_ICON_BYTES:
+                snapshot["icon"] = {
+                    "type": "bytes",
+                    "value": base64.b64encode(icon_bytes).decode("ascii"),
+                }
+        except (discord.HTTPException, OSError, AttributeError):
+            pass
+
+    snapshots[str(user_id)] = snapshot
+    # Save the snapshot to the shared Kevin Bucks database before the actual
+    # Discord role deletion, so a restart cannot lose the information.
+    await blackjack_feature.save_data()
+
+
 async def _delete_expired_member_custom_role(user_id: int) -> bool:
     """Delete only the expired buyer's registered custom role, then clean its metadata."""
     await _ensure_registry_loaded()
@@ -124,6 +167,7 @@ async def _delete_expired_member_custom_role(user_id: int) -> bool:
                     ):
                         return False
 
+                    await _snapshot_expired_custom_role(user_id, role)
                     await role.delete(
                         reason=f"Purchased custom role access expired for user {user_id}",
                     )
@@ -153,6 +197,166 @@ async def _delete_expired_member_custom_role(user_id: int) -> bool:
                 _role_shares[user_id] = previous_shares
                 return False
 
+        return True
+
+
+async def restore_expired_custom_role(user_id: int) -> bool:
+    """Recreate a previous custom role after its owner buys access again."""
+    snapshots = blackjack_feature.data.setdefault("expired_custom_roles", {})
+    if not isinstance(snapshots, dict):
+        snapshots = {}
+        blackjack_feature.data["expired_custom_roles"] = snapshots
+    snapshot = snapshots.get(str(user_id))
+    if not isinstance(snapshot, dict):
+        return False
+
+    guild = bot_module.bot.get_guild(bot_module.MAIN_SERVER)
+    if guild is None:
+        return False
+
+    member = guild.get_member(user_id)
+    if member is None:
+        try:
+            member = await guild.fetch_member(user_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return False
+
+    await _ensure_registry_loaded()
+    await _ensure_shares_loaded()
+
+    async with _role_mutation_lock:
+        # Avoid making duplicates if an existing registered role is still alive.
+        existing_id = _role_registry.get(user_id)
+        if existing_id is not None and guild.get_role(existing_id) is not None:
+            return False
+
+        bot_member = await _bot_member_with_role_permission(guild)
+        anchor_role = await _find_anchor_role(guild)
+        if anchor_role is None:
+            return False
+        if bot_member.top_role <= anchor_role:
+            return False
+
+        name = _validate_name(str(snapshot.get("name") or member.name))
+        try:
+            primary_value = int(snapshot.get("colour", 0))
+        except (TypeError, ValueError):
+            primary_value = 0
+        primary = discord.Colour(max(0, min(primary_value, 0xFFFFFF)))
+
+        secondary = None
+        raw_secondary = snapshot.get("secondary_colour")
+        if raw_secondary is not None and "ENHANCED_ROLE_COLORS" in guild.features:
+            try:
+                secondary_value = int(raw_secondary)
+                if 0 <= secondary_value <= 0xFFFFFF:
+                    secondary = discord.Colour(secondary_value)
+            except (TypeError, ValueError):
+                secondary = None
+
+        role = await guild.create_role(
+            name=name,
+            permissions=discord.Permissions.none(),
+            colour=primary,
+            secondary_colour=secondary,
+            hoist=bool(snapshot.get("hoist", False)),
+            mentionable=bool(snapshot.get("mentionable", False)),
+            reason=f"Restoring purchased custom role for {member} ({member.id})",
+        )
+
+        try:
+            role = await _place_role_above_anchor(
+                guild,
+                role,
+                required=True,
+                reason=f"Restoring custom role above reference role {CUSTOM_ROLE_ANCHOR_ROLE_ID}",
+            )
+            role = await _validate_custom_role_safety(
+                guild,
+                role,
+                repair_permissions=False,
+            )
+
+            icon_snapshot = snapshot.get("icon")
+            if isinstance(icon_snapshot, dict):
+                icon_type = icon_snapshot.get("type")
+                icon_value = icon_snapshot.get("value")
+                icon_data = None
+                if icon_type == "unicode" and isinstance(icon_value, str):
+                    icon_data = icon_value
+                elif icon_type == "bytes" and isinstance(icon_value, str):
+                    try:
+                        decoded_icon = base64.b64decode(icon_value, validate=True)
+                        if decoded_icon and len(decoded_icon) <= MAX_ICON_BYTES:
+                            icon_data = decoded_icon
+                    except (ValueError, TypeError):
+                        icon_data = None
+
+                if icon_data is not None and "ROLE_ICONS" in guild.features:
+                    try:
+                        role = await role.edit(
+                            display_icon=icon_data,
+                            reason="Restoring the owner's previous custom role icon",
+                        )
+                    except (discord.Forbidden, discord.HTTPException, TypeError, ValueError):
+                        # Keep the role if icon restoration is unavailable.
+                        pass
+
+            await member.add_roles(
+                role,
+                reason="Restoring the owner's previous custom role after repurchase",
+            )
+        except (CustomRoleError, discord.Forbidden, discord.HTTPException, TypeError, ValueError):
+            try:
+                await role.delete(reason="Rolling back an incomplete custom role restoration")
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+            return False
+
+        _role_registry[user_id] = role.id
+
+        shared_ids = set()
+        for raw_id in snapshot.get("shared_with", []):
+            try:
+                shared_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if shared_id != user_id and shared_id > 0:
+                shared_ids.add(shared_id)
+            if len(shared_ids) >= MAX_SHARED_MEMBERS:
+                break
+
+        if shared_ids:
+            _role_shares[user_id] = shared_ids
+            for shared_id in sorted(shared_ids):
+                shared_member = guild.get_member(shared_id)
+                if shared_member is None:
+                    try:
+                        shared_member = await guild.fetch_member(shared_id)
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                        continue
+                if shared_member.bot:
+                    continue
+                try:
+                    await shared_member.add_roles(
+                        role,
+                        reason=f"Restoring the shared custom role for owner {user_id}",
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    # Keep the persisted share entry; the owner can retry sharing
+                    # later to reapply the role to that member.
+                    pass
+        else:
+            _role_shares.pop(user_id, None)
+
+        await _persist_registry()
+        try:
+            await _persist_shares()
+        except OSError:
+            pass
+
+        # economy.py persists this removal together with the repurchase.
+        snapshots.pop(str(user_id), None)
         return True
 
 
