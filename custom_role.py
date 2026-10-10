@@ -18,11 +18,13 @@ import shlex
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from datetime import datetime, timezone
 
 import discord
 from discord import app_commands
 
 import bot as bot_module
+import blackjack as blackjack_feature
 
 
 ALLOWED_ROLE_IDS = {
@@ -65,11 +67,70 @@ class CustomRoleError(Exception):
     """A safe, user-facing custom-role error."""
 
 
+def _custom_role_access_until(user_id: int) -> datetime | None:
+    access = blackjack_feature.data.get("custom_role_access", {})
+    if not isinstance(access, dict):
+        return None
+    raw = access.get(str(user_id))
+    if not raw:
+        return None
+    try:
+        expires_at = datetime.fromisoformat(str(raw))
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return expires_at.astimezone(timezone.utc)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _member_is_authorized(member: discord.Member | discord.User) -> bool:
-    return bool(
-        {role.id for role in getattr(member, "roles", ())}
-        & ALLOWED_ROLE_IDS
-    )
+    role_ids = {role.id for role in getattr(member, "roles", ())}
+    if role_ids & ALLOWED_ROLE_IDS:
+        return True
+    expires_at = _custom_role_access_until(getattr(member, "id", 0))
+    return expires_at is not None and expires_at > datetime.now(timezone.utc)
+
+
+async def cleanup_expired_custom_role_access() -> int:
+    """Remove expired passes from the authorization list and persist the change."""
+    access = blackjack_feature.data.setdefault("custom_role_access", {})
+    if not isinstance(access, dict):
+        access = {}
+        blackjack_feature.data["custom_role_access"] = access
+
+    now = datetime.now(timezone.utc)
+    expired_ids = []
+    for user_id, raw_expiry in list(access.items()):
+        expiry = _custom_role_access_until(int(user_id)) if str(user_id).isdigit() else None
+        if expiry is None or expiry <= now:
+            expired_ids.append(str(user_id))
+
+    for user_id in expired_ids:
+        access.pop(user_id, None)
+
+    if expired_ids:
+        await blackjack_feature.save_data()
+    return len(expired_ids)
+
+
+_access_expiry_task: asyncio.Task | None = None
+
+
+async def _custom_role_access_expiry_worker() -> None:
+    while not bot_module.bot.is_closed():
+        try:
+            await cleanup_expired_custom_role_access()
+        except Exception:
+            # A temporary persistence issue must not stop future expiry checks.
+            pass
+        await asyncio.sleep(60)
+
+
+def start_access_expiry_cleanup() -> None:
+    """Start one background worker to prune expired purchased custom-role access."""
+    global _access_expiry_task
+    if _access_expiry_task is None or _access_expiry_task.done():
+        _access_expiry_task = asyncio.create_task(_custom_role_access_expiry_worker())
 
 
 def _authorization_error(
