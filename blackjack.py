@@ -103,6 +103,7 @@ def _default_data() -> dict:
         "balances": {},
         "daily_claims": {},
         "chat_activity": {},
+        "custom_role_access": {},
     }
 
 
@@ -146,11 +147,14 @@ def load_data() -> dict:
         balances = data.get("balances", {})
         daily_claims = data.get("daily_claims", {})
         chat_activity = data.get("chat_activity", {})
+        custom_role_access = data.get("custom_role_access", {})
 
         if not isinstance(balances, dict):
             balances = {}
         if not isinstance(daily_claims, dict):
             daily_claims = {}
+        if not isinstance(custom_role_access, dict):
+            custom_role_access = {}
 
         return {
             "balances": {
@@ -162,6 +166,11 @@ def load_data() -> dict:
                 for user_id, timestamp in daily_claims.items()
             },
             "chat_activity": _normalize_chat_activity(chat_activity),
+            "custom_role_access": {
+                str(user_id): str(expires_at)
+                for user_id, expires_at in custom_role_access.items()
+                if expires_at not in (None, "")
+            },
         }
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return _default_data()
@@ -317,9 +326,12 @@ async def restore_data_from_github() -> bool:
             balances = remote.get("balances", {})
             daily_claims = remote.get("daily_claims", {})
             chat_activity = remote.get("chat_activity", {})
+            custom_role_access = remote.get("custom_role_access", {})
 
             if not isinstance(balances, dict) or not isinstance(daily_claims, dict):
                 return False
+            if not isinstance(custom_role_access, dict):
+                custom_role_access = {}
 
             data["balances"] = {
                 str(user_id): max(0, int(balance))
@@ -330,6 +342,11 @@ async def restore_data_from_github() -> bool:
                 for user_id, timestamp in daily_claims.items()
             }
             data["chat_activity"] = _normalize_chat_activity(chat_activity)
+            data["custom_role_access"] = {
+                str(user_id): str(expires_at)
+                for user_id, expires_at in custom_role_access.items()
+                if expires_at not in (None, "")
+            }
             _save_local()
             return True
         except Exception:
