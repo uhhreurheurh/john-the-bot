@@ -45,6 +45,34 @@ STARTING_BALANCE = 1_000
 DAILY_AMOUNT = 500
 DAILY_COOLDOWN = timedelta(hours=24)
 
+# Perk roles affect regular Kevin Bucks rewards, not gambling winnings/refunds.
+# If a member has both roles, the higher multiplier wins rather than stacking.
+ROLE_EARNINGS_MULTIPLIERS = {
+    1307463884596314257: 2,
+    1377468541779050636: 4,
+}
+
+
+def get_role_earnings_multiplier(member) -> int:
+    """Return the highest role earnings multiplier in the main server."""
+    guild = getattr(member, "guild", None)
+    if guild is None or getattr(guild, "id", None) != getattr(bot_module, "MAIN_SERVER", None):
+        return 1
+
+    role_ids = {
+        getattr(role, "id", None)
+        for role in getattr(member, "roles", ())
+    }
+    return max(
+        (
+            multiplier
+            for role_id, multiplier in ROLE_EARNINGS_MULTIPLIERS.items()
+            if role_id in role_ids
+        ),
+        default=1,
+    )
+
+
 MIN_BET = 10
 MAX_BET = 100_000
 
@@ -832,16 +860,23 @@ async def daily_command(interaction: discord.Interaction):
 
     data["daily_claims"][user_id] = now.isoformat()
     activity_state = data.setdefault("chat_activity", {}).setdefault(user_id, {})
-    multiplier = 2 if int(activity_state.get("daily_multiplier", 1)) >= 2 else 1
+    daily_boost_multiplier = 2 if int(activity_state.get("daily_multiplier", 1)) >= 2 else 1
     activity_state["daily_multiplier"] = 1
-    reward_amount = DAILY_AMOUNT * multiplier
+    role_multiplier = get_role_earnings_multiplier(interaction.user)
+    reward_amount = DAILY_AMOUNT * daily_boost_multiplier * role_multiplier
     balance = add_balance(interaction.user.id, reward_amount)
     await save_data()
 
+    applied_boosts = []
+    if daily_boost_multiplier > 1:
+        applied_boosts.append("Daily Boost")
+    if role_multiplier > 1:
+        applied_boosts.append(f"{role_multiplier}x role boost")
+    boost_note = f" ({', '.join(applied_boosts)} applied)" if applied_boosts else ""
+
     await interaction.response.send_message(
-        f"💰 You claimed **{reward_amount:,} {CURRENCY_NAME}**!"
-        + (" (Daily Boost used!)" if multiplier > 1 else "")
-        + f"\nNew balance: **{balance:,} {CURRENCY_NAME}**"
+        f"💰 You claimed **{reward_amount:,} {CURRENCY_NAME}**!{boost_note}"
+        f"\nNew balance: **{balance:,} {CURRENCY_NAME}**"
     )
 
 
@@ -933,13 +968,19 @@ async def handle_prefix(message: discord.Message) -> bool:
 
         data["daily_claims"][user_id] = now.isoformat()
         activity_state = data.setdefault("chat_activity", {}).setdefault(user_id, {})
-        multiplier = 2 if int(activity_state.get("daily_multiplier", 1)) >= 2 else 1
+        daily_boost_multiplier = 2 if int(activity_state.get("daily_multiplier", 1)) >= 2 else 1
         activity_state["daily_multiplier"] = 1
-        reward_amount = DAILY_AMOUNT * multiplier
+        role_multiplier = get_role_earnings_multiplier(message.author)
+        reward_amount = DAILY_AMOUNT * daily_boost_multiplier * role_multiplier
         balance = add_balance(message.author.id, reward_amount)
         await save_data()
 
-        reward_note = " (Daily Boost used!)" if multiplier > 1 else ""
+        applied_boosts = []
+        if daily_boost_multiplier > 1:
+            applied_boosts.append("Daily Boost")
+        if role_multiplier > 1:
+            applied_boosts.append(f"{role_multiplier}x role boost")
+        reward_note = f" ({', '.join(applied_boosts)} applied)" if applied_boosts else ""
         await message.reply(
             f"💰 You claimed **{reward_amount:,} {CURRENCY_NAME}**!{reward_note} "
             f"New balance: **{balance:,} {CURRENCY_NAME}**",
