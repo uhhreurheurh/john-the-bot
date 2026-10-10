@@ -876,13 +876,94 @@ async def _set_icon(
         return f"✅ Updated the icon for {role.mention}."
 
 
+async def _resolve_guild_member(
+    guild: discord.Guild,
+    value: str | discord.Member,
+) -> discord.Member:
+    """Resolve a member mention, numeric Discord ID, username, or exact display name."""
+    if isinstance(value, discord.Member):
+        if value.guild.id != guild.id:
+            raise CustomRoleError("❌ Choose a member of this server.")
+        return value
+
+    query = str(value).strip()
+    mention_match = re.fullmatch(r"<@!?(\d+)>", query)
+    if mention_match:
+        query = mention_match.group(1)
+    elif query.startswith("@"):
+        query = query[1:].strip()
+
+    if query.isdigit():
+        member_id = int(query)
+        member = guild.get_member(member_id)
+        if member is not None:
+            return member
+        try:
+            return await guild.fetch_member(member_id)
+        except discord.NotFound as error:
+            raise CustomRoleError("❌ I couldn't find a member with that user ID in this server.") from error
+        except discord.Forbidden as error:
+            raise CustomRoleError("❌ I don't have permission to look up that member by ID.") from error
+        except discord.HTTPException as error:
+            raise CustomRoleError("❌ Discord couldn't look up that user ID. Please try again.") from error
+
+    if not query:
+        raise CustomRoleError("❌ Enter a username, user ID, or member mention.")
+
+    query_folded = query.casefold()
+    cached_members = list(guild.members)
+
+    # Prefer the exact Discord username if one matches.
+    username_matches = [member for member in cached_members if member.name.casefold() == query_folded]
+    if len(username_matches) == 1:
+        return username_matches[0]
+    if len(username_matches) > 1:
+        raise CustomRoleError("❌ More than one member matches that username. Use their numeric user ID instead.")
+
+    # Also accept exact server nickname/display name or global display name.
+    display_matches = [
+        member for member in cached_members
+        if member.display_name.casefold() == query_folded
+        or (getattr(member, "global_name", None) or "").casefold() == query_folded
+    ]
+    if len(display_matches) == 1:
+        return display_matches[0]
+    if len(display_matches) > 1:
+        raise CustomRoleError("❌ More than one member matches that display name. Use their numeric user ID instead.")
+
+    # The member may not be in cache, so try a full member listing when permitted.
+    try:
+        fetched_members = [member async for member in guild.fetch_members(limit=None)]
+    except (discord.Forbidden, discord.HTTPException):
+        fetched_members = []
+
+    username_matches = [member for member in fetched_members if member.name.casefold() == query_folded]
+    if len(username_matches) == 1:
+        return username_matches[0]
+    if len(username_matches) > 1:
+        raise CustomRoleError("❌ More than one member matches that username. Use their numeric user ID instead.")
+
+    display_matches = [
+        member for member in fetched_members
+        if member.display_name.casefold() == query_folded
+        or (getattr(member, "global_name", None) or "").casefold() == query_folded
+    ]
+    if len(display_matches) == 1:
+        return display_matches[0]
+    if len(display_matches) > 1:
+        raise CustomRoleError("❌ More than one member matches that display name. Use their numeric user ID instead.")
+
+    raise CustomRoleError(
+        "❌ I couldn't find that member. Use their exact username, exact display name, numeric user ID, or mention."
+    )
+
+
 async def _share_role(
     guild: discord.Guild,
     owner: discord.Member,
-    target: discord.Member,
+    target: str | discord.Member,
 ) -> str:
-    if not isinstance(target, discord.Member) or target.guild.id != guild.id:
-        raise CustomRoleError("❌ Mention a member of this server to share your role with.")
+    target = await _resolve_guild_member(guild, target)
     if target.bot:
         raise CustomRoleError("❌ You cannot share a custom role with a bot.")
     if target.id == owner.id:
@@ -968,10 +1049,9 @@ async def _list_shares(
 async def _unshare_role(
     guild: discord.Guild,
     owner: discord.Member,
-    target: discord.Member,
+    target: str | discord.Member,
 ) -> str:
-    if not isinstance(target, discord.Member) or target.guild.id != guild.id:
-        raise CustomRoleError("❌ Mention a member of this server to unshare your role from.")
+    target = await _resolve_guild_member(guild, target)
     if target.id == owner.id:
         raise CustomRoleError("❌ You cannot unshare yourself as the role owner.")
 
@@ -1235,21 +1315,21 @@ async def custom_role_remove(interaction: discord.Interaction):
 
 
 @custom_role_group.command(name="share", description="Share your custom role or list who can use it.")
-@app_commands.describe(member="Member to share your role with; leave blank to list current shares")
+@app_commands.describe(target="Exact username, display name, numeric user ID, or mention; leave blank to list shares")
 async def custom_role_share(
     interaction: discord.Interaction,
-    member: discord.Member | None = None,
+    target: str | None = None,
 ):
-    if member is None:
+    if target is None:
         await _run_slash(interaction, _list_shares)
     else:
-        await _run_slash(interaction, _share_role, member)
+        await _run_slash(interaction, _share_role, target)
 
 
 @custom_role_group.command(name="unshare", description="Remove a member's access to your custom role.")
-@app_commands.describe(member="Member to remove from your role's share list")
-async def custom_role_unshare(interaction: discord.Interaction, member: discord.Member):
-    await _run_slash(interaction, _unshare_role, member)
+@app_commands.describe(target="Exact username, display name, numeric user ID, or mention")
+async def custom_role_unshare(interaction: discord.Interaction, target: str):
+    await _run_slash(interaction, _unshare_role, target)
 
 
 custom_group.add_command(custom_role_group)
@@ -1380,46 +1460,37 @@ async def handle_prefix(message: discord.Message) -> bool:
         args = (url_parts[0],)
     elif action == "share":
         subaction = parts[action_index + 1].lower() if len(parts) > action_index + 1 else ""
-        if not subaction or subaction == "list":
-            if len(parts) > action_index + (2 if subaction == "list" else 1):
-                await message.reply("Usage: ,cr share [@user] or ,cr share list", mention_author=False)
+        if subaction == "list":
+            if len(parts) != action_index + 2:
+                await message.reply("Usage: ,cr share [username or user ID] or ,cr share list", mention_author=False)
                 return True
-            if subaction == "list" and message.mentions:
-                await message.reply("Usage: ,cr share [@user] or ,cr share list", mention_author=False)
-                return True
-            if not subaction and message.mentions:
-                if len(message.mentions) != 1 or len(parts) != action_index + 2:
-                    await message.reply("Usage: ,cr share @user", mention_author=False)
-                    return True
-                operation = _share_role
-                args = (message.mentions[0],)
-            else:
-                operation = _list_shares
-                args = ()
+            operation = _list_shares
+            args = ()
         elif subaction == "remove":
             if len(message.role_mentions) != 1 or len(message.mentions) != 0 or len(parts) != action_index + 3:
                 await message.reply("Usage: ,cr share remove @role", mention_author=False)
                 return True
             operation = _remove_shared_role
             args = (message.role_mentions[0],)
+        elif len(parts) == action_index + 1:
+            operation = _list_shares
+            args = ()
         else:
-            if len(message.mentions) != 1 or len(parts) != action_index + 2:
-                await message.reply("Usage: ,cr share @user, ,cr share list, or ,cr share remove @role", mention_author=False)
-                return True
+            raw_target = " ".join(parts[action_index + 1:])
             operation = _share_role
-            args = (message.mentions[0],)
+            args = (raw_target,)
     elif action == "unshare":
-        if len(message.mentions) != 1 or len(parts) != action_index + 2:
-            await message.reply("Usage: ,cr unshare @user", mention_author=False)
+        if len(parts) < action_index + 2:
+            await message.reply("Usage: ,cr unshare <username or user ID>", mention_author=False)
             return True
         operation = _unshare_role
-        args = (message.mentions[0],)
+        args = (" ".join(parts[action_index + 1:]),)
     elif action == "remove":
         operation = _remove_role
         args = ()
     else:
         await message.reply(
-            "Custom role commands: ,cr create, color, random, rename, icon, remove, share, and unshare. Use ,cr share @user to share your role, ,cr share to list members, ,cr unshare @user to revoke access, or ,cr share remove @role to leave a shared role. Colors accept names or hex (#FF00FF).",
+            "Custom role commands: ,cr create, color, random, rename, icon, remove, share, and unshare. Use ,cr share <username or user ID> to share your role, ,cr share to list members, ,cr unshare <username or user ID> to revoke access, or ,cr share remove @role to leave a shared role. Colors accept names or hex (#FF00FF).",
             mention_author=False,
         )
         return True
