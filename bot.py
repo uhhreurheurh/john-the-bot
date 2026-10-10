@@ -965,6 +965,10 @@ async def on_message(message: discord.Message):
     if not isinstance(message.channel, discord.TextChannel):
         return
 
+    # Award eligible chat activity through the existing Client on_message event.
+    # The economy handler catches its own errors so rewards never break commands.
+    await economy_feature.chat_activity_listener(message)
+
     content = message.content.strip()
 
     # Parse the readable spaced prefix syntax once so all handlers can use it.
