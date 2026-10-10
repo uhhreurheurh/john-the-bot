@@ -91,26 +91,111 @@ def _member_is_authorized(member: discord.Member | discord.User) -> bool:
     return expires_at is not None and expires_at > datetime.now(timezone.utc)
 
 
+async def _delete_expired_member_custom_role(user_id: int) -> bool:
+    """Delete only the expired buyer's registered custom role, then clean its metadata."""
+    await _ensure_registry_loaded()
+    await _ensure_shares_loaded()
+
+    async with _role_mutation_lock:
+        role_id = _role_registry.get(user_id)
+        guild = bot_module.bot.get_guild(bot_module.MAIN_SERVER)
+
+        # If the registry says this member owns a role but the main guild is not
+        # available yet, leave the expired entry for the next retry.
+        if role_id is not None and guild is None:
+            return False
+
+        if role_id is not None and guild is not None:
+            role = guild.get_role(role_id)
+            if role is not None:
+                try:
+                    # Fail closed: expiry cleanup must never delete a staff role
+                    # or a role that no longer passes the custom-role safeguards.
+                    role = await _validate_custom_role_safety(
+                        guild,
+                        role,
+                        repair_permissions=False,
+                    )
+                    bot_member = await _bot_member_with_role_permission(guild)
+                    if (
+                        role.managed
+                        or role.is_default()
+                        or bot_member.top_role <= role
+                    ):
+                        return False
+
+                    await role.delete(
+                        reason=f"Purchased custom role access expired for user {user_id}",
+                    )
+                except (CustomRoleError, discord.Forbidden, discord.HTTPException):
+                    # Keep the expired pass record so the worker retries the
+                    # deletion if permissions or the role hierarchy are fixed.
+                    return False
+
+        had_registry_entry = user_id in _role_registry
+        had_share_entry = user_id in _role_shares
+        previous_shares = set(_role_shares.get(user_id, set()))
+
+        _role_registry.pop(user_id, None)
+        _role_shares.pop(user_id, None)
+
+        # A missing Discord role is already effectively deleted. Persist the
+        # registry cleanup, and let periodic retries repair temporary GitHub sync.
+        if had_registry_entry:
+            await _persist_registry()
+
+        if had_share_entry:
+            try:
+                await _persist_shares()
+            except OSError:
+                # Restore the in-memory share entry so the next expiry pass retries
+                # persisting its cleanup. The Discord role itself is already gone.
+                _role_shares[user_id] = previous_shares
+                return False
+
+        return True
+
+
 async def cleanup_expired_custom_role_access() -> int:
-    """Remove expired passes from the authorization list and persist the change."""
+    """Delete roles for expired passes, then remove those users from the access list."""
     access = blackjack_feature.data.setdefault("custom_role_access", {})
     if not isinstance(access, dict):
         access = {}
         blackjack_feature.data["custom_role_access"] = access
 
     now = datetime.now(timezone.utc)
-    expired_ids = []
+    expired_ids: list[str] = []
+    stale_ids: list[str] = []
+
     for user_id, raw_expiry in list(access.items()):
-        expiry = _custom_role_access_until(int(user_id)) if str(user_id).isdigit() else None
-        if expiry is None or expiry <= now:
+        expiry = (
+            _custom_role_access_until(int(user_id))
+            if str(user_id).isdigit()
+            else None
+        )
+        if expiry is None:
+            # Invalid expiry data must not grant access, but do not delete a role
+            # unless there is a valid timestamp proving its pass has expired.
+            stale_ids.append(str(user_id))
+        elif expiry <= now:
             expired_ids.append(str(user_id))
 
+    removed_ids: list[str] = []
     for user_id in expired_ids:
+        try:
+            removed = await _delete_expired_member_custom_role(int(user_id))
+        except Exception:
+            removed = False
+        if removed:
+            removed_ids.append(user_id)
+
+    for user_id in stale_ids + removed_ids:
         access.pop(user_id, None)
 
-    if expired_ids:
+    if stale_ids or removed_ids:
         await blackjack_feature.save_data()
-    return len(expired_ids)
+
+    return len(removed_ids) + len(stale_ids)
 
 
 _access_expiry_task: asyncio.Task | None = None
