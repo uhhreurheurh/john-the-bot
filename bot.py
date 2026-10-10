@@ -888,7 +888,7 @@ async def resolve_textify_prefix_target(message: discord.Message) -> discord.Mem
 
     # A relayed command may contain the raw <@id> token without a populated
     # message.mentions list. Resolve only user mentions, never role mentions.
-    raw_mention_ids = re.findall(r"<@!?(\\d+)>", str(getattr(message, "content", "")))
+    raw_mention_ids = re.findall(r"<@!?(\d+)>", str(getattr(message, "content", "")))
     for raw_id in raw_mention_ids:
         member = guild.get_member(int(raw_id))
         if member is not None:
