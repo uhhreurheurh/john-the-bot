@@ -300,6 +300,30 @@ async def _purchase(user_id: int, raw_item: str) -> tuple[bool, str]:
             f"You can use ,cr / /custom role commands until **{until_text}**. "
             "Renewing early extends access by another 14 days."
         )
+
+        # If this user had a role deleted at a previous expiration, restore
+        # its name, colors, icon, and former share list after the new purchase.
+        snapshots = blackjack_feature.data.get("expired_custom_roles", {})
+        had_saved_role = (
+            isinstance(snapshots, dict)
+            and isinstance(snapshots.get(str(user_id)), dict)
+        )
+        role_restored = False
+        feature = getattr(bot_module, "custom_role_feature", None)
+        if had_saved_role and feature is not None:
+            try:
+                role_restored = await feature.restore_expired_custom_role(user_id)
+            except Exception:
+                role_restored = False
+
+        if role_restored:
+            response += "\nYour previous custom role, styling, and saved shares have been restored."
+        elif had_saved_role:
+            response += (
+                "\n⚠️ Your pass is active, but I couldn't restore the old role right now. "
+                "Your saved role information has been kept for another retry; check my Manage Roles "
+                "permission and role hierarchy."
+            )
     else:
         state["daily_multiplier"] = 2
         response = (
