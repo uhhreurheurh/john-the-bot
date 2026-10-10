@@ -3,7 +3,7 @@ Personal custom-role commands inspired by Bleed's custom role sharing flow.
 
 Slash commands: /custom role create, color, random, rename, icon, remove, share, unshare
 Prefix equivalents: ,cr create, color, random, rename, icon, remove, share, unshare
-Custom role icons accept Unicode emoji, custom emoji from this server, or a direct HTTPS PNG/JPEG URL.
+Custom role icons accept Unicode emoji, custom Discord emoji from other servers, or a direct HTTPS PNG/JPEG URL.
 A custom role can be shared with up to three other members.
 """
 
@@ -900,29 +900,23 @@ def _looks_like_unicode_emoji(value: str) -> bool:
 
 
 async def _resolve_icon_input(guild: discord.Guild, value: str) -> bytes | str:
-    """Accept a direct image URL, a Unicode emoji, or a custom emoji from this server."""
+    """Accept a direct image URL, a Unicode emoji, or any accessible Discord custom emoji."""
     value = value.strip()
     if not value:
         raise CustomRoleError(
-            "❌ Provide a Unicode emoji, a custom emoji from this server, or a direct HTTPS PNG/JPEG URL."
+            "❌ Provide a Unicode emoji, a Discord custom emoji, or a direct HTTPS PNG/JPEG URL."
         )
 
     custom_emoji_match = CUSTOM_EMOJI_PATTERN.fullmatch(value)
     if custom_emoji_match:
+        # The emoji's CDN asset is keyed by its ID, so the bot does not need
+        # to be a member of the server where the emoji was originally uploaded.
+        # This also supports emoji the user can use through Nitro or integrations.
         emoji_id = int(custom_emoji_match.group(1))
-        emoji = guild.get_emoji(emoji_id)
-        if emoji is None:
-            raise CustomRoleError(
-                "❌ Use a custom emoji uploaded to this server. Emojis from other servers cannot be role icons."
-            )
-        if not emoji.available:
-            raise CustomRoleError(
-                "❌ That custom emoji is currently unavailable. Try another emoji."
-            )
 
-        # Discord role icons cannot animate. Requesting the PNG version uses
-        # a static frame for animated custom emoji.
-        emoji_url = f"https://cdn.discordapp.com/emojis/{emoji.id}.png"
+        # Role icons are static. Requesting PNG makes Discord's CDN provide a
+        # static image even when the original custom emoji is animated.
+        emoji_url = f"https://cdn.discordapp.com/emojis/{emoji_id}.png?size=128"
         return await asyncio.to_thread(_download_icon, emoji_url)
 
     if value.lower().startswith(("https://", "http://")):
@@ -932,7 +926,7 @@ async def _resolve_icon_input(guild: discord.Guild, value: str) -> bytes | str:
         return value
 
     raise CustomRoleError(
-        "❌ Use a Unicode emoji (like 😀), a custom emoji from this server (like <:name:id>), or a direct HTTPS PNG/JPEG URL."
+        "❌ Use a Unicode emoji (like 😀), a custom Discord emoji (like <:name:id> or <a:name:id>), or a direct HTTPS PNG/JPEG URL."
     )
 
 
