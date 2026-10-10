@@ -21,13 +21,16 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
 
       - name: Compile Python files
-        run: python -m py_compile bot.py custom_role.py uwuify_feature.py hoodify_feature.py reviews.py leaderboard.py staff_strikes.py
+        run: python -m compileall -q .
 
       - name: Import and command-tree smoke test
         env:
           BOT_TOKEN: smoke-test-token
         run: |
           python - <<'PY'
+          import asyncio
+          from types import SimpleNamespace
+
           import discord
           from discord import app_commands
 
@@ -35,6 +38,7 @@ jobs:
           discord.Client.run = lambda self, token: None
 
           import bot
+          import custom_role
           from hoodify_feature import hoodify_text
           import uwuify
 
@@ -55,6 +59,29 @@ jobs:
           assert expected_custom_subcommands <= custom_subcommands, (
               f'Missing custom role subcommands: {sorted(expected_custom_subcommands - custom_subcommands)}'
           )
+
+          # Verify the new share resolver accepts both exact usernames and numeric IDs.
+          share_target = SimpleNamespace(
+              id=123456789012345678,
+              name='share-target',
+              display_name='Share Target',
+              global_name=None,
+              guild=SimpleNamespace(id=bot.MAIN_SERVER),
+              bot=False,
+              roles=[],
+          )
+          fake_guild = SimpleNamespace(
+              members=[share_target],
+              get_member=lambda user_id: share_target if user_id == share_target.id else None,
+          )
+          resolved_username = asyncio.run(
+              custom_role._resolve_guild_member(fake_guild, 'share-target')
+          )
+          resolved_user_id = asyncio.run(
+              custom_role._resolve_guild_member(fake_guild, str(share_target.id))
+          )
+          assert resolved_username is share_target, 'Custom-role share username lookup failed'
+          assert resolved_user_id is share_target, 'Custom-role share ID lookup failed'
 
           sample = uwuify.uwu('hello how are you?', flags=bot.UWU_FLAGS)
           assert isinstance(sample, str) and sample, 'UWUIFY produced no text'
