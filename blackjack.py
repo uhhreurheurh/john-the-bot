@@ -935,7 +935,7 @@ async def handle_prefix(message: discord.Message) -> bool:
         await send_blackjack(message.channel, message.author, bet)
         return True
 
-    if command in {",balance", ",bucks", ",kevinbucks"}:
+    if command in {",balance", ",bal", ",bucks", ",kevinbucks"}:
         balance = get_balance(message.author.id)
         await message.reply(
             f"💰 **{message.author.display_name}'s Kevin Bucks**\n"
