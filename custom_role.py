@@ -1,9 +1,9 @@
 """
-Personal custom-role commands inspired by Bleed's boosterrole feature.
+Personal custom-role commands inspired by Bleed's custom role sharing flow.
 
-Slash commands: /custom role create, color, random, rename, icon, remove
-Prefix equivalents: ,custom role ...
-Only configured staff roles in MAIN_SERVER may use this feature.
+Slash commands: /custom role create, color, random, rename, icon, remove, share, unshare
+Prefix equivalents: ,cr create, color, random, rename, icon, remove, share, unshare
+A custom role can be shared with up to three other members.
 """
 
 from __future__ import annotations
@@ -29,6 +29,8 @@ ALLOWED_ROLE_IDS = {
     1341594605686358047,
 }
 REGISTRY_FILE = Path(__file__).with_name("custom_roles.json")
+SHARES_FILE = Path(__file__).with_name("custom_role_shares.json")
+MAX_SHARED_MEMBERS = 3
 # New custom roles are placed immediately above this existing server role.
 CUSTOM_ROLE_ANCHOR_ROLE_ID = 1354259084114661509
 # Never let custom-role commands touch staff roles, even if the persisted
@@ -52,6 +54,10 @@ _registry_loaded = False
 _registry_load_lock = asyncio.Lock()
 _role_mutation_lock = asyncio.Lock()
 _registry_sync_error: str | None = None
+_role_shares: dict[int, set[int]] = {}
+_shares_loaded = False
+_shares_load_lock = asyncio.Lock()
+_shares_sync_error: str | None = None
 
 
 class CustomRoleError(Exception):
@@ -211,6 +217,172 @@ async def _persist_registry() -> bool:
         return True
     except Exception as error:
         _registry_sync_error = str(error)
+        return False
+
+
+def _local_shares_read() -> dict[int, set[int]]:
+    try:
+        with SHARES_FILE.open("r", encoding="utf-8") as file:
+            payload = json.load(file)
+        if not isinstance(payload, dict):
+            return {}
+        result: dict[int, set[int]] = {}
+        for owner_id, member_ids in payload.items():
+            if not isinstance(member_ids, list):
+                continue
+            try:
+                parsed_owner_id = int(owner_id)
+            except (ValueError, TypeError):
+                continue
+            parsed_members: set[int] = set()
+            for member_id in member_ids:
+                try:
+                    parsed_member_id = int(member_id)
+                except (ValueError, TypeError):
+                    continue
+                if parsed_member_id != parsed_owner_id:
+                    parsed_members.add(parsed_member_id)
+            if parsed_members:
+                result[parsed_owner_id] = parsed_members
+        return result
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        return {}
+
+
+def _local_shares_write(shares: dict[int, set[int]]) -> None:
+    with SHARES_FILE.open("w", encoding="utf-8") as file:
+        json.dump(
+            {
+                str(owner_id): sorted(member_ids - {owner_id})
+                for owner_id, member_ids in sorted(shares.items())
+                if member_ids - {owner_id}
+            },
+            file,
+            indent=2,
+        )
+        file.write("\n")
+
+
+def _github_shares_read() -> tuple[dict[int, set[int]] | None, str | None]:
+    branch = urllib.parse.quote(bot_module.GITHUB_BRANCH, safe="")
+    url = f"{bot_module._github_contents_url(SHARES_FILE)}?ref={branch}"
+    try:
+        payload = bot_module._github_request_json(url)
+    except RuntimeError as error:
+        if str(error).startswith("GitHub API HTTP 404:"):
+            return None, None
+        raise
+
+    encoded_content = payload.get("content", "")
+    if not encoded_content:
+        return {}, payload.get("sha")
+
+    try:
+        raw = base64.b64decode(
+            "".join(str(encoded_content).split())
+        ).decode("utf-8")
+        content = json.loads(raw)
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError("custom_role_shares.json on GitHub contains invalid JSON.") from error
+
+    if not isinstance(content, dict):
+        raise RuntimeError("custom_role_shares.json on GitHub must contain a JSON object.")
+
+    shares: dict[int, set[int]] = {}
+    for owner_id, member_ids in content.items():
+        if not isinstance(member_ids, list):
+            continue
+        try:
+            parsed_owner_id = int(owner_id)
+        except (ValueError, TypeError):
+            continue
+        parsed_members: set[int] = set()
+        for member_id in member_ids:
+            try:
+                parsed_member_id = int(member_id)
+            except (ValueError, TypeError):
+                continue
+            if parsed_member_id != parsed_owner_id:
+                parsed_members.add(parsed_member_id)
+        if parsed_members:
+            shares[parsed_owner_id] = parsed_members
+    return shares, payload.get("sha")
+
+
+def _github_shares_write(shares: dict[int, set[int]]) -> None:
+    _, blob_sha = _github_shares_read()
+    serialized = json.dumps(
+        {
+            str(owner_id): sorted(member_ids - {owner_id})
+            for owner_id, member_ids in sorted(shares.items())
+            if member_ids - {owner_id}
+        },
+        indent=2,
+    ) + "\n"
+    payload = {
+        "message": "Update custom role shares",
+        "content": base64.b64encode(serialized.encode("utf-8")).decode("ascii"),
+        "branch": bot_module.GITHUB_BRANCH,
+    }
+    if blob_sha:
+        payload["sha"] = blob_sha
+    bot_module._github_request_json(
+        bot_module._github_contents_url(SHARES_FILE),
+        method="PUT",
+        payload=payload,
+    )
+
+
+async def _ensure_shares_loaded() -> None:
+    global _shares_loaded, _shares_sync_error
+
+    if _shares_loaded:
+        return
+    async with _shares_load_lock:
+        if _shares_loaded:
+            return
+
+        local_shares = await asyncio.to_thread(_local_shares_read)
+        if not bot_module.GITHUB_TOKEN:
+            _role_shares.update(local_shares)
+            _shares_sync_error = "GITHUB_TOKEN is not configured; role shares cannot be backed up to GitHub."
+            _shares_loaded = True
+            return
+
+        try:
+            remote_shares, _ = await asyncio.to_thread(_github_shares_read)
+            if remote_shares is not None:
+                _role_shares.clear()
+                _role_shares.update(remote_shares)
+                await asyncio.to_thread(_local_shares_write, _role_shares)
+            else:
+                _role_shares.update(local_shares)
+                if local_shares:
+                    await asyncio.to_thread(_github_shares_write, _role_shares)
+            _shares_sync_error = None
+        except Exception as error:
+            _role_shares.update(local_shares)
+            _shares_sync_error = str(error)
+        _shares_loaded = True
+
+
+async def _persist_shares() -> bool:
+    global _shares_sync_error
+
+    # A local write failure raises so the Discord role change can be rolled back.
+    await asyncio.to_thread(_local_shares_write, _role_shares)
+    if not bot_module.GITHUB_TOKEN:
+        _shares_sync_error = "GITHUB_TOKEN is not configured; role shares only saved locally."
+        return False
+
+    try:
+        await asyncio.to_thread(_github_shares_write, {
+            owner_id: set(member_ids) for owner_id, member_ids in _role_shares.items()
+        })
+        _shares_sync_error = None
+        return True
+    except Exception as error:
+        _shares_sync_error = str(error)
         return False
 
 
@@ -704,6 +876,202 @@ async def _set_icon(
         return f"✅ Updated the icon for {role.mention}."
 
 
+async def _share_role(
+    guild: discord.Guild,
+    owner: discord.Member,
+    target: discord.Member,
+) -> str:
+    if not isinstance(target, discord.Member) or target.guild.id != guild.id:
+        raise CustomRoleError("❌ Mention a member of this server to share your role with.")
+    if target.bot:
+        raise CustomRoleError("❌ You cannot share a custom role with a bot.")
+    if target.id == owner.id:
+        raise CustomRoleError("❌ You already own this custom role.")
+
+    async with _role_mutation_lock:
+        role = await _owned_role(guild, owner, ensure_position=True)
+        if role is None:
+            raise CustomRoleError("❌ You don't have a custom role yet. Use ,cr create first.")
+        if not any(member_role.id == role.id for member_role in owner.roles):
+            raise CustomRoleError("❌ Your custom role must be assigned to you before you can share it.")
+        bot_member = await _bot_member_with_role_permission(guild)
+        if role.managed or role.is_default() or bot_member.top_role <= role:
+            raise CustomRoleError("❌ I cannot share this role because it is managed or above my highest role.")
+
+        await _ensure_shares_loaded()
+        current = set(_role_shares.get(owner.id, set()))
+        if target.id in current:
+            if not any(member_role.id == role.id for member_role in target.roles):
+                await target.add_roles(role, reason=f"Restoring shared custom role for {target} by owner {owner.id}")
+            return f"✅ {target.mention} already has access to {role.mention} ({len(current)}/{MAX_SHARED_MEMBERS} shared)."
+
+        if len(current) >= MAX_SHARED_MEMBERS:
+            raise CustomRoleError(
+                f"❌ You can share your custom role with up to {MAX_SHARED_MEMBERS} other members. "
+                "Unshare someone before adding another member."
+            )
+
+        role_was_added = not any(member_role.id == role.id for member_role in target.roles)
+        if role_was_added:
+            await target.add_roles(
+                role,
+                reason=f"Custom role shared by owner {owner} ({owner.id})",
+            )
+
+        current.add(target.id)
+        _role_shares[owner.id] = current
+        try:
+            saved = await _persist_shares()
+        except OSError as error:
+            current.discard(target.id)
+            if not current:
+                _role_shares.pop(owner.id, None)
+            else:
+                _role_shares[owner.id] = current
+            if role_was_added:
+                try:
+                    await target.remove_roles(role, reason="Rolling back a share that could not be saved locally")
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+            raise CustomRoleError("❌ I couldn't save this role share, so I cancelled the change. Please try again.") from error
+
+        response = (
+            f"✅ Shared {role.mention} with {target.mention}. "
+            f"You're sharing with {len(current)}/{MAX_SHARED_MEMBERS} other members."
+        )
+        if not saved:
+            response += "\n⚠️ The share is saved locally, but GitHub sync failed."
+        return response
+
+
+async def _list_shares(
+    guild: discord.Guild,
+    owner: discord.Member,
+) -> str:
+    role = await _owned_role(guild, owner)
+    if role is None:
+        raise CustomRoleError("❌ You don't have a custom role yet. Use ,cr create first.")
+
+    await _ensure_shares_loaded()
+    member_ids = sorted(_role_shares.get(owner.id, set()))
+    if not member_ids:
+        return f"ℹ️ {role.mention} is not shared with anyone yet (0/{MAX_SHARED_MEMBERS})."
+
+    mentions = [f"<@{member_id}>" for member_id in member_ids]
+    return (
+        f"👥 Members who can use {role.mention}:\n"
+        + "\n".join(f"• {mention}" for mention in mentions)
+        + f"\n\n{len(member_ids)}/{MAX_SHARED_MEMBERS} shared. Use ,cr unshare @user to remove access."
+    )
+
+
+async def _unshare_role(
+    guild: discord.Guild,
+    owner: discord.Member,
+    target: discord.Member,
+) -> str:
+    if not isinstance(target, discord.Member) or target.guild.id != guild.id:
+        raise CustomRoleError("❌ Mention a member of this server to unshare your role from.")
+    if target.id == owner.id:
+        raise CustomRoleError("❌ You cannot unshare yourself as the role owner.")
+
+    async with _role_mutation_lock:
+        await _ensure_registry_loaded()
+        await _ensure_shares_loaded()
+        current = set(_role_shares.get(owner.id, set()))
+        if target.id not in current:
+            raise CustomRoleError(f"❌ {target.mention} isn't on your custom role's share list.")
+
+        role_id = _role_registry.get(owner.id)
+        role = guild.get_role(role_id) if role_id is not None else None
+        if role is not None:
+            role = await _validate_custom_role_safety(guild, role)
+            if any(member_role.id == role.id for member_role in target.roles):
+                bot_member = await _bot_member_with_role_permission(guild)
+                if role.managed or role.is_default() or bot_member.top_role <= role:
+                    raise CustomRoleError("❌ I cannot remove access because this role is above my highest role.")
+                await target.remove_roles(
+                    role,
+                    reason=f"Custom role unshared by owner {owner} ({owner.id})",
+                )
+
+        current.discard(target.id)
+        if current:
+            _role_shares[owner.id] = current
+        else:
+            _role_shares.pop(owner.id, None)
+        try:
+            saved = await _persist_shares()
+        except OSError as error:
+            current.add(target.id)
+            _role_shares[owner.id] = current
+            if role is not None:
+                try:
+                    await target.add_roles(role, reason="Rolling back an unshare that could not be saved")
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+            raise CustomRoleError("❌ I couldn't save this change, so I cancelled the unshare. Please try again.") from error
+
+        response = f"✅ Removed {target.mention} from your custom role's share list."
+        if not saved:
+            response += "\n⚠️ The change is saved locally, but GitHub sync failed."
+        return response
+
+
+async def _remove_shared_role(
+    guild: discord.Guild,
+    member: discord.Member,
+    role: discord.Role,
+) -> str:
+    if role.guild.id != guild.id:
+        raise CustomRoleError("❌ Choose a role from this server.")
+
+    async with _role_mutation_lock:
+        await _ensure_registry_loaded()
+        await _ensure_shares_loaded()
+        owner_id = next(
+            (
+                candidate_owner_id
+                for candidate_owner_id, member_ids in _role_shares.items()
+                if member.id in member_ids and _role_registry.get(candidate_owner_id) == role.id
+            ),
+            None,
+        )
+        if owner_id is None:
+            raise CustomRoleError("❌ You don't have this role through a custom-role share.")
+
+        role = await _validate_custom_role_safety(guild, role)
+        role_was_removed = any(member_role.id == role.id for member_role in member.roles)
+        if role_was_removed:
+            bot_member = await _bot_member_with_role_permission(guild)
+            if role.managed or role.is_default() or bot_member.top_role <= role:
+                raise CustomRoleError("❌ I cannot remove this shared role because it is above my highest role.")
+            await member.remove_roles(role, reason=f"{member} ({member.id}) left a shared custom role")
+
+        current = set(_role_shares.get(owner_id, set()))
+        current.discard(member.id)
+        if current:
+            _role_shares[owner_id] = current
+        else:
+            _role_shares.pop(owner_id, None)
+        try:
+            saved = await _persist_shares()
+        except OSError as error:
+            current.add(member.id)
+            _role_shares[owner_id] = current
+            if role_was_removed:
+                try:
+                    await member.add_roles(role, reason="Rolling back a shared-role removal that could not be saved")
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+            raise CustomRoleError("❌ I couldn't save this change, so I cancelled the removal. Please try again.") from error
+
+        response = f"✅ Removed your access to {role.mention}."
+        if not saved:
+            response += "\n⚠️ The change is saved locally, but GitHub sync failed."
+        return response
+
+
 async def _remove_role(
     guild: discord.Guild,
     member: discord.Member,
@@ -718,9 +1086,17 @@ async def _remove_role(
         await role.delete(reason=f"Custom role removed by {member} ({member.id})")
         _role_registry.pop(member.id, None)
         saved = await _persist_registry()
+        await _ensure_shares_loaded()
+        _role_shares.pop(member.id, None)
+        try:
+            shares_saved = await _persist_shares()
+        except OSError:
+            shares_saved = False
         response = "✅ Your custom role was removed."
         if not saved:
             response += "\n⚠️ The role was deleted, but the registry could not sync to GitHub."
+        if not shares_saved:
+            response += "\n⚠️ The role was deleted, but its share list could not sync to GitHub."
         return response
 
 
@@ -858,6 +1234,24 @@ async def custom_role_remove(interaction: discord.Interaction):
     await _run_slash(interaction, _remove_role)
 
 
+@custom_role_group.command(name="share", description="Share your custom role or list who can use it.")
+@app_commands.describe(member="Member to share your role with; leave blank to list current shares")
+async def custom_role_share(
+    interaction: discord.Interaction,
+    member: discord.Member | None = None,
+):
+    if member is None:
+        await _run_slash(interaction, _list_shares)
+    else:
+        await _run_slash(interaction, _share_role, member)
+
+
+@custom_role_group.command(name="unshare", description="Remove a member's access to your custom role.")
+@app_commands.describe(member="Member to remove from your role's share list")
+async def custom_role_unshare(interaction: discord.Interaction, member: discord.Member):
+    await _run_slash(interaction, _unshare_role, member)
+
+
 custom_group.add_command(custom_role_group)
 bot_module.tree.add_command(custom_group)
 
@@ -968,12 +1362,48 @@ async def handle_prefix(message: discord.Message) -> bool:
             return True
         operation = _set_icon
         args = (url_parts[0],)
+    elif action == "share":
+        subaction = parts[action_index + 1].lower() if len(parts) > action_index + 1 else ""
+        if not subaction or subaction == "list":
+            if len(parts) > action_index + (2 if subaction == "list" else 1):
+                await message.reply("Usage: ,cr share [@user] or ,cr share list", mention_author=False)
+                return True
+            if subaction == "list" and message.mentions:
+                await message.reply("Usage: ,cr share [@user] or ,cr share list", mention_author=False)
+                return True
+            if not subaction and message.mentions:
+                if len(message.mentions) != 1 or len(parts) != action_index + 2:
+                    await message.reply("Usage: ,cr share @user", mention_author=False)
+                    return True
+                operation = _share_role
+                args = (message.mentions[0],)
+            else:
+                operation = _list_shares
+                args = ()
+        elif subaction == "remove":
+            if len(message.role_mentions) != 1 or len(message.mentions) != 0 or len(parts) != action_index + 3:
+                await message.reply("Usage: ,cr share remove @role", mention_author=False)
+                return True
+            operation = _remove_shared_role
+            args = (message.role_mentions[0],)
+        else:
+            if len(message.mentions) != 1 or len(parts) != action_index + 2:
+                await message.reply("Usage: ,cr share @user, ,cr share list, or ,cr share remove @role", mention_author=False)
+                return True
+            operation = _share_role
+            args = (message.mentions[0],)
+    elif action == "unshare":
+        if len(message.mentions) != 1 or len(parts) != action_index + 2:
+            await message.reply("Usage: ,cr unshare @user", mention_author=False)
+            return True
+        operation = _unshare_role
+        args = (message.mentions[0],)
     elif action == "remove":
         operation = _remove_role
         args = ()
     else:
         await message.reply(
-            "Custom role commands: ,cr create, color, random, rename, icon, and remove. Colors accept names (red, blue, dark blue) or hex (#FF00FF). Alias for ,custom role.",
+            "Custom role commands: ,cr create, color, random, rename, icon, remove, share, and unshare. Use ,cr share @user to share your role, ,cr share to list members, ,cr unshare @user to revoke access, or ,cr share remove @role to leave a shared role. Colors accept names or hex (#FF00FF).",
             mention_author=False,
         )
         return True
