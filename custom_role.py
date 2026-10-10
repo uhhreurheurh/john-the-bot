@@ -1290,10 +1290,26 @@ async def handle_prefix(message: discord.Message) -> bool:
         return False
 
     action = parts[action_index].lower() if len(parts) > action_index else ""
-    auth_error = _authorization_error(message.guild, message.author)
-    if auth_error:
-        await message.reply(auth_error, mention_author=False)
-        return True
+    # Let any member remove a role that was shared with them, matching Bleed's
+    # self-service share removal. This path can only remove the caller's own access;
+    # sharing, listing, and revoking access for other users remain staff-gated.
+    is_self_removal = (
+        action == "share"
+        and len(parts) > action_index + 1
+        and parts[action_index + 1].lower() == "remove"
+    )
+    if is_self_removal:
+        if message.guild.id != bot_module.MAIN_SERVER:
+            await message.reply(
+                "❌ Custom roles can only be managed in the main server.",
+                mention_author=False,
+            )
+            return True
+    else:
+        auth_error = _authorization_error(message.guild, message.author)
+        if auth_error:
+            await message.reply(auth_error, mention_author=False)
+            return True
 
     if action in {"create", "color"}:
         color_start = action_index + 1
