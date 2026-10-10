@@ -1386,10 +1386,13 @@ async def on_message(message: discord.Message):
         )
         synced = await save_staff_strikes()
 
-        await send_staff_strike_log(
+        log_message = await send_staff_strike_log(
             STAFF_STRIKE_ACTIVE_CHANNEL_ID,
             format_staff_strike(target, strike),
         )
+        if log_message is not None:
+            strike["log_message_id"] = log_message.id
+            await save_staff_strikes()
 
         await message.reply(
             "✅ Strike issued successfully.",
@@ -3838,6 +3841,16 @@ async def on_ready():
     if startup_expired:
         await handle_expired_staff_strikes(startup_expired)
         await save_staff_strikes()
+
+    # Backfill expiry labels for old strike messages whose IDs were never stored.
+    # This also repairs historical messages after their strike records were pruned.
+    try:
+        await staff_strikes_feature.reconcile_expired_staff_strike_log_messages()
+    except Exception as error:
+        print(
+            "Staff strike log reconciliation crashed: "
+            f"{type(error).__name__}: {error}"
+        )
 
     if staff_strike_expiry_task is None or staff_strike_expiry_task.done():
         staff_strike_expiry_task = asyncio.create_task(
