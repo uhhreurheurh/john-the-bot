@@ -862,6 +862,89 @@ async def get_safechat_reply_header(message: discord.Message) -> str | None:
     )
 
 
+async def resolve_textify_prefix_target(message: discord.Message) -> discord.Member | None:
+    """Resolve a UWUIFY/HOODIFY target from a mention, ID, or exact member name.
+
+    Proxy/webhook copies of a command may preserve the visible target text but
+    omit Discord's parsed message.mentions list. Try the normal parsed mention
+    first, then raw Discord mention tokens, then exact cached member names.
+    Ambiguous names are rejected rather than targeting the wrong person.
+    """
+    guild = message.guild
+    if guild is None:
+        return None
+
+    # Normal user commands should use Discord's parsed mentions when available.
+    for mentioned in getattr(message, "mentions", ()):
+        member = guild.get_member(mentioned.id)
+        if member is not None:
+            return member
+        if isinstance(mentioned, discord.Member):
+            return mentioned
+        try:
+            return await guild.fetch_member(mentioned.id)
+        except discord.DiscordException:
+            pass
+
+    # A relayed command may contain the raw <@id> token without a populated
+    # message.mentions list. Resolve only user mentions, never role mentions.
+    raw_mention_ids = re.findall(r"<@!?(\\d+)>", str(getattr(message, "content", "")))
+    for raw_id in raw_mention_ids:
+        member = guild.get_member(int(raw_id))
+        if member is not None:
+            return member
+        try:
+            return await guild.fetch_member(int(raw_id))
+        except discord.DiscordException:
+            continue
+
+    # Also support exact usernames/display names and numeric IDs. Test the
+    # complete remainder first so a display name with spaces can be resolved
+    # when no one-time message follows it; then try the first token for the
+    # optional UWUIFY/HOODIFY target + message form.
+    command_parts = str(getattr(message, "content", "")).strip().split(maxsplit=1)
+    if len(command_parts) < 2:
+        return None
+
+    remainder = command_parts[1].strip()
+    candidates = [remainder]
+    first_token = remainder.split(maxsplit=1)[0] if remainder else ""
+    if first_token and first_token != remainder:
+        candidates.append(first_token)
+
+    cached_members = list(getattr(guild, "members", ()))
+    for candidate in candidates:
+        candidate = candidate.strip()
+        if candidate.startswith("@") and not candidate.startswith("<@"):
+            candidate = candidate[1:]
+        if not candidate:
+            continue
+
+        if candidate.isdecimal():
+            member = guild.get_member(int(candidate))
+            if member is not None:
+                return member
+            try:
+                return await guild.fetch_member(int(candidate))
+            except discord.DiscordException:
+                continue
+
+        for attribute in ("name", "global_name", "display_name"):
+            matches = [
+                member
+                for member in cached_members
+                if str(getattr(member, attribute, "") or "").casefold()
+                == candidate.casefold()
+            ]
+            if len(matches) == 1:
+                return matches[0]
+            if len(matches) > 1:
+                # Exact name collision: require a mention or numeric user ID.
+                break
+
+    return None
+
+
 @bot.event
 async def on_message(message: discord.Message):
     """Handle comma-prefix commands and automatic UWU replacement.
@@ -1829,14 +1912,13 @@ async def on_message(message: discord.Message):
             return
 
         parts = content.split(maxsplit=2)
-        if len(parts) < 2 or not message.mentions:
+        target = await resolve_textify_prefix_target(message)
+        if target is None:
             await message.reply(
-                "Usage: `,uwuify @user`",
+                "Usage: `,uwuify @user` (or provide an exact username/user ID)",
                 mention_author=False,
             )
             return
-
-        target = message.mentions[0]
 
         bot_member = message.guild.me if message.guild is not None else None
         if bot_member is None or not (
@@ -1977,14 +2059,13 @@ async def on_message(message: discord.Message):
             return
 
         parts = content.split(maxsplit=2)
-        if len(parts) < 2 or not message.mentions:
+        target = await resolve_textify_prefix_target(message)
+        if target is None:
             await message.reply(
-                "Usage: `,hoodify @user`",
+                "Usage: `,hoodify @user` (or provide an exact username/user ID)",
                 mention_author=False,
             )
             return
-
-        target = message.mentions[0]
         bot_member = message.guild.me if message.guild is not None else None
         permissions = (
             message.channel.permissions_for(bot_member)
