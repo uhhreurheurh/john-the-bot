@@ -1,5 +1,7 @@
 """Staff strike feature module."""
 
+import re
+
 from bot import *
 from bot import _github_contents_url, _github_request_json
 
@@ -151,6 +153,121 @@ def _staff_strike_datetime(value: str) -> datetime | None:
         parsed = parsed.replace(tzinfo=timezone.utc)
 
     return parsed.astimezone(timezone.utc)
+
+
+_legacy_staff_strike_log_reconciliation_complete = False
+
+
+def _staff_strike_log_matches_record(content: str, strike: dict) -> bool:
+    """Match a strike log to a record, including records created before message IDs were saved."""
+    try:
+        user_id = int(strike["user_id"])
+        strike_number = int(strike["strike_number"])
+        reason = str(strike["reason"]).strip()
+    except (KeyError, TypeError, ValueError):
+        return False
+
+    prefix = f"<@{user_id}> / {user_id}\n\nstrike #{strike_number}: {reason}\n\n"
+    if not content.startswith(prefix):
+        return False
+    return re.fullmatch(r"\d{1,2}d", content[len(prefix):]) is not None
+
+
+async def _find_legacy_staff_strike_log_message(channel, strike) -> discord.Message | None:
+    """Find a legacy log by its issue time and exact content when no message ID was saved."""
+    issued_at = _staff_strike_datetime(strike.get("issued_at", ""))
+    if issued_at is None or not hasattr(channel, "history"):
+        return None
+
+    after = issued_at - timedelta(minutes=2)
+    before = issued_at + timedelta(minutes=15)
+    async for candidate in channel.history(
+        limit=100,
+        after=after,
+        before=before,
+        oldest_first=True,
+    ):
+        if bot.user is not None and candidate.author.id != bot.user.id:
+            continue
+        if _staff_strike_log_matches_record(candidate.content or "", strike):
+            return candidate
+    return None
+
+
+async def reconcile_expired_staff_strike_log_messages() -> int:
+    """Mark historical expired strike logs whose records no longer contain message IDs."""
+    global _legacy_staff_strike_log_reconciliation_complete
+    if _legacy_staff_strike_log_reconciliation_complete:
+        return 0
+
+    guild = bot.get_guild(MAIN_SERVER)
+    channel = guild.get_channel(STAFF_STRIKE_ACTIVE_CHANNEL_ID) if guild else None
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(STAFF_STRIKE_ACTIVE_CHANNEL_ID)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException) as error:
+            print(
+                "Staff strike legacy-log reconciliation could not access the channel: "
+                f"{type(error).__name__}: {error}"
+            )
+            return 0
+    if not hasattr(channel, "history"):
+        print("Staff strike legacy-log reconciliation skipped: channel history is unavailable.")
+        return 0
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=45)  # Maximum strike duration is 40 days.
+    updated = 0
+    retry_needed = False
+    try:
+        async for message in channel.history(limit=None, after=cutoff, oldest_first=False):
+            if bot.user is not None and message.author.id != bot.user.id:
+                continue
+            content = message.content or ""
+            if not content or "Strike expired" in content:
+                continue
+
+            match = re.fullmatch(
+                r"<@!?(\d+)>\s*/\s*(\d+)\n\nstrike #(\d+): .*?\n\n(\d{1,2})d",
+                content,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            if match is None or int(match.group(1)) != int(match.group(2)):
+                continue
+
+            days = int(match.group(4))
+            if not 1 <= days <= 40:
+                continue
+            expires_at = message.created_at + timedelta(days=days)
+            if expires_at > now:
+                continue
+
+            try:
+                await message.edit(
+                    content=content
+                    + f"\n\n✅ **Strike expired** <t:{int(expires_at.timestamp())}:R>"
+                )
+                updated += 1
+            except discord.NotFound:
+                # The message was deleted after history returned it; nothing to repair.
+                continue
+            except (discord.Forbidden, discord.HTTPException) as error:
+                retry_needed = True
+                print(
+                    f"Could not update expired strike log {message.id}: "
+                    f"{type(error).__name__}: {error}"
+                )
+    except (discord.Forbidden, discord.HTTPException) as error:
+        print(
+            "Staff strike legacy-log reconciliation could not read channel history: "
+            f"{type(error).__name__}: {error}"
+        )
+        return updated
+
+    _legacy_staff_strike_log_reconciliation_complete = not retry_needed
+    if updated:
+        print(f"Staff strike log reconciliation updated {updated} expired historical message(s).")
+    return updated
 
 
 def prune_expired_staff_strikes() -> list[dict]:
@@ -702,12 +819,21 @@ async def handle_expired_staff_strikes(
             channel = None
 
     for strike in expired_strikes:
-        message_id = strike.get("log_message_id")
-        if not message_id or channel is None or not hasattr(channel, "fetch_message"):
+        if channel is None or not hasattr(channel, "fetch_message"):
             continue
+        message_id = strike.get("log_message_id")
         try:
-            message = await channel.fetch_message(int(message_id))
-            original_content = message.content
+            if message_id:
+                message = await channel.fetch_message(int(message_id))
+            else:
+                message = await _find_legacy_staff_strike_log_message(channel, strike)
+                if message is None:
+                    print(
+                        "Could not find legacy strike log for "
+                        f"user {strike.get('user_id')} strike #{strike.get('strike_number')}."
+                    )
+                    continue
+            original_content = message.content or ""
             if "Strike expired" not in original_content:
                 expires_at = _staff_strike_datetime(strike.get("expires_at", ""))
                 expiry_text = (
@@ -715,8 +841,11 @@ async def handle_expired_staff_strikes(
                     + (f" <t:{int(expires_at.timestamp())}:R>" if expires_at else "")
                 )
                 await message.edit(content=original_content + expiry_text)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
-            pass
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError) as error:
+            print(
+                f"Failed to update staff strike log {message_id or '(legacy lookup)'}: "
+                f"{type(error).__name__}: {error}"
+            )
 
     for user_id, user_expired in by_user.items():
         member = await resolve_main_guild_member(user_id)
