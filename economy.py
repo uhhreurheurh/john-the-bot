@@ -193,8 +193,8 @@ async def award_chat_activity(message: discord.Message) -> None:
     _mark_data_changed()
 
 
-@bot_module.bot.listen("on_message")
 async def chat_activity_listener(message: discord.Message) -> None:
+    """Call from the bot's existing on_message event; never register a second listener."""
     try:
         await award_chat_activity(message)
     except Exception:
