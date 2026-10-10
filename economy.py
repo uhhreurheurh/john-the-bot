@@ -40,7 +40,7 @@ SHOP_ITEMS = {
     },
     "customrole": {
         "name": "Custom Role Access (14 days)",
-        "cost": 5000,
+        "cost": 100000,
         "description": "Unlock ,cr / /custom role commands for 14 days. Access is removed automatically when the pass expires.",
     },
 }
@@ -367,7 +367,7 @@ async def shop_command(interaction: discord.Interaction):
     item=[
         app_commands.Choice(name="Chat Boost — 750 KB", value="chatboost"),
         app_commands.Choice(name="Daily Boost — 400 KB", value="dailyboost"),
-        app_commands.Choice(name="Custom Role Access (14 days) — 5,000 KB", value="customrole"),
+        app_commands.Choice(name="Custom Role Access (14 days) — 100,000 KB", value="customrole"),
     ]
 )
 async def buy_command(
