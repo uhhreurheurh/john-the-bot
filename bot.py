@@ -1798,7 +1798,7 @@ async def on_message(message: discord.Message):
                 self.pages = [
                     ("General", "`,jelp` — Show this help menu\n`,ping` — Check bot latency\n`,safechat` — Toggle SafeChat for yourself"),
                     ("Textify", "`,uwuify @user` — Enable UWUIFY for a member\n`,unuwuify @user` — Disable UWUIFY\n`,uwu count` — Show active UWUIFY count\n\n`,hoodify @user` — Enable HOODIFY for a member\n`,unhoodify @user` — Disable HOODIFY\n`,hood count` — Show active HOODIFY count"),
-                    ("Blackjack", "`,blackjack <bet>` — Play Blackjack with Kevin Bucks\n`,balance` — Check your Kevin Bucks balance\n`,daily` — Claim your daily Kevin Bucks"),
+                    ("Blackjack", "`,blackjack <bet>` — Play Blackjack with Kevin Bucks\n`,balance` — Check your Kevin Bucks balance\n`,daily` — Claim your daily Kevin Bucks\n`,shop` — Browse the Kevin Bucks shop\n`,buy chatboost/dailyboost` — Purchase a shop item\n`,inventory` — Check active boosts"),
                     ("Mines", "`,mines <bet> [mines]` — Play Mines with Kevin Bucks\nUse 1–12 mines; the default is 3."),
                     ("Slots", "`,slots <bet>` — Play Slots with Kevin Bucks\nOnly the person who started the game can use its buttons."),
                      ("Coin Flip Battle", "`,coinflipbattle @user <bet>` — Challenge another player\nThe challenged player must accept; the coin decides the winner."),
@@ -2172,6 +2172,10 @@ async def on_message(message: discord.Message):
                 saved = await save_user_blacklist(SAFECHAT_BAN_FILE, safechat_ban)
                 response = f"✅ {target.mention} can use SafeChat again." if saved else f"⚠️ {target.mention} was unbanned locally, but the GitHub save failed."
         await message.reply(response, mention_author=False)
+        return
+
+    # Kevin Bucks shop and inventory prefix commands.
+    if await economy_feature.handle_prefix(message):
         return
 
     # Kevin Bucks / Blackjack prefix commands.
@@ -3522,6 +3526,7 @@ import reviews as reviews_feature
 import leaderboard as leaderboard_feature
 import staff_strikes as staff_strikes_feature
 import blackjack as blackjack_feature
+import economy as economy_feature
 import mines as mines_feature
 import slots as slots_feature
 import coinflip as coinflip_feature
@@ -3728,6 +3733,9 @@ async def on_ready():
                 globals().get("blackjack_command"),
                 globals().get("balance_command"),
                 globals().get("daily_command"),
+                globals().get("shop_command"),
+                globals().get("buy_command"),
+                globals().get("inventory_command"),
                 globals().get("slots_command"),
             )
             registered_names = {command.name for command in tree.get_commands()}
@@ -3774,6 +3782,9 @@ async def on_ready():
                 "blackjack",
                 "balance",
                 "daily",
+                "shop",
+                "buy",
+                "inventory",
                 "unuwuify",
                 "uwucount",
                 "hoodify",
