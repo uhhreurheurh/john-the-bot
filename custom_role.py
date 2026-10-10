@@ -140,6 +140,12 @@ async def _delete_expired_member_custom_role(user_id: int) -> bool:
     await _ensure_shares_loaded()
 
     async with _role_mutation_lock:
+        # The cleanup worker may have queued this user as expired just before
+        # they renewed. Recheck under the role lock before deleting anything.
+        current_expiry = _custom_role_access_until(user_id)
+        if current_expiry is not None and current_expiry > datetime.now(timezone.utc):
+            return False
+
         role_id = _role_registry.get(user_id)
         guild = bot_module.bot.get_guild(bot_module.MAIN_SERVER)
 
@@ -393,8 +399,18 @@ async def cleanup_expired_custom_role_access() -> int:
         if removed:
             removed_ids.append(user_id)
 
-    for user_id in stale_ids + removed_ids:
+    for user_id in stale_ids:
         access.pop(user_id, None)
+
+    # Do not erase a pass renewed while Discord role deletion was in progress.
+    for user_id in removed_ids:
+        latest_expiry = (
+            _custom_role_access_until(int(user_id))
+            if user_id.isdigit()
+            else None
+        )
+        if latest_expiry is None or latest_expiry <= datetime.now(timezone.utc):
+            access.pop(user_id, None)
 
     if stale_ids or removed_ids:
         await blackjack_feature.save_data()
@@ -405,10 +421,32 @@ async def cleanup_expired_custom_role_access() -> int:
 _access_expiry_task: asyncio.Task | None = None
 
 
+async def _restore_saved_roles_for_active_access() -> None:
+    """Retry restoring saved roles when an active pass exists but a prior attempt failed."""
+    access = blackjack_feature.data.get("custom_role_access", {})
+    snapshots = blackjack_feature.data.get("expired_custom_roles", {})
+    if not isinstance(access, dict) or not isinstance(snapshots, dict):
+        return
+
+    now = datetime.now(timezone.utc)
+    for raw_user_id in list(snapshots):
+        if not str(raw_user_id).isdigit():
+            continue
+        expiry = _custom_role_access_until(int(raw_user_id))
+        if expiry is None or expiry <= now:
+            continue
+        try:
+            await restore_expired_custom_role(int(raw_user_id))
+        except Exception:
+            # Retry on the next worker tick; the snapshot remains saved.
+            continue
+
+
 async def _custom_role_access_expiry_worker() -> None:
     while not bot_module.bot.is_closed():
         try:
             await cleanup_expired_custom_role_access()
+            await _restore_saved_roles_for_active_access()
         except Exception:
             # A temporary persistence issue must not stop future expiry checks.
             pass
