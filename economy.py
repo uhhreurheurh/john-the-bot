@@ -30,7 +30,7 @@ SHOP_ITEMS = {
     "chatboost": {
         "name": "Chat Boost",
         "cost": 750,
-        "description": "Double eligible chat rewards for 1 hour. The daily chat cap increases to 1,000 while active.",
+        "description": "Double eligible chat rewards for 1 hour. The daily chat cap increases to 1,000 while active; this stacks with role earnings boosts.",
     },
     "dailyboost": {
         "name": "Daily Boost",
@@ -180,10 +180,18 @@ async def award_chat_activity(message: discord.Message) -> None:
             return
 
     boost_until = _parse_timestamp(state.get("boost_until"))
-    boosted = boost_until is not None and boost_until > now
-    daily_cap = CHAT_BOOSTED_DAILY_CAP if boosted else CHAT_DAILY_CAP
+    shop_boosted = boost_until is not None and boost_until > now
+    role_multiplier = blackjack_feature.get_role_earnings_multiplier(message.author)
+
+    # Role perks scale both the reward and its corresponding daily cap.
+    # The paid Chat Boost stacks with the role multiplier.
+    shop_multiplier = 2 if shop_boosted else 1
+    multiplier = role_multiplier * shop_multiplier
+    base_daily_cap = CHAT_BOOSTED_DAILY_CAP if shop_boosted else CHAT_DAILY_CAP
+    daily_cap = base_daily_cap * role_multiplier
     remaining = daily_cap - int(state.get("earned_today", 0))
-    reward = min(CHAT_BOOST_REWARD if boosted else CHAT_REWARD, remaining)
+    base_reward = CHAT_BOOST_REWARD if shop_boosted else CHAT_REWARD
+    reward = min(base_reward * role_multiplier, remaining)
     if reward <= 0:
         return
 
