@@ -3880,6 +3880,10 @@ async def on_ready():
 
     await blackjack_feature.initialize()
 
+    # Purchased custom-role access is temporary; keep expired user IDs out of
+    # the authorization list even when nobody runs a custom-role command.
+    custom_role_feature.start_access_expiry_cleanup()
+
     if not kick_loop.is_running():
         kick_loop.start()
 
