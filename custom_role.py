@@ -3,6 +3,7 @@ Personal custom-role commands inspired by Bleed's custom role sharing flow.
 
 Slash commands: /custom role create, color, random, rename, icon, remove, share, unshare
 Prefix equivalents: ,cr create, color, random, rename, icon, remove, share, unshare
+Custom role icons accept Unicode emoji, custom emoji from this server, or a direct HTTPS PNG/JPEG URL.
 A custom role can be shared with up to three other members.
 """
 
@@ -854,14 +855,91 @@ def _download_icon(url: str) -> bytes:
     return data
 
 
+CUSTOM_EMOJI_PATTERN = re.compile(r"^<a?:[A-Za-z0-9_]{2,32}:(\d{15,22})>$")
+
+
+def _looks_like_unicode_emoji(value: str) -> bool:
+    """Lightweight check that a role icon input looks like a Unicode emoji sequence."""
+    if not value or len(value) > 32:
+        return False
+
+    has_emoji_base = False
+    for character in value:
+        codepoint = ord(character)
+        if (
+            0x1F000 <= codepoint <= 0x1FAFF
+            or 0x2600 <= codepoint <= 0x27BF
+            or 0x2300 <= codepoint <= 0x23FF
+            or 0x1F1E6 <= codepoint <= 0x1F1FF
+            or codepoint in {
+                0x00A9, 0x00AE, 0x203C, 0x2049, 0x2122, 0x2139,
+                0x3030, 0x303D, 0x3297, 0x3299, 0x0023, 0x002A,
+                *range(0x0030, 0x003A),
+            }
+        ):
+            has_emoji_base = True
+            continue
+
+        # Emoji joiners, presentation selectors, skin tones, keycaps, and tag
+        # characters can appear inside a single valid Unicode emoji sequence.
+        if (
+            codepoint in {0x200D, 0xFE0E, 0xFE0F, 0x20E3}
+            or 0x1F3FB <= codepoint <= 0x1F3FF
+            or 0xFE00 <= codepoint <= 0xFE0F
+            or 0xE0020 <= codepoint <= 0xE007F
+        ):
+            continue
+
+        return False
+
+    return has_emoji_base
+
+
+async def _resolve_icon_input(guild: discord.Guild, value: str) -> bytes | str:
+    """Accept a direct image URL, a Unicode emoji, or a custom emoji from this server."""
+    value = value.strip()
+    if not value:
+        raise CustomRoleError(
+            "❌ Provide a Unicode emoji, a custom emoji from this server, or a direct HTTPS PNG/JPEG URL."
+        )
+
+    custom_emoji_match = CUSTOM_EMOJI_PATTERN.fullmatch(value)
+    if custom_emoji_match:
+        emoji_id = int(custom_emoji_match.group(1))
+        emoji = guild.get_emoji(emoji_id)
+        if emoji is None:
+            raise CustomRoleError(
+                "❌ Use a custom emoji uploaded to this server. Emojis from other servers cannot be role icons."
+            )
+        if not emoji.available:
+            raise CustomRoleError(
+                "❌ That custom emoji is currently unavailable. Try another emoji."
+            )
+
+        # Discord role icons cannot animate. Requesting the PNG version uses
+        # a static frame for animated custom emoji.
+        emoji_url = f"https://cdn.discordapp.com/emojis/{emoji.id}.png"
+        return await asyncio.to_thread(_download_icon, emoji_url)
+
+    if value.lower().startswith(("https://", "http://")):
+        return await asyncio.to_thread(_download_icon, value)
+
+    if _looks_like_unicode_emoji(value):
+        return value
+
+    raise CustomRoleError(
+        "❌ Use a Unicode emoji (like 😀), a custom emoji from this server (like <:name:id>), or a direct HTTPS PNG/JPEG URL."
+    )
+
+
 async def _set_icon(
     guild: discord.Guild,
     member: discord.Member,
-    url: str,
+    icon: str,
 ) -> str:
     if "ROLE_ICONS" not in guild.features:
         raise CustomRoleError("❌ This server does not have Discord's Role Icons feature enabled.")
-    icon_data = await asyncio.to_thread(_download_icon, url)
+    icon_value = await _resolve_icon_input(guild, icon)
     async with _role_mutation_lock:
         role = await _owned_role(guild, member, ensure_position=True)
         if role is None:
@@ -870,7 +948,7 @@ async def _set_icon(
         if role.managed or role.is_default() or bot_member.top_role <= role:
             raise CustomRoleError("❌ I cannot edit your role because it is above my highest role.")
         await role.edit(
-            display_icon=icon_data,
+            display_icon=icon_value,
             reason=f"Custom role icon changed by {member} ({member.id})",
         )
         return f"✅ Updated the icon for {role.mention}."
@@ -1303,10 +1381,10 @@ async def custom_role_rename(interaction: discord.Interaction, name: str):
     await _run_slash(interaction, _rename_role, name)
 
 
-@custom_role_group.command(name="icon", description="Set your custom role's icon from a PNG or JPEG URL.")
-@app_commands.describe(url="Direct HTTPS URL to a PNG or JPEG image")
-async def custom_role_icon(interaction: discord.Interaction, url: str):
-    await _run_slash(interaction, _set_icon, url)
+@custom_role_group.command(name="icon", description="Set your custom role's icon from an emoji or image URL.")
+@app_commands.describe(icon="Unicode emoji, custom emoji from this server, or direct HTTPS PNG/JPEG URL")
+async def custom_role_icon(interaction: discord.Interaction, icon: str):
+    await _run_slash(interaction, _set_icon, icon)
 
 
 @custom_role_group.command(name="remove", description="Delete your custom role.")
@@ -1449,15 +1527,15 @@ async def handle_prefix(message: discord.Message) -> bool:
         operation = _rename_role
         args = (name,)
     elif action == "icon":
-        url_parts = parts[action_index + 1:]
-        if len(url_parts) != 1:
+        icon_parts = parts[action_index + 1:]
+        if len(icon_parts) != 1:
             await message.reply(
-                "Usage: ,custom role icon <direct-https-image-url>",
+                "Usage: ,cr icon <emoji-or-direct-https-image-url>",
                 mention_author=False,
             )
             return True
         operation = _set_icon
-        args = (url_parts[0],)
+        args = (icon_parts[0],)
     elif action == "share":
         subaction = parts[action_index + 1].lower() if len(parts) > action_index + 1 else ""
         if subaction == "list":
