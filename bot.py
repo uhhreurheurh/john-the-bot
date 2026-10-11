@@ -95,6 +95,13 @@ GITHUB_DB_PATH = os.getenv("GITHUB_DB_PATH", "reviews.db")
 GITHUB_DB_BRANCH = os.getenv("GITHUB_DB_BRANCH", "database")
 REVIEW_DB_SYNC_MINUTES = 30
 REVIEW_DB_SAVE_ROLE_ID = 1306082718060384399
+# Roles allowed to manage the review-system blacklist (prefix command).
+REVIEW_BLACKLIST_ALLOWED_ROLE_IDS = {
+    1397677852056354948,
+    1518416402141417472,
+    1306082718060384399,
+    1371738883401711656,
+}
 # Roles allowed to actually use /deletereview. The command remains visible to everyone.
 DELETE_REVIEW_ALLOWED_ROLE_IDS = {
     1306082718060384399,
@@ -835,13 +842,17 @@ def prefix_blacklist_allowed(message: discord.Message) -> bool:
     if message.guild is None or message.guild.id != MAIN_SERVER:
         return False
 
+    if not isinstance(message.author, discord.Member):
+        return False
+
+    member_role_ids = {role.id for role in message.author.roles}
+    if message.content.strip().lower().startswith(",reviewblacklist "):
+        return bool(member_role_ids & REVIEW_BLACKLIST_ALLOWED_ROLE_IDS)
+
     if BLACKLIST_ALLOWED_ROLE_ID == 0:
         return False
 
-    return (
-        isinstance(message.author, discord.Member)
-        and BLACKLIST_ALLOWED_ROLE_ID in {role.id for role in message.author.roles}
-    )
+    return BLACKLIST_ALLOWED_ROLE_ID in member_role_ids
 
 
 async def get_safechat_reply_header(message: discord.Message) -> str | None:
