@@ -29,6 +29,16 @@
       "expires_at": "2026-10-17T00:33:57.182394+00:00",
       "original_staff_role_id": 1397677852056354948,
       "log_message_id": null
+    },
+    {
+      "user_id": 1542311839210406029,
+      "strike_number": 1,
+      "reason": "porn sticker",
+      "issued_by": 1403862921678950480,
+      "issued_at": "2026-10-11T15:46:39.051334+00:00",
+      "expires_at": "2026-10-25T15:46:39.051334+00:00",
+      "original_staff_role_id": 1371738346900029510,
+      "log_message_id": null
     }
   ],
   "permanent_demotions": {
