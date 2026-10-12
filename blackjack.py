@@ -49,7 +49,7 @@ DAILY_COOLDOWN = timedelta(hours=24)
 # If a member has both roles, the higher multiplier wins rather than stacking.
 ROLE_EARNINGS_MULTIPLIERS = {
     1307463884596314257: 2,
-    1377468541779050636: 4,
+    1377468541779050636: 3,
 }
 
 
