@@ -41,13 +41,9 @@ TAG_ROLE_ID = 1534715148676370462
 # Second role to assign in the main server
 TAG_ROLE_ID_2 = 1551382001221632010
 
-# Roles allowed to use the blacklist slash commands in the MAIN_SERVER.
-BLACKLIST_ALLOWED_ROLE_IDS = {
-    1306082718060384399,
-    1518416402141417472,
-    1397677852056354948,
-    1371738883401711656,
-}
+# Role ID allowed to use the second-role blacklist slash commands.
+# The user must have this role in the MAIN_SERVER.
+BLACKLIST_ALLOWED_ROLE_ID = 1306082718060384399  # <-- put the whitelisted role ID here
 
 # Shared role whitelist for all Textify commands (UWUIFY + HOODIFY).
 # Both features use this exact same set for slash and prefix commands.
@@ -2601,13 +2597,15 @@ async def blacklist_command_check(interaction: discord.Interaction) -> bool:
     if interaction.guild_id != MAIN_SERVER:
         raise app_commands.CheckFailure("This command can only be used in the main server.")
 
+    if BLACKLIST_ALLOWED_ROLE_ID == 0:
+        raise app_commands.CheckFailure("BLACKLIST_ALLOWED_ROLE_ID is not configured.")
+
     if not isinstance(interaction.user, discord.Member):
         raise app_commands.CheckFailure("Could not verify your server roles.")
 
-    member_role_ids = {role.id for role in interaction.user.roles}
-    if not (member_role_ids & BLACKLIST_ALLOWED_ROLE_IDS):
+    if BLACKLIST_ALLOWED_ROLE_ID not in {role.id for role in interaction.user.roles}:
         raise app_commands.CheckFailure(
-            "You do not have a role permitted to use this command."
+            "You do not have the role required to use this command."
         )
 
     return True
