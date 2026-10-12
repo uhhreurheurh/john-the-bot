@@ -1352,6 +1352,14 @@
       "rating": 5,
       "comment": "Truly a wonderful person, no more is needed to be said",
       "created_at": "2026-10-10 13:53:09"
+    },
+    {
+      "id": 294,
+      "target_id": 1512484378050302053,
+      "reviewer_id": 874955311226691604,
+      "rating": 4,
+      "comment": "good guy in general, sometimes refuckingtarded, but it ok i like him",
+      "created_at": "2026-10-12 16:23:57"
     }
   ],
   "review_update_requests": [
