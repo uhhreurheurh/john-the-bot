@@ -3,7 +3,7 @@ Kevin Bucks + Blackjack feature for John the Bot.
 
 This module owns:
 - Kevin Bucks balances
-- /blackjack and ,blackjack
+- /blackjack and ,blackjack (alias: ,bj)
 - /balance and ,balance
 - /daily and ,daily
 - Blackjack Hit / Stand / Double buttons
@@ -949,10 +949,10 @@ async def handle_prefix(message: discord.Message) -> bool:
             )
         return True
 
-    if command == ",blackjack":
+    if command in {",blackjack", ",bj"}:
         if len(parts) != 2:
             await message.reply(
-                f"Usage: `,blackjack <bet>` — bet {MIN_BET:,} to {MAX_BET:,} {CURRENCY_NAME}.",
+                f"Usage: `,blackjack <bet>` or `,bj <bet>` — bet {MIN_BET:,} to {MAX_BET:,} {CURRENCY_NAME}.",
                 mention_author=False,
             )
             return True
