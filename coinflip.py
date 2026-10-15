@@ -5,6 +5,7 @@ Commands:
 - /coinflipbattle @user <bet>
 - ,coinflipbattle @user <bet>
 - ,coinflip @user <bet>
+- ,cf @user <bet>
 
 The challenged user must accept. Both players pay the same wager and a
 fair coin determines the winner. The winner receives the full pot.
@@ -318,12 +319,12 @@ async def handle_prefix(message: discord.Message) -> bool:
         return False
 
     parts = message.content.strip().split()
-    if not parts or parts[0].lower() not in {",coinflipbattle", ",coinflip"}:
+    if not parts or parts[0].lower() not in {",coinflipbattle", ",coinflip", ",cf"}:
         return False
 
     if len(parts) != 3 or not message.mentions:
         await message.reply(
-            "Usage: ,coinflipbattle @user <bet>",
+            "Usage: ,coinflipbattle (or ,coinflip / ,cf) @user <bet>",
             mention_author=False,
         )
         return True
