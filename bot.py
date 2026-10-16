@@ -202,6 +202,10 @@ tag_check_time = 1
 # The role assignment loop remains fast, but source data is not fetched every second.
 TAG_SOURCE_REFRESH_SECONDS = 30
 
+# Automated tag-server kicking is disabled. Role syncing remains enabled.
+# Set this to True only to re-enable the kick system intentionally.
+KICK_SYSTEM_ENABLED = False
+
 # How often to check for users to kick (minutes)
 check_time = 10
 
@@ -3896,7 +3900,7 @@ async def on_ready():
     # the authorization list even when nobody runs a custom-role command.
     custom_role_feature.start_access_expiry_cleanup()
 
-    if not kick_loop.is_running():
+    if KICK_SYSTEM_ENABLED and not kick_loop.is_running():
         kick_loop.start()
 
     if not tag_role_loop.is_running():
@@ -3915,6 +3919,10 @@ async def on_ready():
 
 @tasks.loop(minutes=check_time)
 async def kick_loop():
+    # Safety guard: no kick actions while the system is disabled.
+    if not KICK_SYSTEM_ENABLED:
+        return
+
     main_guild = bot.get_guild(MAIN_SERVER)
 
     if main_guild is None:
