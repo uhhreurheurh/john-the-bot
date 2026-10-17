@@ -1107,7 +1107,7 @@ async def on_message(message: discord.Message):
 
 
     if prefix_command in {
-        ",uwuify", ",unuwuify", ",hoodify", ",unhoodify", ",safechat", ",safechatban", ",safechatunban", ",uwu", ",hood"
+        ",uwuify", ",unuwuify", ",hoodify", ",unhoodify", ",uwu", ",hood"
     } and uwu_hoodify_user_is_banned(message.author):
         await message.reply(
             "❌ You are banned from using UWUIFY and HOODIFY.",
