@@ -312,7 +312,7 @@ async def handle_prefix(message: discord.Message, client: discord.Client) -> boo
             except Exception as error:
                 failures.append(f"{source.name} create/appearance ({type(error).__name__})")
 
-        remaining = max(0, len(plan["missing"]) - len(batch))
+        remaining = max(0, len(plan["missing"]) - created)
         report = (
             f"Role migration batch finished — {guild.name}\n"
             f"Created roles this run: {created}/{len(batch)}\n"
