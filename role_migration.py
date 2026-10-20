@@ -178,6 +178,61 @@ async def _copy_appearance(target, source, icon_support, enhanced_color_support)
     return icon_field_applied
 
 
+async def _create_role_with_appearance(guild, source, source_key, plan):
+    """Create a permissionless role and copy supported appearance at creation."""
+    params = inspect.signature(guild.create_role).parameters
+    kwargs = {
+        "name": source.name,
+        "permissions": discord.Permissions.none(),
+        "color": source.color,
+        "hoist": False,
+        "mentionable": False,
+        "reason": (
+            f"Safe role appearance migration from "
+            f"{SOURCE_LABELS[source_key]} role {source.id}"
+        ),
+    }
+    fallback_edit_needed = False
+    source_icon = getattr(source, "display_icon", None)
+    icon_applied = False
+
+    if plan["icons"] and source_icon is not None:
+        if "display_icon" in params:
+            kwargs["display_icon"] = (
+                source_icon if isinstance(source_icon, str)
+                else await source_icon.read()
+            )
+            icon_applied = True
+        else:
+            fallback_edit_needed = True
+
+    if plan["enhanced_colors"]:
+        for attr, names in (
+            ("secondary_color", ("secondary_color", "secondary_colour")),
+            ("tertiary_color", ("tertiary_color", "tertiary_colour")),
+        ):
+            value = getattr(source, attr, None)
+            if value is None:
+                continue
+            accepted = next((name for name in names if name in params), None)
+            if accepted is None:
+                fallback_edit_needed = True
+            else:
+                kwargs[accepted] = value
+
+    target = await guild.create_role(**kwargs)
+
+    # Compatibility fallback for an older discord.py release whose create_role
+    # doesn't expose one of the appearance fields.
+    if fallback_edit_needed:
+        fallback_icon_applied = await _copy_appearance(
+            target, source, plan["icons"], plan["enhanced_colors"]
+        )
+        icon_applied = icon_applied or fallback_icon_applied
+
+    return target, icon_applied
+
+
 async def handle_prefix(message: discord.Message, client: discord.Client) -> bool:
     content = (message.content or "").strip()
     parts = content.split()
@@ -239,26 +294,13 @@ async def handle_prefix(message: discord.Message, client: discord.Client) -> boo
         batch = plan["missing"][:CREATE_BATCH_SIZE]
         for source, source_key in batch:
             try:
-                target = await guild.create_role(
-                    name=source.name,
-                    permissions=discord.Permissions.none(),
-                    color=source.color,
-                    hoist=False,
-                    mentionable=False,
-                    reason=f"Safe role appearance migration from {SOURCE_LABELS[source_key]} role {source.id}",
+                _, icon_applied = await _create_role_with_appearance(
+                    guild, source, source_key, plan
                 )
                 created += 1
-            except Exception as error:
-                failures.append(f"{source.name} create ({type(error).__name__})")
-                continue
-
-            try:
-                icon_applied = await _copy_appearance(
-                    target, source, plan["icons"], plan["enhanced_colors"]
-                )
                 icon_fields += int(icon_applied)
             except Exception as error:
-                failures.append(f"{source.name} appearance ({type(error).__name__})")
+                failures.append(f"{source.name} create/appearance ({type(error).__name__})")
 
         remaining = max(0, len(plan["missing"]) - len(batch))
         report = (
