@@ -979,11 +979,30 @@ async def on_message(message: discord.Message):
     if not isinstance(message.channel, discord.TextChannel):
         return
 
+    content = message.content.strip()
+
+    # Run migration commands before any other feature listeners/handlers so an
+    # unrelated prefix command or listener cannot swallow the request. Always
+    # return a readable diagnostic because normal terminal logging is disabled.
+    prefix_root = content.split(maxsplit=1)[0].casefold() if content else ""
+    if prefix_root == ",migrateappearance":
+        try:
+            await role_migration_feature.handle_prefix(message, bot)
+        except Exception as error:
+            try:
+                await message.reply(
+                    f"❌ Migration command crashed: **{type(error).__name__}** — "
+                    f"{str(error)[:500] or 'No details were provided.'}",
+                    mention_author=False,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+            except discord.DiscordException:
+                pass
+        return
+
     # Award eligible chat activity through the existing Client on_message event.
     # The economy handler catches its own errors so rewards never break commands.
     await economy_feature.chat_activity_listener(message)
-
-    content = message.content.strip()
 
     # Parse the readable spaced prefix syntax once so all handlers can use it.
     spaced_parts = content.split(maxsplit=2)
@@ -2216,10 +2235,6 @@ async def on_message(message: discord.Message):
     if await custom_role_feature.handle_prefix(message):
         return
 
-    # Owner/admin-only role appearance migration for the replacement server.
-    if await role_migration_feature.handle_prefix(message, bot):
-        return
-
     # Review, leaderboard, and remaining staff prefix commands.
     try:
         if await handle_prefix_review_command(message, content):
@@ -2734,6 +2749,68 @@ async def jelp_command(interaction: discord.Interaction):
     await interaction.response.send_message(
         embed=view.embed(),
         view=view,
+        ephemeral=False,
+    )
+
+
+@tree.command(
+    name="migrateappearance",
+    description="Copy colors and supported icons to existing roles in this server.",
+)
+@app_commands.describe(
+    mode="Preview changes without editing, or apply appearance changes",
+    sources="Choose which old server roles to copy from",
+)
+@app_commands.choices(
+    mode=[
+        app_commands.Choice(name="Preview", value="preview"),
+        app_commands.Choice(name="Apply", value="apply"),
+    ],
+    sources=[
+        app_commands.Choice(name="Both old servers", value="both"),
+        app_commands.Choice(name="Old main server only", value="main"),
+        app_commands.Choice(name="Second server only", value="second"),
+    ],
+)
+async def migrateappearance_slash_command(
+    interaction: discord.Interaction,
+    mode: app_commands.Choice[str],
+    sources: app_commands.Choice[str],
+):
+    guild = interaction.guild
+    if guild is None:
+        await interaction.response.send_message(
+            "❌ This command must be run inside the new destination server.",
+            ephemeral=True,
+        )
+        return
+
+    is_owner = guild.owner_id == interaction.user.id
+    is_admin = getattr(
+        getattr(interaction.user, "guild_permissions", None),
+        "administrator",
+        False,
+    )
+    if not (is_owner or is_admin):
+        await interaction.response.send_message(
+            "❌ Only the server owner or an administrator can run this migration.",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.defer(thinking=True, ephemeral=False)
+    try:
+        response = await role_migration_feature.run_migration(
+            guild, bot, mode.value, sources.value
+        )
+    except Exception as error:
+        response = (
+            f"❌ Migration could not run: **{type(error).__name__}** — "
+            f"{str(error)[:500] or 'No details were provided.'}"
+        )
+    await interaction.followup.send(
+        response[:1850],
+        allowed_mentions=discord.AllowedMentions.none(),
         ephemeral=False,
     )
 
