@@ -208,6 +208,60 @@ async def _copy_appearance(target, source, icon_support, enhanced_color_support)
     return icon_field_applied
 
 
+async def run_migration(
+    destination: discord.Guild,
+    client: discord.Client,
+    mode: str = "preview",
+    selection: str = "both",
+) -> str:
+    """Run preview/apply logic and return a user-visible diagnostic report."""
+    if mode not in {"preview", "apply"}:
+        raise ValueError("Choose preview or apply.")
+    if selection not in {"main", "second", "both"}:
+        raise ValueError("Choose main, second, or both.")
+    if destination.id in SOURCE_GUILDS.values():
+        raise RuntimeError("Run this command in the new destination server, not an old source server.")
+
+    keys = ["main", "second"] if selection == "both" else [selection]
+    plan = await _plan(destination, client, keys)
+
+    if mode == "preview":
+        return _preview(destination, plan)
+
+    updated, icon_fields, failures = 0, 0, []
+    for target, source, source_key in plan["matches"]:
+        try:
+            icon_applied = await _copy_appearance(
+                target, source, plan["icons"], plan["enhanced_colors"]
+            )
+            updated += 1
+            icon_fields += int(icon_applied)
+        except Exception as error:
+            failures.append(
+                f"{target.name} <- {SOURCE_LABELS[source_key]}: "
+                f"{type(error).__name__}: {str(error)[:90]}"
+            )
+
+    report = (
+        f"Role appearance migration finished — {destination.name}\n"
+        f"Updated existing roles: {updated}/{len(plan['matches'])}\n"
+        f"Unmatched source roles skipped: {len(plan['missing'])}\n"
+        f"Ambiguous source names: {len(plan['ambiguous_source'])}\n"
+        f"Ambiguous destination roles skipped: {len(plan['ambiguous_target'])}\n"
+        f"Roles above the bot skipped: {len(plan['too_high'])}\n"
+        f"Icon fields applied: {icon_fields}\n"
+        f"Failed edits: {len(failures)}\n"
+        "Only existing role appearance was changed. No roles were created; "
+        "permissions, hierarchy, member assignments, and source servers were not changed."
+    )
+    report += _listed("Unmatched source roles", plan["missing"])
+    report += _listed("Ambiguous source names", plan["ambiguous_source"])
+    report += _listed("Ambiguous destination roles", plan["ambiguous_target"])
+    report += _listed("Roles above the bot", plan["too_high"])
+    report += _listed("Failed edits", failures)
+    return report[:1850]
+
+
 async def handle_prefix(message: discord.Message, client: discord.Client) -> bool:
     content = (message.content or "").strip()
     parts = content.split()
@@ -216,17 +270,16 @@ async def handle_prefix(message: discord.Message, client: discord.Client) -> boo
 
     guild = message.guild
     if guild is None:
-        return True
-    if guild.id in SOURCE_GUILDS.values():
         await message.reply(
-            "Run this in the new destination server, not either old server.",
+            "❌ This command must be run inside the new destination server.",
             mention_author=False, allowed_mentions=discord.AllowedMentions.none(),
         )
         return True
+
     if not (guild.owner_id == message.author.id or
             getattr(message.author.guild_permissions, "administrator", False)):
         await message.reply(
-            "Only the server owner or an administrator can run this migration.",
+            "❌ Only the server owner or an administrator can run this migration.",
             mention_author=False, allowed_mentions=discord.AllowedMentions.none(),
         )
         return True
@@ -244,51 +297,16 @@ async def handle_prefix(message: discord.Message, client: discord.Client) -> boo
         )
         return True
 
-    keys = ["main", "second"] if selection == "both" else [selection]
     try:
-        plan = await _plan(guild, client, keys)
-    except RuntimeError as error:
-        await message.reply(
-            f"Migration stopped: {error}",
-            mention_author=False, allowed_mentions=discord.AllowedMentions.none(),
+        response = await run_migration(guild, client, mode, selection)
+    except Exception as error:
+        response = (
+            f"❌ Migration could not run: **{type(error).__name__}** — "
+            f"{str(error)[:500] or 'No details were provided.'}"
         )
-        return True
 
-    if mode == "preview":
-        await message.reply(
-            _preview(guild, plan), mention_author=False,
-            allowed_mentions=discord.AllowedMentions.none(),
-        )
-        return True
-
-    updated, icon_fields, failures = 0, 0, []
-    for target, source, _ in plan["matches"]:
-        try:
-            icon_applied = await _copy_appearance(
-                target, source, plan["icons"], plan["enhanced_colors"]
-            )
-            updated += 1
-            icon_fields += int(icon_applied)
-        except Exception as error:
-            failures.append(f"{target.name} ({type(error).__name__})")
-
-    report = (
-        f"Role appearance migration finished — {guild.name}\n"
-        f"Updated existing roles: {updated}/{len(plan['matches'])}\n"
-        f"Unmatched source roles skipped: {len(plan['missing'])}\n"
-        f"Ambiguous destination roles skipped: {len(plan['ambiguous_target'])}\n"
-        f"Roles above the bot skipped: {len(plan['too_high'])}\n"
-        f"Icon fields applied: {icon_fields}\n"
-        f"Failed edits: {len(failures)}\n"
-        "Only existing role appearance was changed. No roles were created; "
-        "permissions, hierarchy, member assignments, and source servers were not changed."
-    )
-    report += _listed("Unmatched source roles", plan["missing"])
-    report += _listed("Ambiguous destination roles", plan["ambiguous_target"])
-    report += _listed("Roles above the bot", plan["too_high"])
-    report += _listed("Failed edits", failures)
     await message.reply(
-        report[:1850], mention_author=False,
+        response[:1850], mention_author=False,
         allowed_mentions=discord.AllowedMentions.none(),
     )
     return True
