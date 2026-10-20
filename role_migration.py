@@ -6,6 +6,7 @@ Copies colors and role icons only. It never edits permissions, hierarchy, or mem
 from __future__ import annotations
 
 import inspect
+import unicodedata
 from collections import defaultdict
 import discord
 
@@ -15,16 +16,17 @@ SOURCE_GUILDS = {
 }
 SOURCE_LABELS = {"main": "old main server", "second": "second server"}
 COMMAND_NAME = ",migrateappearance"
-# Create missing roles in small batches to reduce the chance of server anti-nuke
-# systems treating a migration as a sudden role-spam event.
-CREATE_BATCH_SIZE = 5
-# Track roles created during this live migration process. Their appearance was
-# copied during creation, so later batch runs should not edit them again.
-_CREATED_ROLE_IDS: set[int] = set()
+# This command only edits roles that already exist in the destination server.
 
 
 def _name(value: str) -> str:
     return value.casefold().strip()
+
+
+def _normalized_name(value: str) -> str:
+    """Normalize formatting and emoji wrappers for safe fallback name matching."""
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    return "".join(char for char in normalized if char.isalnum())
 
 
 def _groups(roles):
@@ -76,24 +78,57 @@ async def _plan(destination, client, keys):
 
     chosen, ambiguous_source = _choose_sources(roles_by_key, keys)
     target_groups = _groups(destination_roles)
+    normalized_targets = defaultdict(list)
+    for role in destination_roles:
+        if not role.is_default() and not role.managed:
+            normalized = _normalized_name(role.name)
+            if normalized:
+                normalized_targets[normalized].append(role)
+
+    normalized_source_counts = defaultdict(int)
+    for source_name in chosen:
+        normalized = _normalized_name(source_name)
+        if normalized:
+            normalized_source_counts[normalized] += 1
+
     matches, missing, ambiguous_target, too_high = [], [], [], []
+    matched_target_ids = set()
     for name, (source_role, source_key) in chosen.items():
         targets = target_groups.get(name, [])
+        used_normalized_fallback = False
+
+        # First prefer an exact, case-insensitive name match. If punctuation,
+        # spacing, or decorative emoji wrappers differ, fall back only when the
+        # normalized source and destination names are both unique.
         if not targets:
-            missing.append((source_role, source_key))
+            normalized = _normalized_name(source_role.name)
+            fallback_targets = normalized_targets.get(normalized, []) if normalized else []
+            if normalized_source_counts.get(normalized, 0) != 1 or len(fallback_targets) != 1:
+                if fallback_targets:
+                    ambiguous_target.append(source_role.name)
+                    continue
+            else:
+                targets = fallback_targets
+                used_normalized_fallback = bool(targets)
+
+        if not targets:
+            missing.append(source_role.name)
         elif len(targets) != 1:
+            ambiguous_target.append(source_role.name)
+        elif targets[0].id in matched_target_ids:
             ambiguous_target.append(source_role.name)
         elif targets[0].position >= bot_member.top_role.position:
             too_high.append(targets[0].name)
         else:
             matches.append((targets[0], source_role, source_key))
+            matched_target_ids.add(targets[0].id)
 
-    missing.sort(key=lambda item: item[0].name.casefold())
+    missing.sort(key=str.casefold)
     return {
         "matches": matches,
         "missing": missing,
         "ambiguous_source": sorted(ambiguous_source),
-        "ambiguous_target": sorted(ambiguous_target, key=str.casefold),
+        "ambiguous_target": sorted(set(ambiguous_target), key=str.casefold),
         "too_high": sorted(too_high, key=str.casefold),
         "icons": "ROLE_ICONS" in destination.features,
         "enhanced_colors": "ENHANCED_ROLE_COLORS" in destination.features,
@@ -111,20 +146,12 @@ def _listed(label, names, limit=7):
 
 
 def _preview(guild, plan):
-    matches = [
-        (target, source, key)
-        for target, source, key in plan["matches"]
-        if target.id not in _CREATED_ROLE_IDS
-    ]
-    previously_created = len(plan["matches"]) - len(matches)
+    matches = plan["matches"]
     sources = " + ".join(SOURCE_LABELS[key] for key in plan["keys"])
     result = (
         f"Role appearance migration preview — {guild.name}\n"
-        f"Sources: {sources}\n"
         f"Existing roles ready to update: {len(matches)}\n"
-        f"Roles already created by this migration: {previously_created}\n"
-        f"Roles to create: {len(plan['missing'])}\n"
-        f"Creation batch size: up to {CREATE_BATCH_SIZE} per apply\n"
+        f"Unmatched source roles to skip: {len(plan['missing'])}\n"
         f"Ambiguous source names: {len(plan['ambiguous_source'])}\n"
         f"Ambiguous destination names: {len(plan['ambiguous_target'])}\n"
         f"Roles at/above the bot's top role: {len(plan['too_high'])}\n"
@@ -134,10 +161,7 @@ def _preview(guild, plan):
            else "\nEnhanced gradient/holographic colors are not supported here; primary colors will be copied.")
         + "\nOnly appearance is changed; permissions and hierarchy stay untouched."
     )
-    result += _listed(
-        "Roles that will be created",
-        [source.name for source, _ in plan["missing"]],
-    )
+    result += _listed("Unmatched source roles (will be skipped)", plan["missing"])
     result += _listed("Duplicate source names", plan["ambiguous_source"])
     result += _listed("Duplicate destination names", plan["ambiguous_target"])
     result += _listed("Roles above bot", plan["too_high"])
@@ -146,10 +170,7 @@ def _preview(guild, plan):
         result += "\nExamples: " + "; ".join(examples)
         if len(matches) > 7:
             result += f"; and {len(matches) - 7} more"
-    result += (
-        "\nApply in small batches with ,migrateappearance apply both. "
-        "Repeat until all missing roles are created; run it once more to update existing roles."
-    )
+    result += "\nRun ,migrateappearance apply both to copy appearance to existing matching roles only."
     return result[:1850]
 
 
@@ -177,7 +198,7 @@ async def _copy_appearance(target, source, icon_support, enhanced_color_support)
     icon_field_applied = False
     if icon_support and "display_icon" in params:
         icon = getattr(source, "display_icon", None)
-        if icon is None or isinstance(icon, str):
+        if icon is None or isinstance(icon, (str, discord.PartialEmoji)):
             kwargs["display_icon"] = icon
         else:
             kwargs["display_icon"] = await icon.read()
@@ -185,61 +206,6 @@ async def _copy_appearance(target, source, icon_support, enhanced_color_support)
 
     await target.edit(**kwargs)
     return icon_field_applied
-
-
-async def _create_role_with_appearance(guild, source, source_key, plan):
-    """Create a permissionless role and copy supported appearance at creation."""
-    params = inspect.signature(guild.create_role).parameters
-    kwargs = {
-        "name": source.name,
-        "permissions": discord.Permissions.none(),
-        "color": source.color,
-        "hoist": False,
-        "mentionable": False,
-        "reason": (
-            f"Safe role appearance migration from "
-            f"{SOURCE_LABELS[source_key]} role {source.id}"
-        ),
-    }
-    fallback_edit_needed = False
-    source_icon = getattr(source, "display_icon", None)
-    icon_applied = False
-
-    if plan["icons"] and source_icon is not None:
-        if "display_icon" in params:
-            kwargs["display_icon"] = (
-                source_icon if isinstance(source_icon, str)
-                else await source_icon.read()
-            )
-            icon_applied = True
-        else:
-            fallback_edit_needed = True
-
-    if plan["enhanced_colors"]:
-        for attr, names in (
-            ("secondary_color", ("secondary_color", "secondary_colour")),
-            ("tertiary_color", ("tertiary_color", "tertiary_colour")),
-        ):
-            value = getattr(source, attr, None)
-            if value is None:
-                continue
-            accepted = next((name for name in names if name in params), None)
-            if accepted is None:
-                fallback_edit_needed = True
-            else:
-                kwargs[accepted] = value
-
-    target = await guild.create_role(**kwargs)
-
-    # Compatibility fallback for an older discord.py release whose create_role
-    # doesn't expose one of the appearance fields.
-    if fallback_edit_needed:
-        fallback_icon_applied = await _copy_appearance(
-            target, source, plan["icons"], plan["enhanced_colors"]
-        )
-        icon_applied = icon_applied or fallback_icon_applied
-
-    return target, icon_applied
 
 
 async def handle_prefix(message: discord.Message, client: discord.Client) -> bool:
@@ -295,65 +261,32 @@ async def handle_prefix(message: discord.Message, client: discord.Client) -> boo
         )
         return True
 
-    updated, created, icon_fields, failures = 0, 0, 0, []
-    # If roles are still missing, create only a small batch this run. Their
-    # permissions are explicitly empty, and we do not assign them to members
-    # or reposition them. Existing role edits wait until creation is complete.
-    if plan["missing"]:
-        batch = plan["missing"][:CREATE_BATCH_SIZE]
-        for source, source_key in batch:
-            try:
-                target, icon_applied = await _create_role_with_appearance(
-                    guild, source, source_key, plan
-                )
-                created += 1
-                _CREATED_ROLE_IDS.add(target.id)
-                icon_fields += int(icon_applied)
-            except Exception as error:
-                failures.append(f"{source.name} create/appearance ({type(error).__name__})")
+    updated, icon_fields, failures = 0, 0, []
+    for target, source, _ in plan["matches"]:
+        try:
+            icon_applied = await _copy_appearance(
+                target, source, plan["icons"], plan["enhanced_colors"]
+            )
+            updated += 1
+            icon_fields += int(icon_applied)
+        except Exception as error:
+            failures.append(f"{target.name} ({type(error).__name__})")
 
-        remaining = max(0, len(plan["missing"]) - created)
-        report = (
-            f"Role migration batch finished — {guild.name}\n"
-            f"Created roles this run: {created}/{len(batch)}\n"
-            f"Icon fields applied: {icon_fields}\n"
-            f"Failed operations: {len(failures)}\n"
-            f"Roles still to create: {remaining}\n"
-            "New roles have no permissions and have not been assigned to anyone. "
-            "Existing role appearance has not been edited in this batch."
-        )
-        if remaining:
-            report += "\nRun ,migrateappearance apply both again to continue with the next batch."
-        else:
-            report += "\nAll missing roles were created with their supported appearance. "
-            report += "Run apply again only if you also need to update pre-existing matching roles."
-    else:
-        existing_matches = [
-            (target, source, source_key)
-            for target, source, source_key in plan["matches"]
-            if target.id not in _CREATED_ROLE_IDS
-        ]
-        skipped_created = len(plan["matches"]) - len(existing_matches)
-        for target, source, _ in existing_matches:
-            try:
-                icon_applied = await _copy_appearance(
-                    target, source, plan["icons"], plan["enhanced_colors"]
-                )
-                updated += 1
-                icon_fields += int(icon_applied)
-            except Exception as error:
-                failures.append(f"{target.name} ({type(error).__name__})")
-
-        report = (
-            f"Role appearance migration finished — {guild.name}\n"
-            f"Updated existing roles: {updated}/{len(existing_matches)}\n"
-            f"Previously-created roles skipped: {skipped_created}\n"
-            f"Icon fields applied: {icon_fields}\n"
-            f"Failed edits: {len(failures)}\n"
-            "Permissions, hierarchy, member assignments, and source servers were not changed."
-        )
-
-    report += _listed("Failed operations", failures)
+    report = (
+        f"Role appearance migration finished — {guild.name}\n"
+        f"Updated existing roles: {updated}/{len(plan['matches'])}\n"
+        f"Unmatched source roles skipped: {len(plan['missing'])}\n"
+        f"Ambiguous destination roles skipped: {len(plan['ambiguous_target'])}\n"
+        f"Roles above the bot skipped: {len(plan['too_high'])}\n"
+        f"Icon fields applied: {icon_fields}\n"
+        f"Failed edits: {len(failures)}\n"
+        "Only existing role appearance was changed. No roles were created; "
+        "permissions, hierarchy, member assignments, and source servers were not changed."
+    )
+    report += _listed("Unmatched source roles", plan["missing"])
+    report += _listed("Ambiguous destination roles", plan["ambiguous_target"])
+    report += _listed("Roles above the bot", plan["too_high"])
+    report += _listed("Failed edits", failures)
     await message.reply(
         report[:1850], mention_author=False,
         allowed_mentions=discord.AllowedMentions.none(),
