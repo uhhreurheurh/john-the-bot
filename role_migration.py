@@ -18,6 +18,9 @@ COMMAND_NAME = ",migrateappearance"
 # Create missing roles in small batches to reduce the chance of server anti-nuke
 # systems treating a migration as a sudden role-spam event.
 CREATE_BATCH_SIZE = 5
+# Track roles created during this live migration process. Their appearance was
+# copied during creation, so later batch runs should not edit them again.
+_CREATED_ROLE_IDS: set[int] = set()
 
 
 def _name(value: str) -> str:
@@ -108,12 +111,18 @@ def _listed(label, names, limit=7):
 
 
 def _preview(guild, plan):
-    matches = plan["matches"]
+    matches = [
+        (target, source, key)
+        for target, source, key in plan["matches"]
+        if target.id not in _CREATED_ROLE_IDS
+    ]
+    previously_created = len(plan["matches"]) - len(matches)
     sources = " + ".join(SOURCE_LABELS[key] for key in plan["keys"])
     result = (
         f"Role appearance migration preview — {guild.name}\n"
         f"Sources: {sources}\n"
         f"Existing roles ready to update: {len(matches)}\n"
+        f"Roles already created by this migration: {previously_created}\n"
         f"Roles to create: {len(plan['missing'])}\n"
         f"Creation batch size: up to {CREATE_BATCH_SIZE} per apply\n"
         f"Ambiguous source names: {len(plan['ambiguous_source'])}\n"
@@ -294,10 +303,11 @@ async def handle_prefix(message: discord.Message, client: discord.Client) -> boo
         batch = plan["missing"][:CREATE_BATCH_SIZE]
         for source, source_key in batch:
             try:
-                _, icon_applied = await _create_role_with_appearance(
+                target, icon_applied = await _create_role_with_appearance(
                     guild, source, source_key, plan
                 )
                 created += 1
+                _CREATED_ROLE_IDS.add(target.id)
                 icon_fields += int(icon_applied)
             except Exception as error:
                 failures.append(f"{source.name} create/appearance ({type(error).__name__})")
@@ -315,9 +325,16 @@ async def handle_prefix(message: discord.Message, client: discord.Client) -> boo
         if remaining:
             report += "\nRun ,migrateappearance apply both again to continue with the next batch."
         else:
-            report += "\nRun ,migrateappearance apply both once more to update existing matching roles."
+            report += "\nAll missing roles were created with their supported appearance. "
+            report += "Run apply again only if you also need to update pre-existing matching roles."
     else:
-        for target, source, _ in plan["matches"]:
+        existing_matches = [
+            (target, source, source_key)
+            for target, source, source_key in plan["matches"]
+            if target.id not in _CREATED_ROLE_IDS
+        ]
+        skipped_created = len(plan["matches"]) - len(existing_matches)
+        for target, source, _ in existing_matches:
             try:
                 icon_applied = await _copy_appearance(
                     target, source, plan["icons"], plan["enhanced_colors"]
@@ -329,7 +346,8 @@ async def handle_prefix(message: discord.Message, client: discord.Client) -> boo
 
         report = (
             f"Role appearance migration finished — {guild.name}\n"
-            f"Updated roles: {updated}/{len(plan['matches'])}\n"
+            f"Updated existing roles: {updated}/{len(existing_matches)}\n"
+            f"Previously-created roles skipped: {skipped_created}\n"
             f"Icon fields applied: {icon_fields}\n"
             f"Failed edits: {len(failures)}\n"
             "Permissions, hierarchy, member assignments, and source servers were not changed."
