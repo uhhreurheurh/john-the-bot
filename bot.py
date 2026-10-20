@@ -32,8 +32,8 @@ logging.disable(logging.CRITICAL)
 # CONFIG
 # =========================
 
-# Main server id
-MAIN_SERVER = 551166126596554775
+# Main server id (replacement server)
+MAIN_SERVER = 1369556559205630012
 
 # First role to assign in the main server
 TAG_ROLE_ID = 1534715148676370462
@@ -152,7 +152,6 @@ def safechat_ban_allowed(member: discord.Member | discord.User) -> bool:
 # Tag server ids
 # Keep this list in the same order as tag_server_role_ids below.
 tag_servers = [
-    1369556559205630012,
     1369543909843275866,
     1369504281404641421,
     1369568362497048647,
@@ -164,7 +163,6 @@ tag_servers = [
 # Specific tag role id for each tag server above.
 # tag_servers[0] -> tag_server_role_ids[0], etc.
 tag_server_role_ids = [
-    1492174542733443093,  # server 1369556559205630012
     1545511630060654592,  # server 1369543909843275866
     1545512468548288594,  # server 1369504281404641421
     1545513302363217952,  # server 1369568362497048647
