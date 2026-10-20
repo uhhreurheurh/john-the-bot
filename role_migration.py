@@ -89,6 +89,7 @@ async def _plan(destination, client, keys):
         "ambiguous_target": sorted(ambiguous_target, key=str.casefold),
         "too_high": sorted(too_high, key=str.casefold),
         "icons": "ROLE_ICONS" in destination.features,
+        "enhanced_colors": "ENHANCED_ROLE_COLORS" in destination.features,
         "keys": keys,
     }
 
@@ -115,6 +116,8 @@ def _preview(guild, plan):
         f"Roles at/above the bot's top role: {len(plan['too_high'])}\n"
         + ("Role icons are supported in this destination." if plan["icons"]
            else "Destination lacks Role Icons support; colors can still be copied.")
+        + ("\nEnhanced gradient/holographic colors are supported." if plan["enhanced_colors"]
+           else "\nEnhanced gradient/holographic colors are not supported here; primary colors will be copied.")
         + "\nOnly appearance is changed; permissions and hierarchy stay untouched."
     )
     result += _listed("Missing destination roles", plan["missing"])
@@ -130,22 +133,22 @@ def _preview(guild, plan):
     return result[:1850]
 
 
-async def _copy_appearance(target, source, icon_support):
+async def _copy_appearance(target, source, icon_support, enhanced_color_support):
     kwargs = {
         "color": source.color,
         "reason": f"Role appearance migration from source role {source.id}",
     }
     params = inspect.signature(target.edit).parameters
 
-    # Copy enhanced colors when the installed discord.py version supports them.
-    secondary = getattr(source, "secondary_color", None)
-    tertiary = getattr(source, "tertiary_color", None)
-    if secondary is not None:
+    # Enhanced colors require destination server support. Copy None as well so
+    # a simple source color can clear an old gradient/holographic target style.
+    if enhanced_color_support:
+        secondary = getattr(source, "secondary_color", None)
+        tertiary = getattr(source, "tertiary_color", None)
         if "secondary_colour" in params:
             kwargs["secondary_colour"] = secondary
         elif "secondary_color" in params:
             kwargs["secondary_color"] = secondary
-    if tertiary is not None:
         if "tertiary_colour" in params:
             kwargs["tertiary_colour"] = tertiary
         elif "tertiary_color" in params:
@@ -220,7 +223,9 @@ async def handle_prefix(message: discord.Message, client: discord.Client) -> boo
     updated, icon_fields, failures = 0, 0, []
     for target, source, _ in plan["matches"]:
         try:
-            icon_applied = await _copy_appearance(target, source, plan["icons"])
+            icon_applied = await _copy_appearance(
+                target, source, plan["icons"], plan["enhanced_colors"]
+            )
             updated += 1
             icon_fields += int(icon_applied)
         except Exception as error:
