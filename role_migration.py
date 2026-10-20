@@ -15,6 +15,9 @@ SOURCE_GUILDS = {
 }
 SOURCE_LABELS = {"main": "old main server", "second": "second server"}
 COMMAND_NAME = ",migrateappearance"
+# Create missing roles in small batches to reduce the chance of server anti-nuke
+# systems treating a migration as a sudden role-spam event.
+CREATE_BATCH_SIZE = 5
 
 
 def _name(value: str) -> str:
@@ -74,7 +77,7 @@ async def _plan(destination, client, keys):
     for name, (source_role, source_key) in chosen.items():
         targets = target_groups.get(name, [])
         if not targets:
-            missing.append(source_role.name)
+            missing.append((source_role, source_key))
         elif len(targets) != 1:
             ambiguous_target.append(source_role.name)
         elif targets[0].position >= bot_member.top_role.position:
@@ -82,9 +85,10 @@ async def _plan(destination, client, keys):
         else:
             matches.append((targets[0], source_role, source_key))
 
+    missing.sort(key=lambda item: item[0].name.casefold())
     return {
         "matches": matches,
-        "missing": sorted(missing, key=str.casefold),
+        "missing": missing,
         "ambiguous_source": sorted(ambiguous_source),
         "ambiguous_target": sorted(ambiguous_target, key=str.casefold),
         "too_high": sorted(too_high, key=str.casefold),
@@ -109,8 +113,9 @@ def _preview(guild, plan):
     result = (
         f"Role appearance migration preview — {guild.name}\n"
         f"Sources: {sources}\n"
-        f"Roles ready: {len(matches)}\n"
-        f"Source roles missing in destination: {len(plan['missing'])}\n"
+        f"Existing roles ready to update: {len(matches)}\n"
+        f"Roles to create: {len(plan['missing'])}\n"
+        f"Creation batch size: up to {CREATE_BATCH_SIZE} per apply\n"
         f"Ambiguous source names: {len(plan['ambiguous_source'])}\n"
         f"Ambiguous destination names: {len(plan['ambiguous_target'])}\n"
         f"Roles at/above the bot's top role: {len(plan['too_high'])}\n"
@@ -120,7 +125,10 @@ def _preview(guild, plan):
            else "\nEnhanced gradient/holographic colors are not supported here; primary colors will be copied.")
         + "\nOnly appearance is changed; permissions and hierarchy stay untouched."
     )
-    result += _listed("Missing destination roles", plan["missing"])
+    result += _listed(
+        "Roles that will be created",
+        [source.name for source, _ in plan["missing"]],
+    )
     result += _listed("Duplicate source names", plan["ambiguous_source"])
     result += _listed("Duplicate destination names", plan["ambiguous_target"])
     result += _listed("Roles above bot", plan["too_high"])
@@ -129,7 +137,10 @@ def _preview(guild, plan):
         result += "\nExamples: " + "; ".join(examples)
         if len(matches) > 7:
             result += f"; and {len(matches) - 7} more"
-    result += "\nTo apply, run ,migrateappearance apply both (or main/second)."
+    result += (
+        "\nApply in small batches with ,migrateappearance apply both. "
+        "Repeat until all missing roles are created; run it once more to update existing roles."
+    )
     return result[:1850]
 
 
@@ -220,27 +231,69 @@ async def handle_prefix(message: discord.Message, client: discord.Client) -> boo
         )
         return True
 
-    updated, icon_fields, failures = 0, 0, []
-    for target, source, _ in plan["matches"]:
-        try:
-            icon_applied = await _copy_appearance(
-                target, source, plan["icons"], plan["enhanced_colors"]
-            )
-            updated += 1
-            icon_fields += int(icon_applied)
-        except Exception as error:
-            failures.append(f"{target.name} ({type(error).__name__})")
+    updated, created, icon_fields, failures = 0, 0, 0, []
+    # If roles are still missing, create only a small batch this run. Their
+    # permissions are explicitly empty, and we do not assign them to members
+    # or reposition them. Existing role edits wait until creation is complete.
+    if plan["missing"]:
+        batch = plan["missing"][:CREATE_BATCH_SIZE]
+        for source, source_key in batch:
+            try:
+                target = await guild.create_role(
+                    name=source.name,
+                    permissions=discord.Permissions.none(),
+                    color=source.color,
+                    hoist=False,
+                    mentionable=False,
+                    reason=f"Safe role appearance migration from {SOURCE_LABELS[source_key]} role {source.id}",
+                )
+                created += 1
+            except Exception as error:
+                failures.append(f"{source.name} create ({type(error).__name__})")
+                continue
 
-    report = (
-        f"Role appearance migration finished — {guild.name}\n"
-        f"Updated roles: {updated}/{len(plan['matches'])}\n"
-        f"Icon fields applied: {icon_fields}\n"
-        f"Failed edits: {len(failures)}\n"
-        f"Missing destination roles: {len(plan['missing'])}\n"
-        "Permissions, hierarchy, member assignments, and source servers were not changed."
-    )
-    report += _listed("Failed edits", failures)
-    report += _listed("Missing destination roles", plan["missing"])
+            try:
+                icon_applied = await _copy_appearance(
+                    target, source, plan["icons"], plan["enhanced_colors"]
+                )
+                icon_fields += int(icon_applied)
+            except Exception as error:
+                failures.append(f"{source.name} appearance ({type(error).__name__})")
+
+        remaining = max(0, len(plan["missing"]) - len(batch))
+        report = (
+            f"Role migration batch finished — {guild.name}\n"
+            f"Created roles this run: {created}/{len(batch)}\n"
+            f"Icon fields applied: {icon_fields}\n"
+            f"Failed operations: {len(failures)}\n"
+            f"Roles still to create: {remaining}\n"
+            "New roles have no permissions and have not been assigned to anyone. "
+            "Existing role appearance has not been edited in this batch."
+        )
+        if remaining:
+            report += "\nRun ,migrateappearance apply both again to continue with the next batch."
+        else:
+            report += "\nRun ,migrateappearance apply both once more to update existing matching roles."
+    else:
+        for target, source, _ in plan["matches"]:
+            try:
+                icon_applied = await _copy_appearance(
+                    target, source, plan["icons"], plan["enhanced_colors"]
+                )
+                updated += 1
+                icon_fields += int(icon_applied)
+            except Exception as error:
+                failures.append(f"{target.name} ({type(error).__name__})")
+
+        report = (
+            f"Role appearance migration finished — {guild.name}\n"
+            f"Updated roles: {updated}/{len(plan['matches'])}\n"
+            f"Icon fields applied: {icon_fields}\n"
+            f"Failed edits: {len(failures)}\n"
+            "Permissions, hierarchy, member assignments, and source servers were not changed."
+        )
+
+    report += _listed("Failed operations", failures)
     await message.reply(
         report[:1850], mention_author=False,
         allowed_mentions=discord.AllowedMentions.none(),
