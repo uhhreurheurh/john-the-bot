@@ -50,19 +50,12 @@ async def _plan(destination, client, keys):
             raise RuntimeError(
                 f"I can't access the {SOURCE_LABELS[key]}. The bot must be installed there."
             )
-        try:
-            roles_by_key[key] = await source_guild.fetch_roles()
-        except discord.DiscordException as error:
-            raise RuntimeError(
-                f"Couldn't read roles from the {SOURCE_LABELS[key]} ({type(error).__name__})."
-            ) from error
+        # Guild role data is kept current in discord.py's gateway cache.
+        # Reading cached roles avoids requiring Manage Roles on source servers.
+        roles_by_key[key] = list(source_guild.roles)
 
-    try:
-        destination_roles = await destination.fetch_roles()
-    except discord.DiscordException as error:
-        raise RuntimeError(
-            f"Couldn't read destination roles ({type(error).__name__})."
-        ) from error
+    # Cached destination roles are sufficient for matching by name.
+    destination_roles = list(destination.roles)
 
     bot_member = destination.me
     if bot_member is None and client.user is not None:
