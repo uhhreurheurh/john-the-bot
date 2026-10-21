@@ -344,6 +344,12 @@ async def run_migration(
     if mode == "preview":
         return _preview(destination, plan)
 
+    if not plan["manage_channels"]:
+        raise RuntimeError(
+            "I need Manage Channels permission to copy channel/category overwrites. "
+            "Nothing was changed; grant Manage Channels and rerun apply."
+        )
+
     updated, icon_fields, permission_differences_fixed, failures = 0, 0, 0, []
     for target, source, source_key in plan["matches"]:
         try:
@@ -360,24 +366,52 @@ async def run_migration(
                 f"{type(error).__name__}: {str(error)[:90]}"
             )
 
+    channels_updated, synced_channels = 0, 0
+    for target_channel, source_channel, source_key, overwrites, sync_permissions in plan["channel_matches"]:
+        try:
+            if sync_permissions:
+                await target_channel.edit(
+                    sync_permissions=True,
+                    reason=f"Channel permission migration from source channel {source_channel.id}",
+                )
+                synced_channels += 1
+            else:
+                await target_channel.edit(
+                    overwrites=overwrites,
+                    reason=f"Channel permission migration from source channel {source_channel.id}",
+                )
+            channels_updated += 1
+        except Exception as error:
+            failures.append(
+                f"channel {_channel_label(target_channel)} <- {SOURCE_LABELS[source_key]}: "
+                f"{type(error).__name__}: {str(error)[:90]}"
+            )
+
     report = (
-        f"Role appearance migration finished — {destination.name}\n"
+        f"Role and channel permission migration finished — {destination.name}\n"
         f"Updated existing roles: {updated}/{len(plan['matches'])}\n"
         f"Permission sets copied: {updated}\n"
         f"Roles whose permission differences were fixed: {permission_differences_fixed}\n"
+        f"Updated channel/category overwrites: {channels_updated}/{len(plan['channel_matches'])}\n"
+        f"Destination channels synced to categories: {synced_channels}\n"
         f"Unmatched source roles skipped: {len(plan['missing'])}\n"
+        f"Unmatched source channels skipped: {len(plan['channels_missing'])}\n"
         f"Ambiguous source names: {len(plan['ambiguous_source'])}\n"
         f"Ambiguous destination roles skipped: {len(plan['ambiguous_target'])}\n"
         f"Roles above the bot skipped: {len(plan['too_high'])}\n"
         f"Icon fields applied: {icon_fields}\n"
         f"Failed edits: {len(failures)}\n"
-        "Permission flags, supported colors and icons were copied from matched source roles. "
-        "No roles were created; hierarchy, member assignments, and source servers were not changed."
+        "Source role permissions/colors/icons and mapped channel/category overwrites were copied. "
+        "No roles or channels were created; hierarchy, member assignments, and source servers were not changed."
     )
     report += _listed("Unmatched source roles", plan["missing"])
     report += _listed("Ambiguous source names", plan["ambiguous_source"])
     report += _listed("Ambiguous destination roles", plan["ambiguous_target"])
     report += _listed("Roles above the bot", plan["too_high"])
+    report += _listed("Unmatched source channels", plan["channels_missing"])
+    report += _listed("Ambiguous source channels", plan["channels_ambiguous_source"])
+    report += _listed("Ambiguous destination channels", plan["channels_ambiguous_target"])
+    report += _listed("Unmapped channel overwrite targets (entire channel skipped)", plan["channels_unmapped"])
     report += _listed("Failed edits", failures)
     return report[:1850]
 
