@@ -170,6 +170,58 @@ async def _plan(destination, client, keys):
             matches.append((targets[0], source_role, source_key))
             matched_target_ids.add(targets[0].id)
 
+    # Plan channel/category permission overwrites. Matching uses channel type,
+    # channel name, and parent category; duplicate matches are skipped.
+    chosen_channels, seen_source_keys = {}, set()
+    channels_ambiguous_source = []
+    for source_key in keys:
+        source_guild = client.get_guild(SOURCE_GUILDS[source_key])
+        grouped = defaultdict(list)
+        for channel in source_guild.channels:
+            grouped[_channel_key(channel)].append(channel)
+        for channel_key, candidates in grouped.items():
+            if channel_key in seen_source_keys:
+                continue
+            seen_source_keys.add(channel_key)
+            if len(candidates) != 1:
+                channel_label = f"{channel_key[0]}/{channel_key[2]}" if channel_key[0] else channel_key[2]
+                channels_ambiguous_source.append(channel_label)
+            else:
+                chosen_channels[channel_key] = (candidates[0], source_key)
+
+    target_channels = defaultdict(list)
+    for channel in destination.channels:
+        target_channels[_channel_key(channel)].append(channel)
+
+    role_mappings = {
+        source_key: _source_role_mapping(client.get_guild(SOURCE_GUILDS[source_key]), destination)
+        for source_key in keys
+    }
+    channel_matches, channels_missing, channels_ambiguous_target, channels_unmapped = [], [], [], []
+    for channel_key, (source_channel, source_key) in chosen_channels.items():
+        targets = target_channels.get(channel_key, [])
+        if not targets:
+            channels_missing.append(_channel_label(source_channel))
+            continue
+        if len(targets) != 1:
+            channels_ambiguous_target.append(_channel_label(source_channel))
+            continue
+        target_channel = targets[0]
+        inherited = (
+            not isinstance(source_channel, discord.CategoryChannel)
+            and bool(getattr(source_channel, "permissions_synced", False))
+        )
+        if inherited:
+            channel_matches.append((target_channel, source_channel, source_key, None, True))
+            continue
+        overwrites, issues = _translate_channel_overwrites(
+            source_channel, destination, role_mappings[source_key]
+        )
+        if issues:
+            channels_unmapped.extend(issues)
+            continue
+        channel_matches.append((target_channel, source_channel, source_key, overwrites, False))
+
     missing.sort(key=str.casefold)
     return {
         "matches": matches,
@@ -179,6 +231,12 @@ async def _plan(destination, client, keys):
         "too_high": sorted(too_high, key=str.casefold),
         "icons": "ROLE_ICONS" in destination.features,
         "enhanced_colors": "ENHANCED_ROLE_COLORS" in destination.features,
+        "manage_channels": bool(bot_member.guild_permissions.manage_channels),
+        "channel_matches": channel_matches,
+        "channels_missing": sorted(channels_missing, key=str.casefold),
+        "channels_ambiguous_source": sorted(set(channels_ambiguous_source), key=str.casefold),
+        "channels_ambiguous_target": sorted(set(channels_ambiguous_target), key=str.casefold),
+        "channels_unmapped": sorted(set(channels_unmapped), key=str.casefold),
         "keys": keys,
     }
 
