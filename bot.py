@@ -3521,34 +3521,26 @@ async def sync_legacy_role_member(
         role_mapping = _get_legacy_role_mapping(source_guild, destination, bot_member)
 
     source_role_ids = set() if source_left else {role.id for role in source_member.roles}
-    current_destination_role_ids = {role.id for role in destination_member.roles}
+    current_role_map = {
+        role.id: role for role in destination_member.roles
+        if not role.is_default()
+    }
+    desired_role_map = dict(current_role_map)
+    for source_role_id, destination_role in role_mapping.items():
+        if source_role_id in source_role_ids:
+            desired_role_map[destination_role.id] = destination_role
+        else:
+            desired_role_map.pop(destination_role.id, None)
 
-    roles_to_add = [
-        destination_role
-        for source_role_id, destination_role in role_mapping.items()
-        if source_role_id in source_role_ids
-        and destination_role.id not in current_destination_role_ids
-    ]
-    roles_to_remove = [
-        destination_role
-        for source_role_id, destination_role in role_mapping.items()
-        if source_role_id not in source_role_ids
-        and destination_role.id in current_destination_role_ids
-    ]
+    if set(desired_role_map) == set(current_role_map):
+        return
 
     try:
-        if roles_to_add:
-            await destination_member.add_roles(
-                *roles_to_add,
-                reason="Legacy main server role membership sync",
-                atomic=False,
-            )
-        if roles_to_remove:
-            await destination_member.remove_roles(
-                *roles_to_remove,
-                reason="Legacy main server role membership sync",
-                atomic=False,
-            )
+        # One member-role PATCH per changed member; preserve unrelated existing roles.
+        await destination_member.edit(
+            roles=list(desired_role_map.values()),
+            reason="Legacy main server role membership sync",
+        )
     except (discord.Forbidden, discord.HTTPException):
         return
 
