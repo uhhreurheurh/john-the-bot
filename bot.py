@@ -1018,6 +1018,50 @@ async def on_message(message: discord.Message):
 
     content = message.content.strip()
 
+    # Owner/admin-only manual reconciliation with an immediate diagnostic report.
+    prefix_root = content.split(maxsplit=1)[0].casefold() if content else ""
+    if prefix_root == ",synclegacyroles":
+        guild = message.guild
+        if guild is None or guild.id != MAIN_SERVER:
+            await message.reply(
+                "Run ,synclegacyroles in the new main server.",
+                mention_author=False,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            return
+        is_owner = guild.owner_id == message.author.id
+        is_admin = getattr(getattr(message.author, "guild_permissions", None), "administrator", False)
+        if not (is_owner or is_admin):
+            await message.reply(
+                "Only the server owner or an administrator can run this role sync.",
+                mention_author=False,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            return
+        status_message = await message.reply(
+            "Checking old-server role mappings and reconciling existing members…",
+            mention_author=False,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+        bot_member = guild.me
+        if bot_member is None:
+            try:
+                bot_member = await guild.fetch_member(bot.user.id)
+            except discord.DiscordException:
+                bot_member = None
+        if bot_member is None:
+            report = "Role sync failed: couldn't load the bot's member record in the new main server."
+        else:
+            try:
+                report = await sync_legacy_roles_periodically(guild, bot_member, force=True)
+            except Exception as error:
+                report = f"Role sync failed: {type(error).__name__}: {str(error)[:350]}"
+        await status_message.edit(
+            content=report[:1900],
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+        return
+
     # Award eligible chat activity through the existing Client on_message event.
     # The economy handler catches its own errors so rewards never break commands.
     await economy_feature.chat_activity_listener(message)
@@ -3640,12 +3684,12 @@ async def sync_legacy_roles_periodically(
         f"role_pairs_matched={len(role_mapping)}; members_updated={updated_members}; "
         f"roles_added={roles_added}; roles_removed={roles_removed}; api_failures={api_failures}."
     )
-    print(report)
     if unmapped_names:
-        shown = ", ".join(repr(name[:45]) for name in unmapped_names[:8])
-        if len(unmapped_names) > 8:
-            shown += f", plus {len(unmapped_names) - 8} more"
-        print(f"Legacy role sync could not map {len(unmapped_names)} source role(s): {shown}")
+        shown = ", ".join(repr(name[:35]) for name in unmapped_names[:6])
+        if len(unmapped_names) > 6:
+            shown += f", plus {len(unmapped_names) - 6} more"
+        report += f" Unmapped source roles ({len(unmapped_names)}): {shown}."
+    print(report)
     return report
 
 
