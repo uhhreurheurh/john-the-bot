@@ -6,6 +6,7 @@ import threading
 import base64
 import json
 import re
+from collections import defaultdict
 import random
 import logging
 from pathlib import Path
