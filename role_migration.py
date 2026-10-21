@@ -38,6 +38,52 @@ def _groups(roles):
     return result
 
 
+def _channel_key(channel):
+    """Match channels by type, name, and parent category."""
+    is_category = isinstance(channel, discord.CategoryChannel)
+    kind = "category" if is_category else str(
+        getattr(getattr(channel, "type", None), "name", getattr(channel, "type", "unknown"))
+    ).casefold()
+    parent = getattr(channel, "category", None)
+    return (_name(parent.name) if parent else "", kind, _name(channel.name))
+
+
+def _channel_label(channel):
+    parent = getattr(channel, "category", None)
+    return f"{parent.name}/{channel.name}" if parent else channel.name
+
+
+def _source_role_mapping(source_guild, destination):
+    """Map roles by unique, case-insensitive names; never guess on duplicates."""
+    sources, targets = defaultdict(list), defaultdict(list)
+    for role in source_guild.roles:
+        if not role.is_default() and not role.managed:
+            sources[_name(role.name)].append(role)
+    for role in destination.roles:
+        if not role.is_default() and not role.managed:
+            targets[_name(role.name)].append(role)
+    return {
+        source_roles[0].id: targets[name][0]
+        for name, source_roles in sources.items()
+        if len(source_roles) == 1 and len(targets.get(name, [])) == 1
+    }
+
+
+def _translate_channel_overwrites(source_channel, destination, role_mapping):
+    translated, issues = {}, []
+    for source_target, overwrite in source_channel.overwrites.items():
+        if isinstance(source_target, discord.Role):
+            target = destination.default_role if source_target.is_default() else role_mapping.get(source_target.id)
+        else:
+            target_id = getattr(source_target, "id", None)
+            target = destination.get_member(target_id) if target_id is not None else None
+        if target is None:
+            issues.append(f"{_channel_label(source_channel)}: {getattr(source_target, 'name', getattr(source_target, 'id', 'unknown'))}")
+        else:
+            translated[target] = overwrite
+    return translated, issues
+
+
 def _choose_sources(roles_by_key, keys):
     chosen, ambiguous = {}, set()
     for key in keys:
