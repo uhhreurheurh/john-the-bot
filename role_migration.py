@@ -261,22 +261,31 @@ def _preview(guild, plan):
         f"Ambiguous destination names: {len(plan['ambiguous_target'])}\n"
         f"Roles at/above the bot's top role: {len(plan['too_high'])}\n"
         f"Roles whose permissions differ from source: {sum(target.permissions.value != source.permissions.value for target, source, _ in matches)}\n"
+        f"Existing channels/categories ready for permission copy: {len(plan['channel_matches'])}\n"
+        f"Unmatched source channels: {len(plan['channels_missing'])}\n"
+        f"Ambiguous source channels: {len(plan['channels_ambiguous_source'])}\n"
+        f"Ambiguous destination channels: {len(plan['channels_ambiguous_target'])}\n"
+        f"Channels skipped due to unmappable overwrite targets: {len(plan['channels_unmapped'])}\n"
         + ("Role icons are supported in this destination." if plan["icons"]
            else "Destination lacks Role Icons support; colors can still be copied.")
         + ("\nEnhanced gradient/holographic colors are supported." if plan["enhanced_colors"]
            else "\nEnhanced gradient/holographic colors are not supported here; primary colors will be copied.")
-        + "\nApply copies all source permission flags (including Administrator if enabled), colors and supported icons. Hierarchy and member assignments stay unchanged."
+        + "\nApply copies role permissions (including Administrator if enabled), colors/icons, and channel/category overwrites. Matching destination overwrites are replaced; hierarchy and member assignments stay unchanged."
     )
     result += _listed("Unmatched source roles (will be skipped)", plan["missing"])
     result += _listed("Duplicate source names", plan["ambiguous_source"])
     result += _listed("Duplicate destination names", plan["ambiguous_target"])
     result += _listed("Roles above bot", plan["too_high"])
+    result += _listed("Unmatched source channels", plan["channels_missing"])
+    result += _listed("Ambiguous source channels", plan["channels_ambiguous_source"])
+    result += _listed("Ambiguous destination channels", plan["channels_ambiguous_target"])
+    result += _listed("Unmapped channel overwrite targets (entire channel skipped)", plan["channels_unmapped"])
     if matches:
         examples = [f"{source.name} ({SOURCE_LABELS[key]})" for _, source, key in matches[:7]]
         result += "\nExamples: " + "; ".join(examples)
         if len(matches) > 7:
             result += f"; and {len(matches) - 7} more"
-    result += "\nRun ,migrateappearance apply both to copy permissions and appearance to existing matching roles only."
+    result += "\nRun ,migrateappearance apply both to copy role permissions/appearance and channel/category overwrites to existing matching objects."
     return result[:1850]
 
 
