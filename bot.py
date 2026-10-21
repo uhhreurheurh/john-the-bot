@@ -3489,33 +3489,39 @@ async def sync_legacy_role_member(
     destination_member: discord.Member | None = None,
     role_mapping: dict[int, discord.Role] | None = None,
     allow_fetch: bool = True,
-) -> None:
-    """Mirror safe role membership only; source role permissions are never copied."""
+) -> tuple[int, int, bool]:
+    """Mirror safe role membership only; return (added, removed, API-success)."""
     if source_member.guild.id != LEGACY_ROLE_SYNC_SOURCE_GUILD or source_member.bot:
-        return
+        return 0, 0, False
 
     source_guild = bot.get_guild(LEGACY_ROLE_SYNC_SOURCE_GUILD)
     destination = bot.get_guild(MAIN_SERVER)
     if source_guild is None or destination is None:
-        return
+        return 0, 0, False
 
     bot_member = destination.me
     if bot_member is None or not bot_member.guild_permissions.manage_roles:
-        return
+        return 0, 0, False
 
     if destination_member is None:
         destination_member = destination.get_member(source_member.id)
     if destination_member is None and allow_fetch and not source_left:
         try:
             destination_member = await destination.fetch_member(source_member.id)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            return
+        except discord.NotFound:
+            return 0, 0, False
+        except (discord.Forbidden, discord.HTTPException) as error:
+            print(
+                f"Legacy role sync could not fetch destination member {source_member.id}: "
+                f"{type(error).__name__}: {error}"
+            )
+            return 0, 0, False
     if (
         destination_member is None
         or destination_member.bot
         or destination_member.id == destination.owner_id
     ):
-        return
+        return 0, 0, False
 
     if role_mapping is None:
         role_mapping = _get_legacy_role_mapping(source_guild, destination, bot_member)
@@ -3532,8 +3538,10 @@ async def sync_legacy_role_member(
         else:
             desired_role_map.pop(destination_role.id, None)
 
-    if set(desired_role_map) == set(current_role_map):
-        return
+    roles_added = set(desired_role_map) - set(current_role_map)
+    roles_removed = set(current_role_map) - set(desired_role_map)
+    if not roles_added and not roles_removed:
+        return 0, 0, True
 
     try:
         # One member-role PATCH per changed member; preserve unrelated existing roles.
@@ -3541,38 +3549,104 @@ async def sync_legacy_role_member(
             roles=list(desired_role_map.values()),
             reason="Legacy main server role membership sync",
         )
-    except (discord.Forbidden, discord.HTTPException):
-        return
+        return len(roles_added), len(roles_removed), True
+    except (discord.Forbidden, discord.HTTPException) as error:
+        print(
+            f"Legacy role sync API failure for member {source_member.id} -> "
+            f"{destination_member.id}: {type(error).__name__}: {error}"
+        )
+        return 0, 0, False
 
 
 async def sync_legacy_roles_periodically(
     destination: discord.Guild,
     bot_member: discord.Member,
-) -> None:
-    """Repair missed memberships from the cached legacy member list periodically."""
+    *,
+    force: bool = False,
+) -> str:
+    """Reconcile legacy role membership and report mapping/assignment diagnostics."""
     global legacy_role_sync_last_full_scan
     now = time.monotonic()
-    if now - legacy_role_sync_last_full_scan < LEGACY_ROLE_SYNC_REFRESH_SECONDS:
-        return
+    if not force and now - legacy_role_sync_last_full_scan < LEGACY_ROLE_SYNC_REFRESH_SECONDS:
+        return "Sync skipped: the previous reconciliation is still within its refresh interval."
 
     source_guild = bot.get_guild(LEGACY_ROLE_SYNC_SOURCE_GUILD)
-    if source_guild is None or not bot_member.guild_permissions.manage_roles:
-        return
+    if source_guild is None:
+        return f"Sync failed: source server {LEGACY_ROLE_SYNC_SOURCE_GUILD} is not available to the bot."
+    if not bot_member.guild_permissions.manage_roles:
+        return "Sync failed: the bot is missing Manage Roles permission in the destination server."
+
     source_members = await get_source_members_for_role_check(source_guild)
     if source_members is None:
-        return
+        return (
+            "Sync failed: the source member list could not be loaded. Check that the bot is in the "
+            "old server and that the Server Members Intent is enabled in both code and the Discord Developer Portal."
+        )
 
     role_mapping = _get_legacy_role_mapping(source_guild, destination, bot_member)
+    eligible_source_roles = [
+        role for role in source_guild.roles
+        if not role.is_default()
+        and not role.managed
+        and role.id not in LEGACY_ROLE_SYNC_SKIP_SOURCE_ROLE_IDS
+    ]
+    eligible_destination_roles = [
+        role for role in destination.roles
+        if not role.is_default()
+        and not role.managed
+        and role.id not in LEGACY_ROLE_SYNC_TARGET_EXCLUSIONS
+        and is_safe_role_sync_target(role)
+        and bot_member.top_role > role
+    ]
+    mapped_source_ids = set(role_mapping)
+    unmapped_names = [
+        role.name for role in eligible_source_roles
+        if role.id not in mapped_source_ids
+    ]
     legacy_role_sync_last_full_scan = now
+
+    checked_destination_members = 0
+    missing_destination_members = 0
+    updated_members = 0
+    roles_added = 0
+    roles_removed = 0
+    api_failures = 0
+
     for source_member in source_members:
         destination_member = destination.get_member(source_member.id)
-        if destination_member is not None:
-            await sync_legacy_role_member(
-                source_member,
-                destination_member=destination_member,
-                role_mapping=role_mapping,
-                allow_fetch=False,
-            )
+        if destination_member is None:
+            missing_destination_members += 1
+            continue
+        checked_destination_members += 1
+        added, removed, success = await sync_legacy_role_member(
+            source_member,
+            destination_member=destination_member,
+            role_mapping=role_mapping,
+            allow_fetch=False,
+        )
+        roles_added += added
+        roles_removed += removed
+        if added or removed:
+            updated_members += 1
+        if not success:
+            api_failures += 1
+
+    # Keep scan output compact but useful enough to diagnose zero-change runs.
+    report = (
+        f"Legacy role sync scan: source={source_guild.name} ({source_guild.id}); "
+        f"source_members={len(source_members)}; destination_members_checked={checked_destination_members}; "
+        f"not_in_destination={missing_destination_members}; "
+        f"source_roles={len(eligible_source_roles)}; destination_roles_eligible={len(eligible_destination_roles)}; "
+        f"role_pairs_matched={len(role_mapping)}; members_updated={updated_members}; "
+        f"roles_added={roles_added}; roles_removed={roles_removed}; api_failures={api_failures}."
+    )
+    print(report)
+    if unmapped_names:
+        shown = ", ".join(repr(name[:45]) for name in unmapped_names[:8])
+        if len(unmapped_names) > 8:
+            shown += f", plus {len(unmapped_names) - 8} more"
+        print(f"Legacy role sync could not map {len(unmapped_names)} source role(s): {shown}")
+    return report
 
 
 # ============================================================
