@@ -175,6 +175,7 @@ tag_servers = [
     401823090004328459,
     1369566527547772978,
     1175479734239498341,
+    551166126596554775,  # legacy main/source server
 ]
 
 # Specific tag role id for each tag server above.
@@ -186,6 +187,7 @@ tag_server_role_ids = [
     1545513671910883338,  # server 401823090004328459
     1545514277190762577,  # server 1369566527547772978
     1545514523924897892,  # server 1175479734239498341
+    1404636843630399488,  # server 551166126596554775
 ]
 
 # Second tag role to check in each tag server.
