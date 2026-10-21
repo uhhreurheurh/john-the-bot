@@ -43,6 +43,13 @@ TAG_ROLE_ID = 1560797397314175006
 # that mapping safely remains inactive until its replacement role ID is configured.
 TAG_ROLE_ID_2 = 1551382001221632010
 
+# Full one-way role-membership sync from the legacy main server.
+# It maps by unique role names and never copies permissions to target roles.
+LEGACY_ROLE_SYNC_SOURCE_GUILD = 551166126596554775
+LEGACY_ROLE_SYNC_SKIP_SOURCE_ROLE_IDS = {1404636843630399488}
+LEGACY_ROLE_SYNC_REFRESH_SECONDS = 60
+LEGACY_ROLE_SYNC_TARGET_EXCLUSIONS = {TAG_ROLE_ID, TAG_ROLE_ID_2}
+
 # Never assign a synced target role if it could grant staff/moderation privileges.
 # Role membership is synced only; permissions are never copied or edited.
 ROLE_SYNC_BLOCKED_PERMISSIONS = (
@@ -224,8 +231,8 @@ def is_safe_role_sync_target(role: discord.Role | None) -> bool:
     )
 
 
-# How often to check for tag-based role assignment (seconds)
-tag_check_time = 1
+# How often to reconcile tag-role membership (seconds). Role changes are handled immediately.
+tag_check_time = 30
 # How often to refresh source-server member/role data (seconds).
 # The role assignment loop remains fast, but source data is not fetched every second.
 TAG_SOURCE_REFRESH_SECONDS = 30
@@ -1010,25 +1017,6 @@ async def on_message(message: discord.Message):
         return
 
     content = message.content.strip()
-
-    # Run migration commands before any other feature listeners/handlers so an
-    # unrelated prefix command or listener cannot swallow the request. Always
-    # return a readable diagnostic because normal terminal logging is disabled.
-    prefix_root = content.split(maxsplit=1)[0].casefold() if content else ""
-    if prefix_root == ",migrateappearance":
-        try:
-            await role_migration_feature.handle_prefix(message, bot)
-        except Exception as error:
-            try:
-                await message.reply(
-                    f"❌ Migration command crashed: **{type(error).__name__}** — "
-                    f"{str(error)[:500] or 'No details were provided.'}",
-                    mention_author=False,
-                    allowed_mentions=discord.AllowedMentions.none(),
-                )
-            except discord.DiscordException:
-                pass
-        return
 
     # Award eligible chat activity through the existing Client on_message event.
     # The economy handler catches its own errors so rewards never break commands.
@@ -1870,7 +1858,7 @@ async def on_message(message: discord.Message):
                     ("Slots", "`,slots <bet>` — Play Slots with Kevin Bucks\nOnly the person who started the game can use its buttons."),
                      ("Coin Flip Battle", "`,coinflipbattle @user <bet>` — Challenge another player\nThe challenged player must accept; the coin decides the winner."),
                     ("Reviews", "`,review @user` — Leave a review\n`,updatereview @user` — Request a review update\n`,reviews @user` — View reviews\n`,deletereview ID` — Delete a review\n`,leaderboard` — View the review leaderboard\n`,reviewblacklist add/remove/status @user` — Manage the review blacklist"),
-                    ("Staff & Management", "`,strike @user <7-40d> <reason>` — Issue a staff strike\n`,removestrike @user <number>` — Remove a staff strike\n`,safechatban @user` — Staff: ban a user from SafeChat\n`,safechatunban @user` — Staff: unban a user from SafeChat\n\n`,textify blacklist/unblacklist/status @user` — Manage the Textify blacklist\n`,textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n`,blacklist add/remove/status @user` — Manage the second-role blacklist\n`,savedb` — Save the review database\n`,migrateappearance preview/apply [main|second|both]` — Copy role permissions, appearance, and channel permission overwrites"),
+                    ("Staff & Management", "`,strike @user <7-40d> <reason>` — Issue a staff strike\n`,removestrike @user <number>` — Remove a staff strike\n`,safechatban @user` — Staff: ban a user from SafeChat\n`,safechatunban @user` — Staff: unban a user from SafeChat\n\n`,textify blacklist/unblacklist/status @user` — Manage the Textify blacklist\n`,textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n`,blacklist add/remove/status @user` — Manage the second-role blacklist\n`,savedb` — Save the review database"),
                     ("Custom Roles", ",cr create <name> — Create without a color\n,cr create <color> <name> — Create with a color (hex with/without # or color name)\nExamples: ,cr create My Role\n,cr create red My Role\n,cr create #FF00FF My Role\n,cr color <color> [second-color] — Change its color (e.g. d4b3c3 bdb4bb or dark blue)\n,cr random — Random color\n,cr rename <name> — Rename it\n,cr icon <https-url> — Set its icon\n,cr share <username or user ID> — Share with up to 3 other members\n,cr share — List who can use it\n,cr unshare <username or user ID> — Revoke access\n,cr share remove @role — Leave a shared role\n,cr remove — Delete it\nAlias for ,custom role."),
                 ]
 
@@ -2783,66 +2771,6 @@ async def jelp_command(interaction: discord.Interaction):
     )
 
 
-@tree.command(
-    name="migrateappearance",
-    description="Copy role permissions, colors/icons, and channel overwrites to matching existing objects.",
-)
-@app_commands.describe(
-    mode="Preview or apply role permissions, appearance, and channel overwrites",
-    sources="Choose which old server roles to copy from",
-)
-@app_commands.choices(
-    mode=[
-        app_commands.Choice(name="Preview", value="preview"),
-        app_commands.Choice(name="Apply", value="apply"),
-    ],
-    sources=[
-        app_commands.Choice(name="Both old servers", value="both"),
-        app_commands.Choice(name="Old main server only", value="main"),
-        app_commands.Choice(name="Second server only", value="second"),
-    ],
-)
-async def migrateappearance_slash_command(
-    interaction: discord.Interaction,
-    mode: app_commands.Choice[str],
-    sources: app_commands.Choice[str],
-):
-    guild = interaction.guild
-    if guild is None:
-        await interaction.response.send_message(
-            "❌ This command must be run inside the new destination server.",
-            ephemeral=True,
-        )
-        return
-
-    is_owner = guild.owner_id == interaction.user.id
-    is_admin = getattr(
-        getattr(interaction.user, "guild_permissions", None),
-        "administrator",
-        False,
-    )
-    if not (is_owner or is_admin):
-        await interaction.response.send_message(
-            "❌ Only the server owner or an administrator can run this migration.",
-            ephemeral=True,
-        )
-        return
-
-    await interaction.response.defer(thinking=True, ephemeral=False)
-    try:
-        response = await role_migration_feature.run_migration(
-            guild, bot, mode.value, sources.value
-        )
-    except Exception as error:
-        response = (
-            f"❌ Migration could not run: **{type(error).__name__}** — "
-            f"{str(error)[:500] or 'No details were provided.'}"
-        )
-    await interaction.followup.send(
-        response[:1850],
-        allowed_mentions=discord.AllowedMentions.none(),
-        ephemeral=False,
-    )
 
 
 @tree.command(
@@ -3332,6 +3260,9 @@ async def on_member_update(before: discord.Member, after: discord.Member):
             )
         return
 
+    if after.guild.id == LEGACY_ROLE_SYNC_SOURCE_GUILD and before.roles != after.roles:
+        await sync_legacy_role_member(after)
+
     source_pairs = dict(zip(tag_servers, tag_server_role_ids))
     relevant_role_ids = set()
     if after.guild.id in source_pairs:
@@ -3342,8 +3273,23 @@ async def on_member_update(before: discord.Member, after: discord.Member):
     if relevant_role_ids:
         before_ids = {role.id for role in before.roles}
         after_ids = {role.id for role in after.roles}
-        if any(role_id in before_ids or role_id in after_ids for role_id in relevant_role_ids):
+        if any((role_id in before_ids) != (role_id in after_ids) for role_id in relevant_role_ids):
             await sync_tag_roles_for_source_member(after)
+
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    """Sync matching safe roles when someone joins the legacy main server."""
+    if member.guild.id == LEGACY_ROLE_SYNC_SOURCE_GUILD:
+        await sync_legacy_role_member(member)
+
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    """Remove mapped legacy roles from new main when a source member leaves."""
+    if member.guild.id == LEGACY_ROLE_SYNC_SOURCE_GUILD:
+        await sync_legacy_role_member(member, source_left=True)
+
 
 # =========================
 # MEMBER CACHE HELPER
@@ -3444,6 +3390,199 @@ async def get_source_role_for_check(
         return None
 
 
+# =========================
+# LEGACY MAIN SERVER: ALL-ROLE SYNC
+# =========================
+
+legacy_role_mapping_cache: dict = {"expires": 0.0, "mapping": {}}
+legacy_role_sync_last_full_scan = 0.0
+
+
+def _legacy_role_name_normalized(value: str) -> str:
+    return "".join(character for character in value.casefold() if character.isalnum())
+
+
+def _build_legacy_role_mapping(
+    source_guild: discord.Guild,
+    destination: discord.Guild,
+    bot_member: discord.Member,
+) -> dict[int, discord.Role]:
+    """Map all unambiguous, safe roles to existing destination roles by name."""
+    source_roles = [
+        role for role in source_guild.roles
+        if not role.is_default()
+        and not role.managed
+        and role.id not in LEGACY_ROLE_SYNC_SKIP_SOURCE_ROLE_IDS
+    ]
+    destination_roles = [
+        role for role in destination.roles
+        if not role.is_default()
+        and not role.managed
+        and role.id not in LEGACY_ROLE_SYNC_TARGET_EXCLUSIONS
+        and is_safe_role_sync_target(role)
+        and bot_member.top_role > role
+    ]
+
+    source_exact, destination_exact = defaultdict(list), defaultdict(list)
+    source_normalized, destination_normalized = defaultdict(list), defaultdict(list)
+    for role in source_roles:
+        source_exact[role.name.casefold().strip()].append(role)
+        normalized = _legacy_role_name_normalized(role.name)
+        if normalized:
+            source_normalized[normalized].append(role)
+    for role in destination_roles:
+        destination_exact[role.name.casefold().strip()].append(role)
+        normalized = _legacy_role_name_normalized(role.name)
+        if normalized:
+            destination_normalized[normalized].append(role)
+
+    mapping = {}
+    for source_role in source_roles:
+        name = source_role.name.casefold().strip()
+        if len(source_exact[name]) != 1:
+            continue
+        exact_targets = destination_exact.get(name, [])
+        if len(exact_targets) == 1:
+            mapping[source_role.id] = exact_targets[0]
+            continue
+        if exact_targets:
+            continue
+        normalized = _legacy_role_name_normalized(source_role.name)
+        if (
+            normalized
+            and len(source_normalized.get(normalized, [])) == 1
+            and len(destination_normalized.get(normalized, [])) == 1
+        ):
+            mapping[source_role.id] = destination_normalized[normalized][0]
+    return mapping
+
+
+def _get_legacy_role_mapping(
+    source_guild: discord.Guild,
+    destination: discord.Guild,
+    bot_member: discord.Member,
+) -> dict[int, discord.Role]:
+    now = time.monotonic()
+    cached = legacy_role_mapping_cache
+    if (
+        cached.get("expires", 0) > now
+        and cached.get("source_guild_id") == source_guild.id
+        and cached.get("destination_guild_id") == destination.id
+    ):
+        return cached["mapping"]
+
+    mapping = _build_legacy_role_mapping(source_guild, destination, bot_member)
+    legacy_role_mapping_cache.clear()
+    legacy_role_mapping_cache.update({
+        "expires": now + LEGACY_ROLE_SYNC_REFRESH_SECONDS,
+        "source_guild_id": source_guild.id,
+        "destination_guild_id": destination.id,
+        "mapping": mapping,
+    })
+    return mapping
+
+
+async def sync_legacy_role_member(
+    source_member: discord.Member,
+    *,
+    source_left: bool = False,
+    destination_member: discord.Member | None = None,
+    role_mapping: dict[int, discord.Role] | None = None,
+    allow_fetch: bool = True,
+) -> None:
+    """Mirror safe role membership only; source role permissions are never copied."""
+    if source_member.guild.id != LEGACY_ROLE_SYNC_SOURCE_GUILD or source_member.bot:
+        return
+
+    source_guild = bot.get_guild(LEGACY_ROLE_SYNC_SOURCE_GUILD)
+    destination = bot.get_guild(MAIN_SERVER)
+    if source_guild is None or destination is None:
+        return
+
+    bot_member = destination.me
+    if bot_member is None or not bot_member.guild_permissions.manage_roles:
+        return
+
+    if destination_member is None:
+        destination_member = destination.get_member(source_member.id)
+    if destination_member is None and allow_fetch and not source_left:
+        try:
+            destination_member = await destination.fetch_member(source_member.id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return
+    if (
+        destination_member is None
+        or destination_member.bot
+        or destination_member.id == destination.owner_id
+    ):
+        return
+
+    if role_mapping is None:
+        role_mapping = _get_legacy_role_mapping(source_guild, destination, bot_member)
+
+    source_role_ids = set() if source_left else {role.id for role in source_member.roles}
+    current_destination_role_ids = {role.id for role in destination_member.roles}
+
+    roles_to_add = [
+        destination_role
+        for source_role_id, destination_role in role_mapping.items()
+        if source_role_id in source_role_ids
+        and destination_role.id not in current_destination_role_ids
+    ]
+    roles_to_remove = [
+        destination_role
+        for source_role_id, destination_role in role_mapping.items()
+        if source_role_id not in source_role_ids
+        and destination_role.id in current_destination_role_ids
+    ]
+
+    try:
+        if roles_to_add:
+            await destination_member.add_roles(
+                *roles_to_add,
+                reason="Legacy main server role membership sync",
+                atomic=False,
+            )
+        if roles_to_remove:
+            await destination_member.remove_roles(
+                *roles_to_remove,
+                reason="Legacy main server role membership sync",
+                atomic=False,
+            )
+    except (discord.Forbidden, discord.HTTPException):
+        return
+
+
+async def sync_legacy_roles_periodically(
+    destination: discord.Guild,
+    bot_member: discord.Member,
+) -> None:
+    """Repair missed memberships from the cached legacy member list periodically."""
+    global legacy_role_sync_last_full_scan
+    now = time.monotonic()
+    if now - legacy_role_sync_last_full_scan < LEGACY_ROLE_SYNC_REFRESH_SECONDS:
+        return
+
+    source_guild = bot.get_guild(LEGACY_ROLE_SYNC_SOURCE_GUILD)
+    if source_guild is None or not bot_member.guild_permissions.manage_roles:
+        return
+    source_members = await get_source_members_for_role_check(source_guild)
+    if source_members is None:
+        return
+
+    role_mapping = _get_legacy_role_mapping(source_guild, destination, bot_member)
+    legacy_role_sync_last_full_scan = now
+    for source_member in source_members:
+        destination_member = destination.get_member(source_member.id)
+        if destination_member is not None:
+            await sync_legacy_role_member(
+                source_member,
+                destination_member=destination_member,
+                role_mapping=role_mapping,
+                allow_fetch=False,
+            )
+
+
 # ============================================================
 # TAG-SERVER ROLE EVENT SYNC
 # ============================================================
@@ -3457,12 +3596,12 @@ async def sync_tag_roles_for_source_member(source_member: discord.Member) -> Non
     if main_guild is None:
         return
 
-    # Fetch the bot's member record fresh so Discord's current role
-    # positions are used for hierarchy checks.
-    try:
-        bot_member = await main_guild.fetch_member(bot.user.id)
-    except (discord.NotFound, discord.HTTPException):
-        bot_member = main_guild.me
+    bot_member = main_guild.me
+    if bot_member is None:
+        try:
+            bot_member = await main_guild.fetch_member(bot.user.id)
+        except (discord.NotFound, discord.HTTPException):
+            bot_member = None
 
     if bot_member is None or not bot_member.guild_permissions.manage_roles:
         print("Role sync skipped: bot does not currently have Manage Roles.")
@@ -3660,7 +3799,6 @@ import mines as mines_feature
 import slots as slots_feature
 import coinflip as coinflip_feature
 import custom_role as custom_role_feature
-import role_migration as role_migration_feature
 from hoodify_feature import *
 from safechat_feature import *
 from uwuify_feature import *
@@ -4181,15 +4319,19 @@ async def tag_role_loop():
                 reason="Periodic automatic-role-removal check",
             )
 
-    # Refresh the bot member so role-position checks use Discord's current data.
-    try:
-        bot_member = await main_guild.fetch_member(bot.user.id)
-    except (discord.NotFound, discord.HTTPException):
-        bot_member = main_guild.me
+    # Reuse the cached bot member; only fetch on a cold cache.
+    bot_member = main_guild.me
+    if bot_member is None:
+        try:
+            bot_member = await main_guild.fetch_member(bot.user.id)
+        except (discord.NotFound, discord.HTTPException):
+            bot_member = None
 
     if bot_member is None or not bot_member.guild_permissions.manage_roles:
         print("Role sync skipped: bot does not currently have Manage Roles.")
         return
+
+    await sync_legacy_roles_periodically(main_guild, bot_member)
 
     # First main-server tag role.
     tag_role = main_guild.get_role(TAG_ROLE_ID)
