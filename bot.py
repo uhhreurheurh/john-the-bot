@@ -4441,7 +4441,9 @@ async def tag_role_loop():
         print("Role sync skipped: bot does not currently have Manage Roles.")
         return
 
-    await sync_legacy_roles_periodically(main_guild, bot_member)
+    legacy_sync_report = await sync_legacy_roles_periodically(main_guild, bot_member)
+    if legacy_sync_report.startswith("Sync failed:"):
+        print(legacy_sync_report)
 
     # First main-server tag role.
     tag_role = main_guild.get_role(TAG_ROLE_ID)
@@ -4678,7 +4680,8 @@ async def kick_loop_error(error):
 
 @tag_role_loop.error
 async def tag_role_loop_error(error):
-    # A single unexpected exception should not permanently stop the role loop.
+    # Make loop failures visible because global Python logging is disabled.
+    print(f"Tag-role loop failed: {type(error).__name__}: {error}")
     await asyncio.sleep(5)
 
     if not bot.is_closed() and not tag_role_loop.is_running():
