@@ -35,11 +35,28 @@ logging.disable(logging.CRITICAL)
 # Main server id (replacement server)
 MAIN_SERVER = 1369556559205630012
 
-# First role to assign in the main server
-TAG_ROLE_ID = 1534715148676370462
+# One-way role sync targets in the replacement main server.
+# The first target is the existing mapped tag role in MAIN_SERVER.
+TAG_ROLE_ID = 1492174542733443093
 
-# Second role to assign in the main server
+# Independent second-role target. If this role is not present in MAIN_SERVER,
+# that mapping safely remains inactive until its replacement role ID is configured.
 TAG_ROLE_ID_2 = 1551382001221632010
+
+# Never assign a synced target role if it could grant staff/moderation privileges.
+# Role membership is synced only; permissions are never copied or edited.
+ROLE_SYNC_BLOCKED_PERMISSIONS = (
+    "administrator",
+    "manage_guild",
+    "manage_roles",
+    "manage_channels",
+    "manage_webhooks",
+    "kick_members",
+    "ban_members",
+    "manage_messages",
+    "manage_nicknames",
+    "moderate_members",
+)
 
 # Role ID allowed to use the second-role blacklist slash commands.
 # The user must have this role in the MAIN_SERVER.
@@ -193,6 +210,17 @@ PROTECTED_ROLE_IDS = {
     1388941384437989431,
     1372712786810896456,
 }
+
+def is_safe_role_sync_target(role: discord.Role | None) -> bool:
+    """Fail closed if a mapped target role is missing or has privileged permissions."""
+    if role is None or role.is_default() or role.managed:
+        return False
+    permissions = role.permissions
+    return not any(
+        bool(getattr(permissions, permission_name, False))
+        for permission_name in ROLE_SYNC_BLOCKED_PERMISSIONS
+    )
+
 
 # How often to check for tag-based role assignment (seconds)
 tag_check_time = 1
@@ -4164,18 +4192,14 @@ async def tag_role_loop():
     # First main-server tag role.
     tag_role = main_guild.get_role(TAG_ROLE_ID)
     first_role_ready = (
-        tag_role is not None
-        and not tag_role.is_default()
-        and not tag_role.managed
+        is_safe_role_sync_target(tag_role)
         and bot_member.top_role > tag_role
     )
 
     # Second main-server tag role is completely independent from the first.
     tag_role_2 = main_guild.get_role(TAG_ROLE_ID_2) if TAG_ROLE_ID_2 else None
     second_role_ready = (
-        tag_role_2 is not None
-        and not tag_role_2.is_default()
-        and not tag_role_2.managed
+        is_safe_role_sync_target(tag_role_2)
         and bot_member.top_role > tag_role_2
     )
 
@@ -4193,6 +4217,10 @@ async def tag_role_loop():
             first_role_check_failed = True
 
         for server_id, tag_server_role_id in zip(tag_servers, tag_server_role_ids):
+            # Never treat the destination main server as one of its own sources.
+            if server_id == MAIN_SERVER:
+                first_role_check_failed = True
+                continue
             guild = bot.get_guild(server_id)
             if guild is None:
                 first_role_check_failed = True
@@ -4282,6 +4310,10 @@ async def tag_role_loop():
 
         for source_server_id, source_role_id in tag_server_role_ids_2.items():
             if not source_role_id:
+                continue
+            # Never use the destination main server as a source for itself.
+            if source_server_id == MAIN_SERVER:
+                second_role_check_failed = True
                 continue
 
             source_guild = bot.get_guild(source_server_id)
