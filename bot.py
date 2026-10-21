@@ -232,6 +232,15 @@ def is_safe_role_sync_target(role: discord.Role | None) -> bool:
     )
 
 
+def is_legacy_role_sync_target(role: discord.Role | None) -> bool:
+    """Allow safe role targets and the explicitly configured staff hierarchy roles."""
+    if role is None or role.is_default() or role.managed:
+        return False
+    # Staff roles are intentionally allowlisted for membership syncing only.
+    # Their permissions are not copied or edited; existing destination permissions apply.
+    return role.id in STAFF_ROLE_IDS or is_safe_role_sync_target(role)
+
+
 # How often to reconcile tag-role membership (seconds). Role changes are handled immediately.
 tag_check_time = 30
 # How often to refresh source-server member/role data (seconds).
@@ -3461,7 +3470,7 @@ def _build_legacy_role_mapping(
         if not role.is_default()
         and not role.managed
         and role.id not in LEGACY_ROLE_SYNC_TARGET_EXCLUSIONS
-        and is_safe_role_sync_target(role)
+        and is_legacy_role_sync_target(role)
         and bot_member.top_role > role
     ]
 
@@ -3636,7 +3645,7 @@ async def sync_legacy_roles_periodically(
         if not role.is_default()
         and not role.managed
         and role.id not in LEGACY_ROLE_SYNC_TARGET_EXCLUSIONS
-        and is_safe_role_sync_target(role)
+        and is_legacy_role_sync_target(role)
         and bot_member.top_role > role
     ]
     mapped_source_ids = set(role_mapping)
