@@ -3329,11 +3329,8 @@ async def on_member_join(member: discord.Member):
         await sync_legacy_role_member(member)
 
 
-@bot.event
-async def on_member_remove(member: discord.Member):
-    """Remove mapped legacy roles from new main when a source member leaves."""
-    if member.guild.id == LEGACY_ROLE_SYNC_SOURCE_GUILD:
-        await sync_legacy_role_member(member, source_left=True)
+# There is intentionally no source-member leave handler for the legacy role sync.
+# Roles already copied to MAIN_SERVER are retained if someone leaves the old server.
 
 
 # =========================
@@ -3530,7 +3527,6 @@ def _get_legacy_role_mapping(
 async def sync_legacy_role_member(
     source_member: discord.Member,
     *,
-    source_left: bool = False,
     destination_member: discord.Member | None = None,
     role_mapping: dict[int, discord.Role] | None = None,
     allow_fetch: bool = True,
@@ -3550,7 +3546,7 @@ async def sync_legacy_role_member(
 
     if destination_member is None:
         destination_member = destination.get_member(source_member.id)
-    if destination_member is None and allow_fetch and not source_left:
+    if destination_member is None and allow_fetch:
         try:
             destination_member = await destination.fetch_member(source_member.id)
         except discord.NotFound:
@@ -3571,7 +3567,7 @@ async def sync_legacy_role_member(
     if role_mapping is None:
         role_mapping = _get_legacy_role_mapping(source_guild, destination, bot_member)
 
-    source_role_ids = set() if source_left else {role.id for role in source_member.roles}
+    source_role_ids = {role.id for role in source_member.roles}
     current_role_map = {
         role.id: role for role in destination_member.roles
         if not role.is_default()
