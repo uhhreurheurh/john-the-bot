@@ -37,7 +37,7 @@ MAIN_SERVER = 1369556559205630012
 
 # One-way role sync targets in the replacement main server.
 # The first target is the existing mapped tag role in MAIN_SERVER.
-TAG_ROLE_ID = 1492174542733443093
+TAG_ROLE_ID = 1560797397314175006
 
 # Independent second-role target. If this role is not present in MAIN_SERVER,
 # that mapping safely remains inactive until its replacement role ID is configured.
