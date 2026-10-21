@@ -1,7 +1,8 @@
-"""Admin-only role appearance migration from the two legacy servers.
+"""Admin-only role migration from the two legacy servers.
 
 Command: ,migrateappearance [preview|apply] [main|second|both]
-Copies colors and role icons only. It never edits permissions, hierarchy, or members.
+Copies permissions, colors and supported role icons to matching existing roles.
+It does not create roles, change hierarchy, or edit member assignments.
 """
 from __future__ import annotations
 
@@ -155,11 +156,12 @@ def _preview(guild, plan):
         f"Ambiguous source names: {len(plan['ambiguous_source'])}\n"
         f"Ambiguous destination names: {len(plan['ambiguous_target'])}\n"
         f"Roles at/above the bot's top role: {len(plan['too_high'])}\n"
+        f"Roles whose permissions differ from source: {sum(target.permissions.value != source.permissions.value for target, source, _ in matches)}\n"
         + ("Role icons are supported in this destination." if plan["icons"]
            else "Destination lacks Role Icons support; colors can still be copied.")
         + ("\nEnhanced gradient/holographic colors are supported." if plan["enhanced_colors"]
            else "\nEnhanced gradient/holographic colors are not supported here; primary colors will be copied.")
-        + "\nOnly appearance is changed; permissions and hierarchy stay untouched."
+        + "\nApply copies all source permission flags (including Administrator if enabled), colors and supported icons. Hierarchy and member assignments stay unchanged."
     )
     result += _listed("Unmatched source roles (will be skipped)", plan["missing"])
     result += _listed("Duplicate source names", plan["ambiguous_source"])
@@ -170,14 +172,15 @@ def _preview(guild, plan):
         result += "\nExamples: " + "; ".join(examples)
         if len(matches) > 7:
             result += f"; and {len(matches) - 7} more"
-    result += "\nRun ,migrateappearance apply both to copy appearance to existing matching roles only."
+    result += "\nRun ,migrateappearance apply both to copy permissions and appearance to existing matching roles only."
     return result[:1850]
 
 
 async def _copy_appearance(target, source, icon_support, enhanced_color_support):
     kwargs = {
+        "permissions": source.permissions,
         "color": source.color,
-        "reason": f"Role appearance migration from source role {source.id}",
+        "reason": f"Role permissions and appearance migration from source role {source.id}",
     }
     params = inspect.signature(target.edit).parameters
 
@@ -228,14 +231,16 @@ async def run_migration(
     if mode == "preview":
         return _preview(destination, plan)
 
-    updated, icon_fields, failures = 0, 0, []
+    updated, icon_fields, permission_differences_fixed, failures = 0, 0, 0, []
     for target, source, source_key in plan["matches"]:
         try:
+            permissions_differed = target.permissions.value != source.permissions.value
             icon_applied = await _copy_appearance(
                 target, source, plan["icons"], plan["enhanced_colors"]
             )
             updated += 1
             icon_fields += int(icon_applied)
+            permission_differences_fixed += int(permissions_differed)
         except Exception as error:
             failures.append(
                 f"{target.name} <- {SOURCE_LABELS[source_key]}: "
@@ -245,14 +250,16 @@ async def run_migration(
     report = (
         f"Role appearance migration finished — {destination.name}\n"
         f"Updated existing roles: {updated}/{len(plan['matches'])}\n"
+        f"Permission sets copied: {updated}\n"
+        f"Roles whose permission differences were fixed: {permission_differences_fixed}\n"
         f"Unmatched source roles skipped: {len(plan['missing'])}\n"
         f"Ambiguous source names: {len(plan['ambiguous_source'])}\n"
         f"Ambiguous destination roles skipped: {len(plan['ambiguous_target'])}\n"
         f"Roles above the bot skipped: {len(plan['too_high'])}\n"
         f"Icon fields applied: {icon_fields}\n"
         f"Failed edits: {len(failures)}\n"
-        "Only existing role appearance was changed. No roles were created; "
-        "permissions, hierarchy, member assignments, and source servers were not changed."
+        "Permission flags, supported colors and icons were copied from matched source roles. "
+        "No roles were created; hierarchy, member assignments, and source servers were not changed."
     )
     report += _listed("Unmatched source roles", plan["missing"])
     report += _listed("Ambiguous source names", plan["ambiguous_source"])
