@@ -1,8 +1,9 @@
-"""Admin-only role migration from the two legacy servers.
+"""Admin-only role and channel-permission migration from legacy servers.
 
 Command: ,migrateappearance [preview|apply] [main|second|both]
-Copies permissions, colors and supported role icons to matching existing roles.
-It does not create roles, change hierarchy, or edit member assignments.
+Copies permissions/colors/icons to matching roles and permission overwrites to
+matching existing channels/categories. It does not create roles/channels or
+change hierarchy/member assignments.
 """
 from __future__ import annotations
 
@@ -54,20 +55,41 @@ def _channel_label(channel):
 
 
 def _source_role_mapping(source_guild, destination):
-    """Map roles by unique, case-insensitive names; never guess on duplicates."""
-    sources, targets = defaultdict(list), defaultdict(list)
-    for role in source_guild.roles:
-        if not role.is_default() and not role.managed:
-            sources[_name(role.name)].append(role)
-    for role in destination.roles:
-        if not role.is_default() and not role.managed:
-            targets[_name(role.name)].append(role)
-    return {
-        source_roles[0].id: targets[name][0]
-        for name, source_roles in sources.items()
-        if len(source_roles) == 1 and len(targets.get(name, [])) == 1
-    }
+    """Map source role IDs by unique exact names, then unique normalized names."""
+    source_roles = [role for role in source_guild.roles if not role.is_default() and not role.managed]
+    target_roles = [role for role in destination.roles if not role.is_default() and not role.managed]
+    source_exact, target_exact = defaultdict(list), defaultdict(list)
+    source_normalized, target_normalized = defaultdict(list), defaultdict(list)
+    for role in source_roles:
+        source_exact[_name(role.name)].append(role)
+        normalized = _normalized_name(role.name)
+        if normalized:
+            source_normalized[normalized].append(role)
+    for role in target_roles:
+        target_exact[_name(role.name)].append(role)
+        normalized = _normalized_name(role.name)
+        if normalized:
+            target_normalized[normalized].append(role)
 
+    mapping = {}
+    for source_role in source_roles:
+        name = _name(source_role.name)
+        if len(source_exact[name]) != 1:
+            continue
+        exact_targets = target_exact.get(name, [])
+        if len(exact_targets) == 1:
+            mapping[source_role.id] = exact_targets[0]
+            continue
+        if exact_targets:
+            continue
+        normalized = _normalized_name(source_role.name)
+        if (
+            normalized
+            and len(source_normalized.get(normalized, [])) == 1
+            and len(target_normalized.get(normalized, [])) == 1
+        ):
+            mapping[source_role.id] = target_normalized[normalized][0]
+    return mapping
 
 def _translate_channel_overwrites(source_channel, destination, role_mapping):
     translated, issues = {}, []
