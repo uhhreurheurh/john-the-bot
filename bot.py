@@ -1870,7 +1870,7 @@ async def on_message(message: discord.Message):
                     ("Slots", "`,slots <bet>` — Play Slots with Kevin Bucks\nOnly the person who started the game can use its buttons."),
                      ("Coin Flip Battle", "`,coinflipbattle @user <bet>` — Challenge another player\nThe challenged player must accept; the coin decides the winner."),
                     ("Reviews", "`,review @user` — Leave a review\n`,updatereview @user` — Request a review update\n`,reviews @user` — View reviews\n`,deletereview ID` — Delete a review\n`,leaderboard` — View the review leaderboard\n`,reviewblacklist add/remove/status @user` — Manage the review blacklist"),
-                    ("Staff & Management", "`,strike @user <7-40d> <reason>` — Issue a staff strike\n`,removestrike @user <number>` — Remove a staff strike\n`,safechatban @user` — Staff: ban a user from SafeChat\n`,safechatunban @user` — Staff: unban a user from SafeChat\n\n`,textify blacklist/unblacklist/status @user` — Manage the Textify blacklist\n`,textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n`,blacklist add/remove/status @user` — Manage the second-role blacklist\n`,savedb` — Save the review database\n`,migrateappearance preview/apply [main|second|both]` — Copy role colors and icons from the old servers"),
+                    ("Staff & Management", "`,strike @user <7-40d> <reason>` — Issue a staff strike\n`,removestrike @user <number>` — Remove a staff strike\n`,safechatban @user` — Staff: ban a user from SafeChat\n`,safechatunban @user` — Staff: unban a user from SafeChat\n\n`,textify blacklist/unblacklist/status @user` — Manage the Textify blacklist\n`,textify ban/unban @user` — Ban/unban UWUIFY + HOODIFY\n`,blacklist add/remove/status @user` — Manage the second-role blacklist\n`,savedb` — Save the review database\n`,migrateappearance preview/apply [main|second|both]` — Copy role permissions, colors and icons from the old servers"),
                     ("Custom Roles", ",cr create <name> — Create without a color\n,cr create <color> <name> — Create with a color (hex with/without # or color name)\nExamples: ,cr create My Role\n,cr create red My Role\n,cr create #FF00FF My Role\n,cr color <color> [second-color] — Change its color (e.g. d4b3c3 bdb4bb or dark blue)\n,cr random — Random color\n,cr rename <name> — Rename it\n,cr icon <https-url> — Set its icon\n,cr share <username or user ID> — Share with up to 3 other members\n,cr share — List who can use it\n,cr unshare <username or user ID> — Revoke access\n,cr share remove @role — Leave a shared role\n,cr remove — Delete it\nAlias for ,custom role."),
                 ]
 
@@ -2785,10 +2785,10 @@ async def jelp_command(interaction: discord.Interaction):
 
 @tree.command(
     name="migrateappearance",
-    description="Copy colors and supported icons to existing roles in this server.",
+    description="Copy permissions, colors and supported icons to matching roles in this server.",
 )
 @app_commands.describe(
-    mode="Preview changes without editing, or apply appearance changes",
+    mode="Preview changes, or apply role permissions and appearance",
     sources="Choose which old server roles to copy from",
 )
 @app_commands.choices(
