@@ -74,8 +74,8 @@ BLACKLIST_ALLOWED_ROLE_ID = 1306082718060384399  # <-- put the whitelisted role 
 # Both features use this exact same set for slash and prefix commands.
 textify_whitelist = {
     1518416402141417472,
-    1378810715611336914,
     1377468541779050636,
+    1369748586753032294,
 }
 
 # File used to save the second-role blacklist.
