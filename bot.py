@@ -3333,9 +3333,31 @@ async def on_member_update(before: discord.Member, after: discord.Member):
 
 @bot.event
 async def on_member_join(member: discord.Member):
-    """Sync matching safe roles when someone joins the legacy main server."""
+    """Sync only the joining member when they join either side of the legacy sync."""
     if member.guild.id == LEGACY_ROLE_SYNC_SOURCE_GUILD:
+        # They joined the source server; reconcile just this member if they're
+        # also present in the replacement main server.
         await sync_legacy_role_member(member)
+        return
+
+    if member.guild.id == MAIN_SERVER:
+        # They rejoined the destination; use their source-server roles to
+        # restore only their mapped roles, without scanning the whole server.
+        source_guild = bot.get_guild(LEGACY_ROLE_SYNC_SOURCE_GUILD)
+        if source_guild is None:
+            return
+
+        source_member = source_guild.get_member(member.id)
+        if source_member is None:
+            try:
+                source_member = await source_guild.fetch_member(member.id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                return
+
+        await sync_legacy_role_member(
+            source_member,
+            destination_member=member,
+        )
 
 
 # There is intentionally no source-member leave handler for the legacy role sync.
@@ -3447,6 +3469,8 @@ async def get_source_role_for_check(
 
 legacy_role_mapping_cache: dict = {"expires": 0.0, "mapping": {}}
 legacy_role_sync_last_full_scan = 0.0
+# Guard the full reconciliation so it runs only once per bot process.
+legacy_role_sync_initial_scan_started = False
 
 
 def _legacy_role_name_normalized(value: str) -> str:
@@ -3697,6 +3721,43 @@ async def sync_legacy_roles_periodically(
         report += f" Unmapped source roles ({len(unmapped_names)}): {shown}."
     print(report)
     return report
+
+
+async def run_initial_legacy_role_sync_once() -> None:
+    """Run the all-member legacy sync once at startup; later syncs are member-specific."""
+    global legacy_role_sync_initial_scan_started
+
+    destination = bot.get_guild(MAIN_SERVER)
+    if destination is None:
+        legacy_role_sync_initial_scan_started = False
+        return
+
+    bot_member = destination.me
+    if bot_member is None and bot.user is not None:
+        try:
+            bot_member = await destination.fetch_member(bot.user.id)
+        except discord.DiscordException:
+            bot_member = None
+
+    if bot_member is None:
+        legacy_role_sync_initial_scan_started = False
+        return
+
+    try:
+        report = await sync_legacy_roles_periodically(
+            destination,
+            bot_member,
+            force=True,
+        )
+        if report.startswith("Sync failed:"):
+            legacy_role_sync_initial_scan_started = False
+            print(report)
+    except Exception as error:
+        legacy_role_sync_initial_scan_started = False
+        print(
+            "Initial legacy role sync failed: "
+            f"{type(error).__name__}: {str(error)[:350]}"
+        )
 
 
 # ============================================================
@@ -4098,6 +4159,7 @@ terminal_status_printed = False
 @bot.event
 async def on_ready():
     global commands_synced, terminal_status_printed, review_db_restore_checked, staff_strike_expiry_task
+    global legacy_role_sync_initial_scan_started
 
     if not terminal_status_printed:
         print("Bot is alive")
@@ -4266,6 +4328,12 @@ async def on_ready():
 
     if KICK_SYSTEM_ENABLED and not kick_loop.is_running():
         kick_loop.start()
+
+    # Run the broad all-member role sync once per process. Subsequent joins and
+    # source-role changes are handled by member-specific event handlers.
+    if not legacy_role_sync_initial_scan_started:
+        legacy_role_sync_initial_scan_started = True
+        asyncio.create_task(run_initial_legacy_role_sync_once())
 
     if not tag_role_loop.is_running():
         tag_role_loop.start()
@@ -4447,10 +4515,8 @@ async def tag_role_loop():
         print("Role sync skipped: bot does not currently have Manage Roles.")
         return
 
-    legacy_sync_report = await sync_legacy_roles_periodically(main_guild, bot_member)
-    if legacy_sync_report.startswith("Sync failed:"):
-        print(legacy_sync_report)
-
+    # The one-time full legacy role reconciliation runs from on_ready.
+    # Do not rescan every source member from this recurring tag-role loop.
     # First main-server tag role.
     tag_role = main_guild.get_role(TAG_ROLE_ID)
     first_role_ready = (
