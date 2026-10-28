@@ -68,7 +68,7 @@ ROLE_SYNC_BLOCKED_PERMISSIONS = (
 
 # Role ID allowed to use the second-role blacklist slash commands.
 # The user must have this role in the MAIN_SERVER.
-BLACKLIST_ALLOWED_ROLE_ID = 1306082718060384399  # <-- put the whitelisted role ID here
+BLACKLIST_ALLOWED_ROLE_ID = 1369748586753032294  # <-- put the whitelisted role ID here
 
 # Shared role whitelist for all Textify commands (UWUIFY + HOODIFY).
 # Both features use this exact same set for slash and prefix commands.
@@ -121,17 +121,17 @@ GITHUB_DB_PATH = os.getenv("GITHUB_DB_PATH", "reviews.db")
 # Keep review database commits off Railway's deployment branch.
 GITHUB_DB_BRANCH = os.getenv("GITHUB_DB_BRANCH", "database")
 REVIEW_DB_SYNC_MINUTES = 30
-REVIEW_DB_SAVE_ROLE_ID = 1306082718060384399
+REVIEW_DB_SAVE_ROLE_ID = 1369748586753032294
 # Roles allowed to manage the review-system blacklist (prefix command).
 REVIEW_BLACKLIST_ALLOWED_ROLE_IDS = {
     1560399766527934535,
     1560399751533428827,
-    1306082718060384399,
+    1369748586753032294,
     1560399769359229029,
 }
 # Roles allowed to actually use /deletereview. The command remains visible to everyone.
 DELETE_REVIEW_ALLOWED_ROLE_IDS = {
-    1306082718060384399,
+    1369748586753032294,
     1560399751533428827,
     1560399766527934535,
     1560399769359229029,
@@ -147,7 +147,7 @@ REVIEW_BLACKLIST_FILE = Path(__file__).with_name("review_blacklist.json")
 # Staff strike system.
 # Only members with one of these roles may create or manage staff strikes.
 STAFF_STRIKE_ALLOWED_ROLE_IDS = {
-    1306082718060384399,
+    1369748586753032294,
     1560399751533428827,
     1560399766527934535,
     1560399769359229029,
