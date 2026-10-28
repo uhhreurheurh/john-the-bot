@@ -1032,7 +1032,7 @@ async def review_blacklist_command_check(interaction: discord.Interaction) -> bo
         role.id in {
             1560399766527934535,
             1560399751533428827,
-            1306082718060384399,
+            1369748586753032294,
         }
         for role in interaction.user.roles
     ):
