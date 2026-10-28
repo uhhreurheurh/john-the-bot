@@ -73,7 +73,7 @@ BLACKLIST_ALLOWED_ROLE_ID = 1306082718060384399  # <-- put the whitelisted role 
 # Shared role whitelist for all Textify commands (UWUIFY + HOODIFY).
 # Both features use this exact same set for slash and prefix commands.
 textify_whitelist = {
-    1518416402141417472,
+    1560399751533428827,
     1377468541779050636,
     1369748586753032294,
     1560399779295535164,
@@ -124,17 +124,17 @@ REVIEW_DB_SYNC_MINUTES = 30
 REVIEW_DB_SAVE_ROLE_ID = 1306082718060384399
 # Roles allowed to manage the review-system blacklist (prefix command).
 REVIEW_BLACKLIST_ALLOWED_ROLE_IDS = {
-    1397677852056354948,
-    1518416402141417472,
+    1560399766527934535,
+    1560399751533428827,
     1306082718060384399,
-    1371738883401711656,
+    1560399769359229029,
 }
 # Roles allowed to actually use /deletereview. The command remains visible to everyone.
 DELETE_REVIEW_ALLOWED_ROLE_IDS = {
     1306082718060384399,
-    1518416402141417472,
-    1397677852056354948,
-    1371738883401711656,
+    1560399751533428827,
+    1560399766527934535,
+    1560399769359229029,
 }
 REVIEW_DB_FILE = Path(__file__).with_name("reviews.db")
 REVIEW_APPROVAL_RATINGS = (4, 5)
@@ -148,9 +148,9 @@ REVIEW_BLACKLIST_FILE = Path(__file__).with_name("review_blacklist.json")
 # Only members with one of these roles may create or manage staff strikes.
 STAFF_STRIKE_ALLOWED_ROLE_IDS = {
     1306082718060384399,
-    1518416402141417472,
-    1397677852056354948,
-    1371738883401711656,
+    1560399751533428827,
+    1560399766527934535,
+    1560399769359229029,
     1560399769359229029,
 }
 STAFF_STRIKES_FILE = Path(__file__).with_name("staff_strikes.json")
@@ -161,14 +161,14 @@ STAFF_STRIKE_ACTIVE_CHANNEL_ID = 1560469694962597951
 
 # Staff rank order, highest to lowest.
 STAFF_ROLE_HIERARCHY = [
-    ("Co Owner", 1518416402141417472),
-    ("Director", 1397677852056354948),
-    ("Staff Manager", 1371738883401711656),
-    ("Head Admin", 1371739870380425236),
-    ("Admin", 1371738346900029510),
-    ("Head Mod", 1371739816227504160),
-    ("Mod", 1371738357897494589),
-    ("Trial Mod", 1371738371441037343),
+    ("Co Owner", 1560399751533428827),
+    ("Director", 1560399766527934535),
+    ("Staff Manager", 1560399769359229029),
+    ("Head Admin", 1560399772378988564),
+    ("Admin", 1560399775277514762),
+    ("Head Mod", 1560399777093517403),
+    ("Mod", 1560399777936707777),
+    ("Trial Mod", 1560399778628509726),
 ]
 STAFF_ROLE_IDS = {role_id for _, role_id in STAFF_ROLE_HIERARCHY}
 
