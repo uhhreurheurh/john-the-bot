@@ -136,8 +136,8 @@ DELETE_REVIEW_ALLOWED_ROLE_IDS = {
 }
 REVIEW_DB_FILE = Path(__file__).with_name("reviews.db")
 REVIEW_APPROVAL_RATINGS = (4, 5)
-REVIEW_UPDATE_APPROVAL_CHANNEL_ID = 1554700806220161164
-REVIEW_LOG_CHANNEL_ID = 1554863194885988362
+REVIEW_UPDATE_APPROVAL_CHANNEL_ID = 1561889766104899624
+REVIEW_LOG_CHANNEL_ID = 1561889930886520893
 # User-ID blacklist for the review system. Blacklisted reviewers cannot submit
 # new reviews or update existing reviews. Persisted locally and synced to GitHub.
 REVIEW_BLACKLIST_FILE = Path(__file__).with_name("review_blacklist.json")
