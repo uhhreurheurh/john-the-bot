@@ -28,7 +28,7 @@ import blackjack as blackjack_feature
 
 
 ALLOWED_ROLE_IDS = {
-    1306082718060384399,
+    1369748586753032294,
     1341594605686358047,
 }
 REGISTRY_FILE = Path(__file__).with_name("custom_roles.json")
@@ -40,7 +40,7 @@ CUSTOM_ROLE_ANCHOR_ROLE_ID = 1354259084114661509
 # registry is stale or corrupted. Keep this list in sync with the server's
 # staff hierarchy.
 PROTECTED_STAFF_ROLE_IDS = {
-    1306082718060384399,  # Additional Staff Manager+-authorized role
+    1369748586753032294,  # Additional Staff Manager+-authorized role
     1560399751533428827,  # Co-owner
     1560399766527934535,  # Director
     1560399769359229029,  # Staff manager
