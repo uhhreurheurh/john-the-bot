@@ -15,9 +15,9 @@ STAFF_STRIKE_ACTIVATION_THRESHOLD = 2
 STAFF_STRIKE_DEMOTION_THRESHOLD = 3
 STAFF_MANAGER_OR_HIGHER_ROLE_IDS = {
     1306082718060384399,  # Additional staff-promotion authorization
-    1518416402141417472,  # Co Owner
-    1397677852056354948,  # Director
-    1371738883401711656,  # Staff Manager
+    1560399751533428827,  # Co Owner
+    1560399766527934535,  # Director
+    1560399769359229029,  # Staff Manager
 }
 STAFF_STRIKE_DUPLICATE_WINDOW_SECONDS = 5.0
 _recent_staff_strike_submissions: dict[tuple, float] = {}
@@ -29,7 +29,7 @@ staff_permanent_demotions: dict[int, dict] = {}
 # rank below Co Owner, so this is what stops a demoted Co Owner from creating a
 # second Director.
 SINGLE_HOLDER_STAFF_ROLE_IDS = {
-    1397677852056354948,  # Director
+    1560399766527934535,  # Director
 }
 
 def load_staff_strikes() -> list[dict]:
