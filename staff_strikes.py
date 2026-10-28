@@ -14,7 +14,7 @@ from bot import _github_contents_url, _github_request_json
 STAFF_STRIKE_ACTIVATION_THRESHOLD = 2
 STAFF_STRIKE_DEMOTION_THRESHOLD = 3
 STAFF_MANAGER_OR_HIGHER_ROLE_IDS = {
-    1306082718060384399,  # Additional staff-promotion authorization
+    1369748586753032294,  # Additional staff-promotion authorization
     1560399751533428827,  # Co Owner
     1560399766527934535,  # Director
     1560399769359229029,  # Staff Manager
