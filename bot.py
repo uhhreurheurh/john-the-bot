@@ -4409,10 +4409,17 @@ async def on_ready():
                 tree.add_command(command)
 
             # The Sidekick toggle is registered only in its own server.
-            sidekick_guild_object = discord.Object(id=SIDEKICK_GUILD_ID)
-            sidekick_synced_commands = await tree.sync(guild=sidekick_guild_object)
-            if "sidekick" not in {command.name for command in sidekick_synced_commands}:
-                print("Sidekick slash command was not registered.")
+            # A missing bot installation/access there must not block main-server commands.
+            try:
+                sidekick_guild_object = discord.Object(id=SIDEKICK_GUILD_ID)
+                sidekick_synced_commands = await tree.sync(guild=sidekick_guild_object)
+                if "sidekick" not in {command.name for command in sidekick_synced_commands}:
+                    print("Sidekick slash command was not registered.")
+            except Exception as error:
+                print(
+                    "Sidekick slash command sync failed: "
+                    f"{type(error).__name__}: {error}"
+                )
 
             synced_names = {command.name for command in synced_commands}
             defined_names = {command.name for command in tree.get_commands()}
