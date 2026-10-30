@@ -254,6 +254,35 @@ TAG_SOURCE_REFRESH_SECONDS = 30
 # Set this to True only to re-enable the kick system intentionally.
 KICK_SYSTEM_ENABLED = False
 
+# Separate Sidekick join-kick system. This does not affect the legacy tag-server kick loop.
+SIDEKICK_GUILD_ID = 1562475782134038558
+SIDEKICK_ALLOWED_ROLE_ID = 1565557652069810317
+SIDEKICK_INVITE = "https://discord.gg/zGRPbjqpWv"
+SIDEKICK_SETTINGS_FILE = Path(__file__).with_name("sidekick_settings.json")
+
+
+def load_sidekick_enabled() -> bool:
+    """Load the Sidekick toggle; default to enabled on first startup."""
+    try:
+        with SIDEKICK_SETTINGS_FILE.open("r", encoding="utf-8") as file:
+            settings = json.load(file)
+        return bool(settings.get("enabled", True)) if isinstance(settings, dict) else True
+    except (OSError, json.JSONDecodeError, TypeError):
+        return True
+
+
+def save_sidekick_enabled(enabled: bool) -> None:
+    """Persist the Sidekick toggle locally across normal process restarts."""
+    try:
+        with SIDEKICK_SETTINGS_FILE.open("w", encoding="utf-8") as file:
+            json.dump({"enabled": bool(enabled)}, file, indent=2)
+    except OSError:
+        pass
+
+
+SIDEKICK_ENABLED = load_sidekick_enabled()
+
+
 # How often to check for users to kick (minutes)
 check_time = 10
 
@@ -677,6 +706,45 @@ class ExternalAppCommandTree(app_commands.CommandTree):
 
 
 tree = ExternalAppCommandTree(bot)
+
+
+@tree.command(
+    name="sidekick",
+    description="Enable or disable automatic kicks in the Sidekick server",
+    guild=discord.Object(id=SIDEKICK_GUILD_ID),
+)
+@app_commands.describe(enabled="Turn automatic Sidekick kicks on or off")
+async def sidekick_toggle_command(
+    interaction: discord.Interaction,
+    enabled: bool,
+):
+    """Toggle the separate Sidekick join-kick system."""
+    global SIDEKICK_ENABLED
+
+    if interaction.guild_id != SIDEKICK_GUILD_ID:
+        await interaction.response.send_message(
+            "This command can only be used in the Sidekick server.",
+            ephemeral=True,
+        )
+        return
+
+    member_role_ids = {
+        role.id for role in getattr(interaction.user, "roles", ())
+    }
+    if SIDEKICK_ALLOWED_ROLE_ID not in member_role_ids:
+        await interaction.response.send_message(
+            "You do not have permission to manage the Sidekick system.",
+            ephemeral=True,
+        )
+        return
+
+    SIDEKICK_ENABLED = bool(enabled)
+    save_sidekick_enabled(SIDEKICK_ENABLED)
+    state = "enabled" if SIDEKICK_ENABLED else "disabled"
+    await interaction.response.send_message(
+        f"Sidekick automatic kicks are now **{state}**.",
+        ephemeral=True,
+    )
 
 
 commands_synced = False
@@ -3334,8 +3402,54 @@ async def on_member_update(before: discord.Member, after: discord.Member):
             await sync_tag_roles_for_source_member(after)
 
 
+async def enforce_sidekick_join(member: discord.Member) -> None:
+    """Kick human members who join the configured Sidekick server."""
+    if not SIDEKICK_ENABLED or member.bot:
+        return
+
+    guild = member.guild
+    if guild.id != SIDEKICK_GUILD_ID:
+        return
+
+    bot_member = guild.me
+    if bot_member is None and bot.user is not None:
+        try:
+            bot_member = await guild.fetch_member(bot.user.id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return
+
+    if (
+        bot_member is None
+        or not bot_member.guild_permissions.kick_members
+        or member.id == guild.owner_id
+        or member.top_role >= bot_member.top_role
+    ):
+        return
+
+    try:
+        await guild.kick(
+            member,
+            reason="Automatic Sidekick server join restriction",
+        )
+    except (discord.Forbidden, discord.HTTPException):
+        return
+
+    try:
+        await member.send(
+            "You were kicked from the Sidekick server. "
+            "Please join the main community here: "
+            f"{SIDEKICK_INVITE}"
+        )
+    except (discord.Forbidden, discord.HTTPException):
+        pass
+
+
 @bot.event
 async def on_member_join(member: discord.Member):
+    if member.guild.id == SIDEKICK_GUILD_ID:
+        await enforce_sidekick_join(member)
+        return
+
     """Sync only the joining member when they join either side of the legacy sync."""
     if member.guild.id == LEGACY_ROLE_SYNC_SOURCE_GUILD:
         # They joined the source server; reconcile just this member if they're
@@ -4220,6 +4334,12 @@ async def on_ready():
             await tree.sync()
             for command in current_commands:
                 tree.add_command(command)
+
+            # The Sidekick toggle is registered only in its own server.
+            sidekick_guild_object = discord.Object(id=SIDEKICK_GUILD_ID)
+            sidekick_synced_commands = await tree.sync(guild=sidekick_guild_object)
+            if "sidekick" not in {command.name for command in sidekick_synced_commands}:
+                print("Sidekick slash command was not registered.")
 
             synced_names = {command.name for command in synced_commands}
             defined_names = {command.name for command in tree.get_commands()}
