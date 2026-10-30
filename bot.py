@@ -42,7 +42,7 @@ TAG_ROLE_ID = 1560797397314175006
 
 # Independent second-role target. If this role is not present in MAIN_SERVER,
 # that mapping safely remains inactive until its replacement role ID is configured.
-TAG_ROLE_ID_2 = 1551382001221632010
+TAG_ROLE_ID_2 = 1562258640952492213
 
 # Full one-way role-membership sync from the legacy main server.
 # It maps by unique role names and never copies permissions to target roles.
