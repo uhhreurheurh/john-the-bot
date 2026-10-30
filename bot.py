@@ -30,7 +30,7 @@ MAIN_SERVER = 551166126596554775
 TAG_ROLE_ID = 1534715148676370462
 
 # Second role to assign in the main server
-TAG_ROLE_ID_2 = 1551382001221632010
+TAG_ROLE_ID_2 = 1562258640952492213
 
 # Role ID allowed to use the second-role blacklist slash commands.
 # The user must have this role in the MAIN_SERVER.
