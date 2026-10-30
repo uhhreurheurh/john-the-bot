@@ -3510,7 +3510,6 @@ async def enforce_sidekick_join(member: discord.Member) -> None:
 
     try:
         await member.send(
-            "You were kicked from the Sidekick server. "
             "Please join the main community here: "
             f"{SIDEKICK_INVITE}"
         )
