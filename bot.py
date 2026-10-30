@@ -210,6 +210,17 @@ tag_server_role_ids_2 = {
     985391650861879337: 1471888850510155960,
 }
 
+# Keep second-role diagnostics useful without repeating the same warning every
+# 30-second role scan.
+_second_role_sync_last_diagnostic: str | None = None
+
+
+def report_second_role_sync_diagnostic(message: str) -> None:
+    global _second_role_sync_last_diagnostic
+    if message != _second_role_sync_last_diagnostic:
+        print(message)
+        _second_role_sync_last_diagnostic = message
+
 # =========================
 # PROTECTED ROLES
 # =========================
@@ -3524,31 +3535,54 @@ async def on_member_join(member: discord.Member):
         await enforce_sidekick_join(member)
         return
 
-    """Sync only the joining member when they join either side of the legacy sync."""
+    """Reconcile a joining member against each independently configured role source."""
     if member.guild.id == LEGACY_ROLE_SYNC_SOURCE_GUILD:
-        # They joined the source server; reconcile just this member if they're
-        # also present in the replacement main server.
+        # Preserve the existing legacy-source sync behavior.
         await sync_legacy_role_member(member)
         return
 
+    if member.guild.id in tag_server_role_ids_2:
+        # The member may join this source server already holding its mapped role.
+        # Role-update events will not fire for roles they already had at join time.
+        await sync_tag_roles_for_source_member(member)
+        return
+
     if member.guild.id == MAIN_SERVER:
-        # They rejoined the destination; use their source-server roles to
-        # restore only their mapped roles, without scanning the whole server.
-        source_guild = bot.get_guild(LEGACY_ROLE_SYNC_SOURCE_GUILD)
-        if source_guild is None:
-            return
+        # Keep legacy role restoration independent: a member need not belong to
+        # the legacy source server to qualify for the separate second-tag role.
+        legacy_source_guild = bot.get_guild(LEGACY_ROLE_SYNC_SOURCE_GUILD)
+        if legacy_source_guild is not None:
+            legacy_source_member = legacy_source_guild.get_member(member.id)
+            if legacy_source_member is None:
+                try:
+                    legacy_source_member = await legacy_source_guild.fetch_member(member.id)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    legacy_source_member = None
 
-        source_member = source_guild.get_member(member.id)
-        if source_member is None:
-            try:
-                source_member = await source_guild.fetch_member(member.id)
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                return
+            if legacy_source_member is not None:
+                await sync_legacy_role_member(
+                    legacy_source_member,
+                    destination_member=member,
+                )
 
-        await sync_legacy_role_member(
-            source_member,
-            destination_member=member,
-        )
+        # A member can rejoin the main server while retaining a role in the
+        # independent second source server. Restore that role immediately too.
+        for source_server_id, source_role_id in tag_server_role_ids_2.items():
+            if not source_role_id:
+                continue
+            source_guild = bot.get_guild(source_server_id)
+            if source_guild is None:
+                continue
+
+            source_member = source_guild.get_member(member.id)
+            if source_member is None:
+                try:
+                    source_member = await source_guild.fetch_member(member.id)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    source_member = None
+
+            if source_member is not None:
+                await sync_tag_roles_for_source_member(source_member)
 
 
 # There is intentionally no source-member leave handler for the legacy role sync.
@@ -4740,10 +4774,40 @@ async def tag_role_loop():
 
     # Second main-server tag role is completely independent from the first.
     tag_role_2 = main_guild.get_role(TAG_ROLE_ID_2) if TAG_ROLE_ID_2 else None
-    second_role_ready = (
-        is_safe_role_sync_target(tag_role_2)
-        and bot_member.top_role > tag_role_2
-    )
+    second_role_ready = False
+    if tag_role_2 is None:
+        report_second_role_sync_diagnostic(
+            f"Second tag-role sync blocked: destination role {TAG_ROLE_ID_2} "
+            f"was not found in main server {MAIN_SERVER}."
+        )
+    elif tag_role_2.managed or tag_role_2.is_default():
+        report_second_role_sync_diagnostic(
+            f"Second tag-role sync blocked: destination role {tag_role_2.id} "
+            "is managed or is the @everyone role."
+        )
+    else:
+        blocked_permissions = [
+            permission_name
+            for permission_name in ROLE_SYNC_BLOCKED_PERMISSIONS
+            if bool(getattr(tag_role_2.permissions, permission_name, False))
+        ]
+        if blocked_permissions:
+            report_second_role_sync_diagnostic(
+                f"Second tag-role sync blocked: destination role {tag_role_2.id} "
+                "has protected permissions: " + ", ".join(blocked_permissions)
+            )
+        elif bot_member.top_role <= tag_role_2:
+            report_second_role_sync_diagnostic(
+                f"Second tag-role sync blocked: bot top role "
+                f"{bot_member.top_role.id}/{bot_member.top_role.position} must be "
+                f"above destination role {tag_role_2.id}/{tag_role_2.position}."
+            )
+        else:
+            second_role_ready = True
+            report_second_role_sync_diagnostic(
+                f"Second tag-role sync ready: destination role {tag_role_2.id}; "
+                f"configured source mappings={len(tag_server_role_ids_2)}."
+            )
 
     tagged_users: set[int] = set()
     tagged_users_2: set[int] = set()
@@ -4849,6 +4913,8 @@ async def tag_role_loop():
     if second_role_ready:
         second_role_check_failed = False
         tagged_users_2: set[int] = set()
+        checked_source_servers = 0
+        checked_source_members = 0
 
         for source_server_id, source_role_id in tag_server_role_ids_2.items():
             if not source_role_id:
@@ -4856,26 +4922,60 @@ async def tag_role_loop():
             # Never use the destination main server as a source for itself.
             if source_server_id == MAIN_SERVER:
                 second_role_check_failed = True
+                report_second_role_sync_diagnostic(
+                    f"Second tag-role sync blocked: source server {source_server_id} "
+                    "matches the destination main server."
+                )
                 continue
 
             source_guild = bot.get_guild(source_server_id)
             if source_guild is None:
                 second_role_check_failed = True
+                report_second_role_sync_diagnostic(
+                    f"Second tag-role sync blocked: bot cannot access source server "
+                    f"{source_server_id}."
+                )
                 continue
 
             source_role = await get_source_role_for_check(source_guild, source_role_id)
             if source_role is None:
                 second_role_check_failed = True
+                report_second_role_sync_diagnostic(
+                    f"Second tag-role sync blocked: source role {source_role_id} "
+                    f"was not found in source server {source_server_id}."
+                )
                 continue
 
             source_members = await get_source_members_for_role_check(source_guild)
             if source_members is None:
                 second_role_check_failed = True
+                report_second_role_sync_diagnostic(
+                    f"Second tag-role sync blocked: could not load members from "
+                    f"source server {source_server_id}; check the Server Members "
+                    "Intent and bot access."
+                )
                 continue
 
+            checked_source_servers += 1
+            checked_source_members += len(source_members)
             for source_member in source_members:
                 if source_role.id in {role.id for role in source_member.roles}:
                     tagged_users_2.add(source_member.id)
+
+        if not second_role_check_failed:
+            destination_member_ids = {
+                member.id for member in main_guild.members if not member.bot
+            }
+            matching_destination_ids = tagged_users_2 & destination_member_ids
+            blacklisted_matches = matching_destination_ids & second_role_blacklist
+            report_second_role_sync_diagnostic(
+                f"Second tag-role scan: source_servers={checked_source_servers}; "
+                f"source_members={checked_source_members}; "
+                f"members_with_source_role={len(tagged_users_2)}; "
+                f"matching_main_server_members={len(matching_destination_ids)}; "
+                f"blacklisted_matches={len(blacklisted_matches)}; "
+                f"target_role={TAG_ROLE_ID_2}."
+            )
 
         # Add whenever the configured second source confirms the member.
         for member in main_guild.members:
