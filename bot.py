@@ -449,6 +449,63 @@ def _github_request_json(
         raise RuntimeError("GitHub returned invalid JSON.") from error
 
 
+def _github_load_sidekick_enabled() -> bool | None:
+    """Load Sidekick state from the persistent database branch."""
+    if not GITHUB_TOKEN:
+        return None
+
+    encoded_branch = urllib.parse.quote(GITHUB_BRANCH, safe="")
+    url = f"{_github_contents_url(SIDEKICK_SETTINGS_FILE)}?ref={encoded_branch}"
+    try:
+        payload = _github_request_json(url)
+    except RuntimeError as error:
+        if str(error).startswith("GitHub API HTTP 404:"):
+            return None
+        raise
+
+    encoded_content = payload.get("content", "")
+    if not encoded_content:
+        return None
+
+    data = json.loads(
+        base64.b64decode("".join(str(encoded_content).split())).decode("utf-8")
+    )
+    if isinstance(data, dict) and isinstance(data.get("enabled"), bool):
+        return data["enabled"]
+    return None
+
+
+def _github_save_sidekick_enabled(enabled: bool) -> None:
+    """Save Sidekick state on the database branch so deploys do not reset it."""
+    if not GITHUB_TOKEN:
+        raise RuntimeError("GITHUB_TOKEN is not configured.")
+
+    encoded_branch = urllib.parse.quote(GITHUB_BRANCH, safe="")
+    url = f"{_github_contents_url(SIDEKICK_SETTINGS_FILE)}?ref={encoded_branch}"
+    blob_sha = None
+    try:
+        existing = _github_request_json(url)
+        blob_sha = existing.get("sha")
+    except RuntimeError as error:
+        if not str(error).startswith("GitHub API HTTP 404:"):
+            raise
+
+    serialized = json.dumps({"enabled": bool(enabled)}, indent=2) + "\n"
+    payload = {
+        "message": "Update sidekick_settings.json",
+        "content": base64.b64encode(serialized.encode("utf-8")).decode("ascii"),
+        "branch": GITHUB_BRANCH,
+    }
+    if blob_sha:
+        payload["sha"] = blob_sha
+
+    _github_request_json(
+        _github_contents_url(SIDEKICK_SETTINGS_FILE),
+        method="PUT",
+        payload=payload,
+    )
+
+
 def _github_get_user_blacklist(
     path: Path,
 ) -> tuple[bool, set[int], str | None]:
@@ -741,13 +798,19 @@ async def sidekick_toggle_command(
     SIDEKICK_ENABLED = bool(enabled)
     save_sidekick_enabled(SIDEKICK_ENABLED)
     state = "enabled" if SIDEKICK_ENABLED else "disabled"
-    await interaction.response.send_message(
-        f"Sidekick automatic kicks are now **{state}**.",
-        ephemeral=True,
-    )
+    response = f"Sidekick automatic kicks are now **{state}**."
+    if GITHUB_TOKEN:
+        try:
+            await asyncio.to_thread(_github_save_sidekick_enabled, SIDEKICK_ENABLED)
+        except Exception:
+            response += "\n⚠️ The setting was changed for this run, but GitHub persistence failed."
+    else:
+        response += "\n⚠️ GITHUB_TOKEN is missing, so the setting may reset after a redeploy."
+    await interaction.response.send_message(response, ephemeral=True)
 
 
 commands_synced = False
+sidekick_settings_synced = False
 user_blacklists_synced = False
 review_update_views_registered = False
 review_db_restore_checked = False
@@ -4276,7 +4339,17 @@ terminal_status_printed = False
 @bot.event
 async def on_ready():
     global commands_synced, terminal_status_printed, review_db_restore_checked, staff_strike_expiry_task
-    global legacy_role_sync_initial_scan_started
+    global legacy_role_sync_initial_scan_started, SIDEKICK_ENABLED
+
+    if not sidekick_settings_synced:
+        try:
+            remote_sidekick_enabled = await asyncio.to_thread(_github_load_sidekick_enabled)
+            if remote_sidekick_enabled is not None:
+                SIDEKICK_ENABLED = remote_sidekick_enabled
+                save_sidekick_enabled(SIDEKICK_ENABLED)
+        except Exception as error:
+            print(f"Sidekick settings restore failed: {type(error).__name__}: {error}")
+        sidekick_settings_synced = True
 
     if not terminal_status_printed:
         print("Bot is alive")
