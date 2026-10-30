@@ -3500,14 +3500,7 @@ async def enforce_sidekick_join(member: discord.Member) -> None:
     ):
         return
 
-    try:
-        await guild.kick(
-            member,
-            reason="Automatic Sidekick server join restriction",
-        )
-    except (discord.Forbidden, discord.HTTPException):
-        return
-
+    # Send the invite before removing the member so Discord can still deliver the DM.
     try:
         await member.send(
             "Please join the main community here: "
@@ -3515,6 +3508,14 @@ async def enforce_sidekick_join(member: discord.Member) -> None:
         )
     except (discord.Forbidden, discord.HTTPException):
         pass
+
+    try:
+        await guild.kick(
+            member,
+            reason="Automatic Sidekick server join restriction",
+        )
+    except (discord.Forbidden, discord.HTTPException):
+        return
 
 
 @bot.event
