@@ -809,6 +809,17 @@ async def sidekick_toggle_command(
     await interaction.response.send_message(response, ephemeral=True)
 
 
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+    """Register the Sidekick command automatically when John joins that server."""
+    if guild.id != SIDEKICK_GUILD_ID:
+        return
+    try:
+        await tree.sync(guild=discord.Object(id=SIDEKICK_GUILD_ID))
+    except Exception as error:
+        print(f"Sidekick slash command sync failed after joining server: {type(error).__name__}: {error}")
+
+
 commands_synced = False
 sidekick_settings_synced = False
 user_blacklists_synced = False
