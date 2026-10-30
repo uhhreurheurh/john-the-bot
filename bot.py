@@ -135,7 +135,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 # automatically remove the role listed below. Set either value to 0
 # to disable this feature.
 AUTO_REMOVE_TRIGGER_ROLE_ID = 1378810715611336914  # Role that causes the removal
-AUTO_REMOVE_ROLE_ID = 1372658714825457729          # Role to automatically remove
+AUTO_REMOVE_ROLE_ID = 1561696044952330411          # Role to automatically remove
 
 
 # =========================
