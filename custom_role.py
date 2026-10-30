@@ -33,7 +33,7 @@ REGISTRY_FILE = Path(__file__).with_name("custom_roles.json")
 SHARES_FILE = Path(__file__).with_name("custom_role_shares.json")
 MAX_SHARED_MEMBERS = 3
 # New custom roles are placed immediately above this existing server role.
-CUSTOM_ROLE_ANCHOR_ROLE_ID = 1354259084114661509
+CUSTOM_ROLE_ANCHOR_ROLE_ID = 1560403641620365312
 # Never let custom-role commands touch staff roles, even if the persisted
 # registry is stale or corrupted. Keep this list in sync with the server's
 # staff hierarchy.
