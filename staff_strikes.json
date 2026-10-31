@@ -1,24 +1,15 @@
 {
   "strikes": [
     {
-      "user_id": 259156901600821248,
+      "user_id": 874955311226691604,
       "strike_number": 1,
-      "reason": "test",
-      "issued_by": 191233879175200768,
-      "issued_at": "2026-10-09T00:33:39.897517+00:00",
-      "expires_at": "2026-11-08T00:33:39.897517+00:00",
-      "original_staff_role_id": 1397677852056354948,
+      "reason": "foreign",
+      "issued_by": 1403862921678950480,
+      "issued_at": "2026-10-31T12:10:37.340331+00:00",
+      "expires_at": "2026-11-07T12:10:37.340331+00:00",
+      "original_staff_role_id": 1560399777093517403,
       "log_message_id": null
     }
   ],
-  "permanent_demotions": {
-    "191233879175200768": {
-      "user_id": 191233879175200768,
-      "original_role_id": 1371739870380425236,
-      "demoted_role_id": 1371738346900029510,
-      "issued_by": 191233879175200768,
-      "issued_at": "2026-10-09T00:30:27.262434+00:00",
-      "reason": "hhh"
-    }
-  }
+  "permanent_demotions": {}
 }
