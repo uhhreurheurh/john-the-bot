@@ -445,6 +445,7 @@ async def save_data() -> None:
     async with data_lock:
         _save_local()
         await asyncio.to_thread(_github_save_sync)
+        _save_local()
 
 
 async def restore_data_from_github() -> bool:
@@ -1093,7 +1094,7 @@ async def handle_prefix(message: discord.Message) -> bool:
             stamp = str(item.get("timestamp", ""))[:16].replace("T", " ")
             lines.append(f"{stamp} UTC  {sign}{delta:,} KB — {source}")
         await message.reply(
-            "**Your 10 most recent Kevin Bucks transactions**\\n" + "\\n".join(lines),
+            "**Your 10 most recent Kevin Bucks transactions**\n" + "\n".join(lines),
             mention_author=False,
         )
         return True
