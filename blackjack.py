@@ -20,6 +20,8 @@ import base64
 import json
 import os
 import random
+import uuid
+import inspect
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -105,6 +107,7 @@ def _default_data() -> dict:
         "chat_activity": {},
         "custom_role_access": {},
         "expired_custom_roles": {},
+        "transactions": [],
     }
 
 
@@ -150,6 +153,7 @@ def load_data() -> dict:
         chat_activity = data.get("chat_activity", {})
         custom_role_access = data.get("custom_role_access", {})
         expired_custom_roles = data.get("expired_custom_roles", {})
+        transactions = data.get("transactions", [])
 
         if not isinstance(balances, dict):
             balances = {}
@@ -180,12 +184,27 @@ def load_data() -> dict:
                 for user_id, snapshot in expired_custom_roles.items()
                 if isinstance(snapshot, dict)
             },
+            "transactions": [
+                entry for entry in transactions
+                if isinstance(entry, dict) and entry.get("id")
+            ][-5000:] if isinstance(transactions, list) else [],
         }
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return _default_data()
 
 
 data = load_data()
+
+
+_economy_ready = False
+
+
+def _require_economy_ready() -> None:
+    if not _economy_ready:
+        raise RuntimeError(
+            "Kevin Bucks is temporarily unavailable because the shared database "
+            "has not been safely restored. No balance changes were saved."
+        )
 
 
 def _save_local() -> None:
@@ -197,15 +216,36 @@ def _save_local() -> None:
 
 
 def get_balance(user_id: int) -> int:
+    _require_economy_ready()
     key = str(user_id)
     if key not in data["balances"]:
-        data["balances"][key] = STARTING_BALANCE
+        set_balance(user_id, STARTING_BALANCE)
         _save_local()
     return int(data["balances"][key])
 
 
 def set_balance(user_id: int, amount: int) -> None:
-    data["balances"][str(user_id)] = max(0, int(amount))
+    _require_economy_ready()
+    key = str(user_id)
+    old_balance = max(0, int(data["balances"].get(key, 0)))
+    new_balance = max(0, int(amount))
+    data["balances"][key] = new_balance
+    delta = new_balance - old_balance
+    if delta:
+        frame = inspect.currentframe().f_back
+        if frame is not None and frame.f_code.co_name == "add_balance":
+            frame = frame.f_back
+        source = frame.f_code.co_name if frame is not None else "unknown"
+        data.setdefault("transactions", []).append({
+            "id": uuid.uuid4().hex,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "user_id": key,
+            "delta": delta,
+            "before": old_balance,
+            "after": new_balance,
+            "source": source,
+        })
+        data["transactions"] = data["transactions"][-5000:]
 
 
 def add_balance(user_id: int, amount: int) -> int:
@@ -231,9 +271,38 @@ def _github_headers() -> dict[str, str]:
     }
 
 
-def _github_url() -> str:
-    encoded_path = urllib.parse.quote(DATA_FILE.name, safe="")
+def _github_url(path: Optional[str] = None) -> str:
+    path = path or DATA_FILE.name
+    encoded_path = "/".join(
+        urllib.parse.quote(part, safe="")
+        for part in str(path).split("/")
+    )
     return f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/contents/{encoded_path}"
+
+
+def _decode_github_data(response: dict) -> dict:
+    encoded_content = response.get("content", "")
+    if not encoded_content:
+        raise RuntimeError("GitHub returned an empty Kevin Bucks database.")
+    try:
+        decoded = base64.b64decode(
+            "".join(str(encoded_content).split()),
+            validate=True,
+        ).decode("utf-8")
+        remote = json.loads(decoded)
+    except Exception as error:
+        raise RuntimeError("The GitHub Kevin Bucks database is invalid JSON.") from error
+    if not isinstance(remote, dict) or not isinstance(remote.get("balances"), dict):
+        raise RuntimeError("The GitHub Kevin Bucks database has an invalid schema.")
+    if not remote["balances"]:
+        raise RuntimeError("The GitHub Kevin Bucks database has no balances; refusing to load it.")
+    for user_id, balance in remote["balances"].items():
+        try:
+            if int(balance) < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise RuntimeError(f"The GitHub database contains an invalid balance for {user_id}.")
+    return remote
 
 
 def _github_request(
@@ -269,105 +338,179 @@ def _github_request(
 
 def _github_save_sync() -> None:
     if not GITHUB_TOKEN:
-        return
-
-    serialized = json.dumps(data, indent=2, sort_keys=True) + "\n"
+        raise RuntimeError("GITHUB_TOKEN is not configured.")
 
     encoded_branch = urllib.parse.quote(GITHUB_BRANCH, safe="")
+    primary_url = _github_url()
+    response = _github_request(f"{primary_url}?ref={encoded_branch}")
+    remote = _decode_github_data(response)
+    remote_sha = response.get("sha")
+    if not remote_sha:
+        raise RuntimeError("GitHub did not provide a database version; refusing to overwrite it.")
+
+    # Keep one immutable snapshot per UTC day, before the first successful write.
+    backup_date = datetime.now(timezone.utc).date().isoformat()
+    backup_path = f"backups/kevin_bucks_{backup_date}.json"
+    backup_url = _github_url(backup_path)
     try:
-        response = _github_request(
-            f"{_github_url()}?ref={encoded_branch}"
-        )
+        _github_request(f"{backup_url}?ref={encoded_branch}")
     except RuntimeError as error:
-        # Create the economy file automatically on its first save.
         if "GitHub API HTTP 404:" not in str(error):
             raise
-        response = {}
+        previous_snapshot = json.dumps(remote, indent=2, sort_keys=True) + "\n"
+        _github_request(
+            backup_url,
+            method="PUT",
+            payload={
+                "message": f"Daily Kevin Bucks backup {backup_date}",
+                "content": base64.b64encode(previous_snapshot.encode("utf-8")).decode("ascii"),
+                "branch": GITHUB_BRANCH,
+            },
+        )
 
+    # Merge balance changes as idempotent deltas, not stale whole-file snapshots.
+    merged = dict(remote)
+    merged_balances = {
+        str(user_id): max(0, int(balance))
+        for user_id, balance in remote["balances"].items()
+    }
+    remote_transactions = [
+        item for item in remote.get("transactions", [])
+        if isinstance(item, dict) and item.get("id")
+    ]
+    local_transactions = [
+        item for item in data.get("transactions", [])
+        if isinstance(item, dict) and item.get("id")
+    ]
+    known_ids = {str(item["id"]) for item in remote_transactions}
+    pending = [item for item in local_transactions if str(item["id"]) not in known_ids]
+    pending.sort(key=lambda item: str(item.get("timestamp", "")))
+
+    for entry in pending:
+        user_id = str(entry.get("user_id", ""))
+        try:
+            delta = int(entry.get("delta", 0))
+            before = max(0, int(entry.get("before", STARTING_BALANCE)))
+        except (TypeError, ValueError):
+            raise RuntimeError("A local Kevin Bucks transaction is malformed.")
+        if not user_id:
+            raise RuntimeError("A local Kevin Bucks transaction has no user ID.")
+        current = merged_balances.get(user_id, before)
+        merged_balances[user_id] = max(0, current + delta)
+
+    merged["balances"] = merged_balances
+    merged["transactions"] = (remote_transactions + pending)[-5000:]
+
+    # Merge account metadata while keeping balances controlled by the transaction journal.
+    for field in ("daily_claims", "chat_activity", "custom_role_access", "expired_custom_roles"):
+        remote_map = remote.get(field, {})
+        local_map = data.get(field, {})
+        if not isinstance(remote_map, dict):
+            remote_map = {}
+        if not isinstance(local_map, dict):
+            local_map = {}
+        combined = dict(remote_map)
+        for user_id, value in local_map.items():
+            if field == "daily_claims":
+                if str(value or "") >= str(combined.get(user_id, "") or ""):
+                    combined[user_id] = value
+            elif field == "chat_activity":
+                old_value = combined.get(user_id, {})
+                old_time = str(old_value.get("last_reward_at", "")) if isinstance(old_value, dict) else ""
+                new_time = str(value.get("last_reward_at", "")) if isinstance(value, dict) else ""
+                if new_time >= old_time:
+                    combined[user_id] = value
+            elif field == "custom_role_access":
+                if str(value or "") >= str(combined.get(user_id, "") or ""):
+                    combined[user_id] = value
+            else:
+                combined[user_id] = value
+        merged[field] = combined
+
+    serialized = json.dumps(merged, indent=2, sort_keys=True) + "\n"
     payload = {
-        "message": f"Update {DATA_FILE.name}",
+        "message": f"Update {DATA_FILE.name} with merged economy transactions",
         "content": base64.b64encode(serialized.encode("utf-8")).decode("ascii"),
         "branch": GITHUB_BRANCH,
+        "sha": remote_sha,
     }
+    _github_request(primary_url, method="PUT", payload=payload)
 
-    sha = response.get("sha")
-    if sha:
-        payload["sha"] = sha
-
-    _github_request(_github_url(), method="PUT", payload=payload)
+    data.clear()
+    data.update(merged)
 
 
 async def save_data() -> None:
+    _require_economy_ready()
     async with data_lock:
         _save_local()
-        if GITHUB_TOKEN:
-            try:
-                await asyncio.to_thread(_github_save_sync)
-            except Exception:
-                # Local persistence remains authoritative if GitHub is
-                # temporarily unavailable. The next save retries.
-                pass
+        await asyncio.to_thread(_github_save_sync)
 
 
 async def restore_data_from_github() -> bool:
+    global _economy_ready
     if not GITHUB_TOKEN:
-        return False
+        raise RuntimeError("GITHUB_TOKEN is not configured; refusing to start an unbacked economy.")
 
     async with data_lock:
+        encoded_branch = urllib.parse.quote(GITHUB_BRANCH, safe="")
         try:
-            encoded_branch = urllib.parse.quote(GITHUB_BRANCH, safe="")
             response = await asyncio.to_thread(
                 _github_request,
                 f"{_github_url()}?ref={encoded_branch}",
             )
-            encoded_content = response.get("content", "")
-            if not encoded_content:
+        except RuntimeError as error:
+            if "GitHub API HTTP 404:" in str(error):
                 return False
+            raise
 
-            decoded = base64.b64decode(
-                "".join(str(encoded_content).split())
-            ).decode("utf-8")
-            remote = json.loads(decoded)
+        remote = _decode_github_data(response)
+        balances = remote["balances"]
+        daily_claims = remote.get("daily_claims", {})
+        chat_activity = remote.get("chat_activity", {})
+        custom_role_access = remote.get("custom_role_access", {})
+        expired_custom_roles = remote.get("expired_custom_roles", {})
+        transactions = remote.get("transactions", [])
 
-            if not isinstance(remote, dict):
-                return False
+        if not isinstance(daily_claims, dict):
+            raise RuntimeError("The GitHub database has invalid daily-claim data.")
+        if not isinstance(custom_role_access, dict):
+            raise RuntimeError("The GitHub database has invalid custom-role access data.")
+        if not isinstance(expired_custom_roles, dict):
+            raise RuntimeError("The GitHub database has invalid expired-role data.")
+        if not isinstance(transactions, list):
+            raise RuntimeError("The GitHub database has invalid transaction history.")
 
-            balances = remote.get("balances", {})
-            daily_claims = remote.get("daily_claims", {})
-            chat_activity = remote.get("chat_activity", {})
-            custom_role_access = remote.get("custom_role_access", {})
-            expired_custom_roles = remote.get("expired_custom_roles", {})
-
-            if not isinstance(balances, dict) or not isinstance(daily_claims, dict):
-                return False
-            if not isinstance(custom_role_access, dict):
-                custom_role_access = {}
-            if not isinstance(expired_custom_roles, dict):
-                expired_custom_roles = {}
-
-            data["balances"] = {
+        restored = {
+            "balances": {
                 str(user_id): max(0, int(balance))
                 for user_id, balance in balances.items()
-            }
-            data["daily_claims"] = {
+            },
+            "daily_claims": {
                 str(user_id): str(timestamp)
                 for user_id, timestamp in daily_claims.items()
-            }
-            data["chat_activity"] = _normalize_chat_activity(chat_activity)
-            data["custom_role_access"] = {
+            },
+            "chat_activity": _normalize_chat_activity(chat_activity),
+            "custom_role_access": {
                 str(user_id): str(expires_at)
                 for user_id, expires_at in custom_role_access.items()
                 if expires_at not in (None, "")
-            }
-            data["expired_custom_roles"] = {
+            },
+            "expired_custom_roles": {
                 str(user_id): snapshot
                 for user_id, snapshot in expired_custom_roles.items()
                 if isinstance(snapshot, dict)
-            }
-            _save_local()
-            return True
-        except Exception:
-            return False
+            },
+            "transactions": [
+                entry for entry in transactions
+                if isinstance(entry, dict) and entry.get("id")
+            ][-5000:],
+        }
+        data.clear()
+        data.update(restored)
+        _save_local()
+        _economy_ready = True
+        return True
 
 
 # =========================
@@ -930,6 +1073,31 @@ async def handle_prefix(message: discord.Message) -> bool:
 
     command = parts[0].lower()
 
+    if command in {",kbtransactions", ",kbhistory"}:
+        _require_economy_ready()
+        entries = [
+            item for item in data.get("transactions", [])
+            if str(item.get("user_id")) == str(message.author.id)
+        ][-10:]
+        if not entries:
+            await message.reply(
+                "You don't have any recorded Kevin Bucks transactions yet.",
+                mention_author=False,
+            )
+            return True
+        lines = []
+        for item in reversed(entries):
+            delta = int(item.get("delta", 0))
+            sign = "+" if delta >= 0 else ""
+            source = str(item.get("source", "unknown")).replace("_", " ")
+            stamp = str(item.get("timestamp", ""))[:16].replace("T", " ")
+            lines.append(f"{stamp} UTC  {sign}{delta:,} KB — {source}")
+        await message.reply(
+            "**Your 10 most recent Kevin Bucks transactions**\\n" + "\\n".join(lines),
+            mention_author=False,
+        )
+        return True
+
     if command in {",blackjackcleanup", ",bjcleanup"}:
         cleaned = await cleanup_stale_game(message.author.id)
         if cleaned:
@@ -1025,11 +1193,62 @@ async def handle_prefix(message: discord.Message) -> bool:
     return False
 
 
-async def initialize() -> None:
-    # Pull the persistent economy state before commands are used.
-    restored = await restore_data_from_github()
+async def initialize() -> bool:
+    global _economy_ready
+    _economy_ready = False
+    try:
+        restored = await restore_data_from_github()
+        if not restored:
+            raise RuntimeError(
+                "The shared Kevin Bucks file is missing from GitHub. "
+                "Refusing to create a blank file over a missing database."
+            )
+        print(
+            "Kevin Bucks database restored safely: "
+            f"{len(data['balances'])} balances, "
+            f"{len(data.get('transactions', []))} transaction records."
+        )
+        return True
+    except Exception as error:
+        _economy_ready = False
+        print(
+            "Kevin Bucks database restore failed; economy commands are disabled "
+            "to protect balances: "
+            f"{type(error).__name__}: {error}"
+        )
+        return False
 
-    # If there was no remote file, create it so the economy has a persistent
-    # starting point immediately.
-    if not restored:
-        await save_data()
+
+@bot_module.tree.command(
+    name="kbtransactions",
+    description="View your recent Kevin Bucks transactions.",
+)
+async def kbtransactions_command(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "Kevin Bucks transaction history is only available in a server.",
+            ephemeral=True,
+        )
+        return
+    _require_economy_ready()
+    entries = [
+        item for item in data.get("transactions", [])
+        if str(item.get("user_id")) == str(interaction.user.id)
+    ][-10:]
+    if not entries:
+        await interaction.response.send_message(
+            "You don't have any recorded Kevin Bucks transactions yet.",
+            ephemeral=True,
+        )
+        return
+    lines = []
+    for item in reversed(entries):
+        delta = int(item.get("delta", 0))
+        sign = "+" if delta >= 0 else ""
+        source = str(item.get("source", "unknown")).replace("_", " ")
+        stamp = str(item.get("timestamp", ""))[:16].replace("T", " ")
+        lines.append(f"{stamp} UTC  {sign}{delta:,} KB — {source}")
+    await interaction.response.send_message(
+        "**Your 10 most recent Kevin Bucks transactions**\n" + "\n".join(lines),
+        ephemeral=True,
+    )
