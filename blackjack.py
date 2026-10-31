@@ -336,7 +336,7 @@ def _github_request(
     return json.loads(raw) if raw else {}
 
 
-def _github_save_sync() -> None:
+def _github_save_sync(local_snapshot: dict) -> None:
     if not GITHUB_TOKEN:
         raise RuntimeError("GITHUB_TOKEN is not configured.")
 
@@ -379,7 +379,7 @@ def _github_save_sync() -> None:
         if isinstance(item, dict) and item.get("id")
     ]
     local_transactions = [
-        item for item in data.get("transactions", [])
+        item for item in local_snapshot.get("transactions", [])
         if isinstance(item, dict) and item.get("id")
     ]
     known_ids = {str(item["id"]) for item in remote_transactions}
@@ -404,7 +404,7 @@ def _github_save_sync() -> None:
     # Merge account metadata while keeping balances controlled by the transaction journal.
     for field in ("daily_claims", "chat_activity", "custom_role_access", "expired_custom_roles"):
         remote_map = remote.get(field, {})
-        local_map = data.get(field, {})
+        local_map = local_snapshot.get(field, {})
         if not isinstance(remote_map, dict):
             remote_map = {}
         if not isinstance(local_map, dict):
@@ -436,15 +436,15 @@ def _github_save_sync() -> None:
     }
     _github_request(primary_url, method="PUT", payload=payload)
 
-    data.clear()
-    data.update(merged)
-
-
 async def save_data() -> None:
     _require_economy_ready()
     async with data_lock:
         _save_local()
-        await asyncio.to_thread(_github_save_sync)
+        # Take a stable snapshot before yielding to the worker thread. New
+        # events created while the upload is running remain queued locally
+        # and are included in the next sync instead of being discarded.
+        snapshot = json.loads(json.dumps(data))
+        await asyncio.to_thread(_github_save_sync, snapshot)
         _save_local()
 
 
