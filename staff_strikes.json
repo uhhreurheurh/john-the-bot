@@ -19,6 +19,16 @@
       "expires_at": "2026-11-10T01:50:45.221886+00:00",
       "original_staff_role_id": 1560399777936707777,
       "log_message_id": 1566993010363998211
+    },
+    {
+      "user_id": 1512484378050302053,
+      "strike_number": 2,
+      "reason": "saying he is 12",
+      "issued_by": 1403862921678950480,
+      "issued_at": "2026-11-03T22:18:23.875662+00:00",
+      "expires_at": "2026-11-10T22:18:23.875662+00:00",
+      "original_staff_role_id": 1560399777936707777,
+      "log_message_id": null
     }
   ],
   "permanent_demotions": {}
