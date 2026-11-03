@@ -9,6 +9,16 @@
       "expires_at": "2026-11-09T16:58:08.460465+00:00",
       "original_staff_role_id": 1560399772378988564,
       "log_message_id": 1566858975646056600
+    },
+    {
+      "user_id": 1512484378050302053,
+      "strike_number": 1,
+      "reason": "streaming naked lady on vc",
+      "issued_by": 191233879175200768,
+      "issued_at": "2026-11-03T01:50:45.221886+00:00",
+      "expires_at": "2026-11-10T01:50:45.221886+00:00",
+      "original_staff_role_id": 1560399777936707777,
+      "log_message_id": null
     }
   ],
   "permanent_demotions": {}
