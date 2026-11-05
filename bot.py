@@ -3473,14 +3473,41 @@ async def remove_auto_role_if_needed(member: discord.Member, reason: str) -> boo
 async def on_member_update(before: discord.Member, after: discord.Member):
     """Handle automatic removal and source-server tag-role changes."""
     if after.guild.id == MAIN_SERVER:
-        # Enforce the rule whenever a qualifying trigger/staff role exists.
-        # This catches both newly-added roles and cases where the removable
-        # role was added while the trigger was already present.
+        # Enforce the automatic-removal rule for qualifying trigger/staff roles.
         if AUTO_REMOVE_TRIGGER_ROLE_IDS and AUTO_REMOVE_ROLE_ID:
             await remove_auto_role_if_needed(
                 after,
                 reason="Member has a configured automatic-removal trigger or staff role",
             )
+
+        # A change to any mapped staff role triggers a full eight-role
+        # reconciliation for this member in the ban appeal server.
+        before_staff_ids = {role.id for role in before.roles} & STAFF_ROLE_IDS
+        after_staff_ids = {role.id for role in after.roles} & STAFF_ROLE_IDS
+        if before_staff_ids != after_staff_ids:
+            appeal_guild = bot.get_guild(BAN_APPEAL_GUILD_ID)
+            if appeal_guild is None:
+                print(
+                    f"Ban appeal staff sync skipped for {after.id}: "
+                    f"ban appeal server {BAN_APPEAL_GUILD_ID} is unavailable."
+                )
+                return
+
+            appeal_member = appeal_guild.get_member(after.id)
+            if appeal_member is None:
+                try:
+                    appeal_member = await appeal_guild.fetch_member(after.id)
+                except discord.NotFound:
+                    appeal_member = None
+                except (discord.Forbidden, discord.HTTPException) as error:
+                    print(
+                        f"Ban appeal staff sync could not fetch destination member "
+                        f"{after.id}: {type(error).__name__}: {error}"
+                    )
+                    return
+
+            if appeal_member is not None:
+                await sync_ban_appeal_staff_roles(appeal_member)
         return
 
     if after.guild.id == LEGACY_ROLE_SYNC_SOURCE_GUILD and before.roles != after.roles:
