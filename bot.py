@@ -4360,6 +4360,7 @@ import mines as mines_feature
 import slots as slots_feature
 import coinflip as coinflip_feature
 import custom_role as custom_role_feature
+import murder_mystery as murder_mystery_feature
 from hoodify_feature import *
 from safechat_feature import *
 from uwuify_feature import *
@@ -4611,6 +4612,7 @@ async def on_ready():
             # Explicitly register command groups owned by feature modules.
             feature_groups = (
                 globals().get("review_blacklist_group"),
+                globals().get("murder_group"),
             )
             registered_names = {command.name for command in tree.get_commands()}
             for group in feature_groups:
@@ -4668,6 +4670,7 @@ async def on_ready():
                 "unhoodify",
                 "hoodcount",
                 "slots",
+                "murder",
             }
 
             if required_commands.issubset(synced_names):
