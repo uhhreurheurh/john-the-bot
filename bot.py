@@ -4380,11 +4380,34 @@ async def safechatunban_command(interaction: discord.Interaction, member: discor
 # Tracks whether the one allowed terminal status line has been shown.
 terminal_status_printed = False
 
+# Restore the shared economy database as soon as the Discord gateway connects.
+# This runs before the longer on_ready sync sequence and never reloads over
+# active balances after a successful restore.
+economy_restore_lock = asyncio.Lock()
+economy_restore_ready = False
+
+
+async def restore_kevin_bucks_on_startup() -> bool:
+    global economy_restore_ready
+    async with economy_restore_lock:
+        if economy_restore_ready:
+            return True
+        print("Starting shared Kevin Bucks database restore.", flush=True)
+        economy_restore_ready = await blackjack_feature.initialize()
+        return economy_restore_ready
+
+
+@bot.event
+async def on_connect():
+    await restore_kevin_bucks_on_startup()
+
 
 @bot.event
 async def on_ready():
     global commands_synced, terminal_status_printed, review_db_restore_checked, staff_strike_expiry_task
     global legacy_role_sync_initial_scan_started, SIDEKICK_ENABLED
+
+    await restore_kevin_bucks_on_startup()
 
     if not sidekick_settings_synced:
         try:
@@ -4568,7 +4591,6 @@ async def on_ready():
         if await sync_user_blacklists_from_github():
             user_blacklists_synced = True
 
-    await blackjack_feature.initialize()
 
     # Purchased custom-role access is temporary; keep expired user IDs out of
     # the authorization list even when nobody runs a custom-role command.
