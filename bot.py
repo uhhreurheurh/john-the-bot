@@ -3471,7 +3471,27 @@ async def remove_auto_role_if_needed(member: discord.Member, reason: str) -> boo
 
 @bot.event
 async def on_member_update(before: discord.Member, after: discord.Member):
-    """Handle automatic removal and source-server tag-role changes."""
+    """Handle staff-role enforcement and source-server tag-role changes."""
+    if after.guild.id == BAN_APPEAL_GUILD_ID:
+        if after.bot:
+            return
+
+        # If any mapped staff role is manually added or removed in the appeal
+        # server, immediately reconcile all eight roles against the main server.
+        # This removes unauthorized mapped staff roles and restores any roles
+        # the member is legitimately entitled to hold.
+        appeal_staff_role_ids = set(BAN_APPEAL_STAFF_ROLE_MAPPING.values())
+        before_appeal_staff_ids = {
+            role.id for role in before.roles
+        } & appeal_staff_role_ids
+        after_appeal_staff_ids = {
+            role.id for role in after.roles
+        } & appeal_staff_role_ids
+
+        if before_appeal_staff_ids != after_appeal_staff_ids:
+            await sync_ban_appeal_staff_roles(after)
+        return
+
     if after.guild.id == MAIN_SERVER:
         # Enforce the automatic-removal rule for qualifying trigger/staff roles.
         if AUTO_REMOVE_TRIGGER_ROLE_IDS and AUTO_REMOVE_ROLE_ID:
