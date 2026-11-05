@@ -155,7 +155,11 @@ async def _start_game(interaction: discord.Interaction, game: MurderGame):
             dm_failures.append(member.mention)
 
     view = RoundView(game)
-    await interaction.response.edit_message(embed=_round_embed(game, "The investigation begins. Check your DMs for your secret role."), view=view)
+    opening_embed = _round_embed(game, "The investigation begins. Check your DMs for your secret role.")
+    if interaction.message is not None:
+        await interaction.response.edit_message(embed=opening_embed, view=view)
+    else:
+        await interaction.response.send_message(embed=opening_embed, view=view)
     if dm_failures:
         await interaction.followup.send(
             "I couldn't DM these players their secret roles: " + ", ".join(dm_failures)
