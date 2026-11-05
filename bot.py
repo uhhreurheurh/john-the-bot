@@ -172,6 +172,19 @@ STAFF_ROLE_HIERARCHY = [
 ]
 STAFF_ROLE_IDS = {role_id for _, role_id in STAFF_ROLE_HIERARCHY}
 
+# One-way staff-role sync: main server -> ban appeal server.
+BAN_APPEAL_GUILD_ID = 910713544402698321
+BAN_APPEAL_STAFF_ROLE_MAPPING = {
+    1560399751533428827: 1383174676460863640,  # Co Owner
+    1560399766527934535: 1397682605859668059,  # Director
+    1560399769359229029: 1383174681502285855,  # Staff Manager
+    1560399772378988564: 1383174682626494683,  # Head Admin
+    1560399775277514762: 1383174683997896734,  # Admin
+    1560399777093517403: 1383174684903739583,  # Head Mod
+    1560399777936707777: 1383174685881274429,  # Mod
+    1560399778628509726: 1383174687332499557,  # Trial Mod
+}
+
 def safechat_ban_allowed(member: discord.Member | discord.User) -> bool:
     """Return True when the member has any configured staff role."""
     role_ids = {role.id for role in getattr(member, "roles", ())}
@@ -3529,8 +3542,100 @@ async def enforce_sidekick_join(member: discord.Member) -> None:
         return
 
 
+async def sync_ban_appeal_staff_roles(destination_member: discord.Member) -> None:
+    """Check all eight main-server staff roles whenever someone joins ban appeals."""
+    if destination_member.guild.id != BAN_APPEAL_GUILD_ID or destination_member.bot:
+        return
+
+    source_guild = bot.get_guild(MAIN_SERVER)
+    if source_guild is None:
+        print(
+            f"Ban appeal staff sync skipped for {destination_member.id}: "
+            f"main server {MAIN_SERVER} is unavailable."
+        )
+        return
+
+    source_member = source_guild.get_member(destination_member.id)
+    if source_member is None:
+        try:
+            source_member = await source_guild.fetch_member(destination_member.id)
+        except discord.NotFound:
+            # Not currently in the main server; leave all existing appeal roles unchanged.
+            print(
+                f"Ban appeal staff sync: {destination_member.id} is not in the main server; "
+                "no roles changed."
+            )
+            return
+        except (discord.Forbidden, discord.HTTPException) as error:
+            print(
+                f"Ban appeal staff sync could not fetch main-server member "
+                f"{destination_member.id}: {type(error).__name__}: {error}"
+            )
+            return
+
+    appeal_guild = destination_member.guild
+    bot_member = appeal_guild.me
+    if bot_member is None and bot.user is not None:
+        try:
+            bot_member = await appeal_guild.fetch_member(bot.user.id)
+        except discord.DiscordException:
+            bot_member = None
+
+    if bot_member is None or not bot_member.guild_permissions.manage_roles:
+        print(
+            f"Ban appeal staff sync blocked for {destination_member.id}: "
+            "bot is missing Manage Roles in the ban appeal server."
+        )
+        return
+
+    source_role_ids = {role.id for role in source_member.roles}
+    roles_to_add = []
+    missing_roles = []
+    too_high_roles = []
+
+    # Check every configured staff mapping on every join; never infer by role name.
+    for source_role_id, appeal_role_id in BAN_APPEAL_STAFF_ROLE_MAPPING.items():
+        if source_role_id not in source_role_ids:
+            continue
+
+        appeal_role = appeal_guild.get_role(appeal_role_id)
+        if appeal_role is None or appeal_role.is_default() or appeal_role.managed:
+            missing_roles.append(appeal_role_id)
+            continue
+        if bot_member.top_role <= appeal_role:
+            too_high_roles.append(appeal_role_id)
+            continue
+        if appeal_role not in destination_member.roles:
+            roles_to_add.append(appeal_role)
+
+    if roles_to_add:
+        try:
+            await destination_member.add_roles(
+                *roles_to_add,
+                reason="Staff role sync from the main server on ban appeal server join",
+            )
+        except (discord.Forbidden, discord.HTTPException) as error:
+            print(
+                f"Ban appeal staff sync failed for {destination_member.id}: "
+                f"{type(error).__name__}: {error}"
+            )
+            return
+
+    print(
+        f"Ban appeal staff sync checked {len(BAN_APPEAL_STAFF_ROLE_MAPPING)} mappings "
+        f"for {destination_member.id}: source_staff_roles="
+        f"{sum(role_id in source_role_ids for role_id in BAN_APPEAL_STAFF_ROLE_MAPPING)}, "
+        f"roles_added={len(roles_to_add)}, missing_destination_roles={missing_roles}, "
+        f"roles_above_bot={too_high_roles}."
+    )
+
+
 @bot.event
 async def on_member_join(member: discord.Member):
+    if member.guild.id == BAN_APPEAL_GUILD_ID:
+        await sync_ban_appeal_staff_roles(member)
+        return
+
     if member.guild.id == SIDEKICK_GUILD_ID:
         await enforce_sidekick_join(member)
         return
