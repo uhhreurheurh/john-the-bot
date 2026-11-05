@@ -3560,12 +3560,9 @@ async def sync_ban_appeal_staff_roles(destination_member: discord.Member) -> Non
         try:
             source_member = await source_guild.fetch_member(destination_member.id)
         except discord.NotFound:
-            # Not currently in the main server; leave all existing appeal roles unchanged.
-            print(
-                f"Ban appeal staff sync: {destination_member.id} is not in the main server; "
-                "no roles changed."
-            )
-            return
+            # A confirmed absence from the main server means all mapped appeal staff
+            # roles must be removed below. API/permission errors remain non-destructive.
+            source_member = None
         except (discord.Forbidden, discord.HTTPException) as error:
             print(
                 f"Ban appeal staff sync could not fetch main-server member "
@@ -3588,16 +3585,15 @@ async def sync_ban_appeal_staff_roles(destination_member: discord.Member) -> Non
         )
         return
 
-    source_role_ids = {role.id for role in source_member.roles}
+    source_role_ids = {role.id for role in source_member.roles} if source_member else set()
     roles_to_add = []
+    roles_to_remove = []
     missing_roles = []
     too_high_roles = []
 
-    # Check every configured staff mapping on every join; never infer by role name.
+    # Reconcile every configured mapping on every join in both directions.
+    # Only these eight mapped appeal roles are ever changed by this sync.
     for source_role_id, appeal_role_id in BAN_APPEAL_STAFF_ROLE_MAPPING.items():
-        if source_role_id not in source_role_ids:
-            continue
-
         appeal_role = appeal_guild.get_role(appeal_role_id)
         if appeal_role is None or appeal_role.is_default() or appeal_role.managed:
             missing_roles.append(appeal_role_id)
@@ -3605,28 +3601,39 @@ async def sync_ban_appeal_staff_roles(destination_member: discord.Member) -> Non
         if bot_member.top_role <= appeal_role:
             too_high_roles.append(appeal_role_id)
             continue
-        if appeal_role not in destination_member.roles:
-            roles_to_add.append(appeal_role)
 
-    if roles_to_add:
-        try:
+        has_source_role = source_role_id in source_role_ids
+        has_appeal_role = appeal_role in destination_member.roles
+        if has_source_role and not has_appeal_role:
+            roles_to_add.append(appeal_role)
+        elif not has_source_role and has_appeal_role:
+            roles_to_remove.append(appeal_role)
+
+    try:
+        if roles_to_add:
             await destination_member.add_roles(
                 *roles_to_add,
                 reason="Staff role sync from the main server on ban appeal server join",
             )
-        except (discord.Forbidden, discord.HTTPException) as error:
-            print(
-                f"Ban appeal staff sync failed for {destination_member.id}: "
-                f"{type(error).__name__}: {error}"
+        if roles_to_remove:
+            await destination_member.remove_roles(
+                *roles_to_remove,
+                reason="Staff role sync: corresponding main-server staff role is absent",
             )
-            return
+    except (discord.Forbidden, discord.HTTPException) as error:
+        print(
+            f"Ban appeal staff sync failed for {destination_member.id}: "
+            f"{type(error).__name__}: {error}"
+        )
+        return
 
     print(
         f"Ban appeal staff sync checked {len(BAN_APPEAL_STAFF_ROLE_MAPPING)} mappings "
         f"for {destination_member.id}: source_staff_roles="
         f"{sum(role_id in source_role_ids for role_id in BAN_APPEAL_STAFF_ROLE_MAPPING)}, "
-        f"roles_added={len(roles_to_add)}, missing_destination_roles={missing_roles}, "
-        f"roles_above_bot={too_high_roles}."
+        f"roles_added={len(roles_to_add)}, roles_removed={len(roles_to_remove)}, "
+        f"main_member_present={source_member is not None}, "
+        f"missing_destination_roles={missing_roles}, roles_above_bot={too_high_roles}."
     )
 
 
