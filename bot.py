@@ -4612,7 +4612,7 @@ async def on_ready():
             # Explicitly register command groups owned by feature modules.
             feature_groups = (
                 globals().get("review_blacklist_group"),
-                globals().get("murder_group"),
+                murder_mystery_feature.murder_group,
             )
             registered_names = {command.name for command in tree.get_commands()}
             for group in feature_groups:
