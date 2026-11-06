@@ -7,6 +7,7 @@ murder_group and registers it with its existing command tree.
 
 from __future__ import annotations
 
+import asyncio
 import random
 from dataclasses import dataclass, field
 
@@ -138,8 +139,11 @@ async def _start_game(interaction: discord.Interaction, game: MurderGame):
     game.round_number = 1
     game.votes.clear()
 
-    dm_failures = []
-    for uid, member in game.players.items():
+    # Acknowledge the interaction immediately. Sending several role DMs can
+    # otherwise exceed Discord's 3-second interaction response deadline.
+    await interaction.response.defer()
+
+    async def send_role_dm(uid: int, member: discord.Member) -> str | None:
         role = game.roles[uid]
         private_text = (
             f"Your secret role in **{game.case_name}** is **{role}**. "
@@ -151,15 +155,18 @@ async def _start_game(interaction: discord.Interaction, game: MurderGame):
             private_text += " Pay close attention to clues and help the group find the murderer."
         try:
             await member.send(private_text)
+            return None
         except (discord.Forbidden, discord.HTTPException):
-            dm_failures.append(member.mention)
+            return member.mention
+
+    dm_results = await asyncio.gather(
+        *(send_role_dm(uid, member) for uid, member in game.players.items())
+    )
+    dm_failures = [mention for mention in dm_results if mention]
 
     view = RoundView(game)
     opening_embed = _round_embed(game, "The investigation begins. Check your DMs for your secret role.")
-    if interaction.message is not None:
-        await interaction.response.edit_message(embed=opening_embed, view=view)
-    else:
-        await interaction.response.send_message(embed=opening_embed, view=view)
+    await interaction.edit_original_response(embed=opening_embed, view=view)
     if dm_failures:
         await interaction.followup.send(
             "I couldn't DM these players their secret roles: " + ", ".join(dm_failures)
