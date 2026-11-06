@@ -52,6 +52,7 @@ class MurderGame:
     clues: list[str] = field(default_factory=list)
     round_number: int = 0
     phase: str = "lobby"
+    killed_this_round: bool = False
     message: discord.Message | None = None
 
 
@@ -193,27 +194,18 @@ async def _resolve_votes(game: MurderGame, channel: discord.abc.Messageable):
             return
         result = f"The group voted out {member.mention}. They were an **{game.roles.get(eliminated, 'Innocent')}**, not the murderer."
     else:
-        result = "The vote was tied. Nobody was eliminated this round."
-
-    if len(game.alive) <= 1:
-        await _finish_game(game, channel, "The Murderer", "Only one innocent remains.")
-        return
+        result = "The vote was tied. Nobody was eliminated."
 
     murderer_id = next(uid for uid, role in game.roles.items() if role == "Murderer")
-    possible_victims = [uid for uid in game.alive if uid != murderer_id]
-    if possible_victims:
-        victim_id = random.choice(possible_victims)
-        game.alive.discard(victim_id)
-        result += f"\nDuring the night, **{game.players[victim_id].display_name}** was found eliminated."
     if murderer_id not in game.alive:
         await _finish_game(game, channel, "The Innocents", result)
         return
     if len(game.alive) <= 2:
-        await _finish_game(game, channel, "The Murderer", result + "\nThe murderer has outnumbered the remaining innocent.")
+        await _finish_game(game, channel, "The Murderer", result + "\\nThe murderer has reached parity with the remaining players.")
         return
 
-    game.round_number += 1
-    game.votes.clear()
+    # The Murderer gets a separate private kill action. Voting never silently
+    # eliminates a second player.
     await channel.send(embed=_round_embed(game, result), view=RoundView(game))
 
 
@@ -329,6 +321,100 @@ class VoteButton(discord.ui.Button):
         await interaction.response.send_message("Select the person you believe is the murderer:", view=VoteView(game, interaction.user.id), ephemeral=True)
 
 
+class KillSelect(discord.ui.Select):
+    def __init__(self, game: MurderGame):
+        options = [
+            discord.SelectOption(label=member.display_name[:100], value=str(uid))
+            for uid, member in game.players.items()
+            if uid in game.alive and game.roles.get(uid) != "Murderer"
+        ]
+        super().__init__(
+            placeholder="Choose a player to eliminate...",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        game = _game_for(interaction)
+        if not game or game.phase != "playing":
+            await interaction.response.send_message("This game is no longer active.", ephemeral=True)
+            return
+        if game.roles.get(interaction.user.id) != "Murderer" or interaction.user.id not in game.alive:
+            await interaction.response.send_message("Only the living Murderer can use this action.", ephemeral=True)
+            return
+        if game.killed_this_round:
+            await interaction.response.send_message("You've already eliminated someone this round.", ephemeral=True)
+            return
+
+        target_id = int(self.values[0])
+        if target_id not in game.alive or game.roles.get(target_id) == "Murderer":
+            await interaction.response.send_message("That player is no longer a valid target.", ephemeral=True)
+            return
+
+        game.alive.discard(target_id)
+        game.killed_this_round = True
+        victim = game.players[target_id]
+        await interaction.response.send_message(
+            f"You eliminated **{victim.display_name}**. Your action is complete.",
+            ephemeral=True,
+        )
+
+        channel = interaction.channel
+        if channel is None:
+            return
+        await channel.send(
+            embed=_round_embed(game, f"☠️ **{victim.display_name}** was found eliminated during the night.")
+        )
+
+        murderer_id = next(uid for uid, role in game.roles.items() if role == "Murderer")
+        if murderer_id not in game.alive:
+            await _finish_game(game, channel, "The Innocents", "The murderer has been eliminated.")
+            return
+        if len(game.alive) <= 2:
+            await _finish_game(game, channel, "The Murderer", "The murderer has reached parity with the remaining players.")
+            return
+
+        game.round_number += 1
+        game.votes.clear()
+        game.killed_this_round = False
+        await channel.send(
+            embed=_round_embed(game, "A new round begins. Investigate and vote again."),
+            view=RoundView(game),
+        )
+
+
+class KillView(discord.ui.View):
+    def __init__(self, game: MurderGame):
+        super().__init__(timeout=60)
+        self.add_item(KillSelect(game))
+
+
+class KillButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Kill Player (Murderer Only)", style=discord.ButtonStyle.danger, emoji="🗡️")
+
+    async def callback(self, interaction: discord.Interaction):
+        game = _game_for(interaction)
+        if not game or game.phase != "playing":
+            await interaction.response.send_message("This game is no longer active.", ephemeral=True)
+            return
+        if game.roles.get(interaction.user.id) != "Murderer" or interaction.user.id not in game.alive:
+            await interaction.response.send_message("Only the living Murderer can use this button.", ephemeral=True)
+            return
+        if game.killed_this_round:
+            await interaction.response.send_message("You've already eliminated someone this round.", ephemeral=True)
+            return
+        if len(game.alive) <= 1:
+            await interaction.response.send_message("There are no valid targets left.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            "Choose who to eliminate. This selection is private:",
+            view=KillView(game),
+            ephemeral=True,
+        )
+
+
 class StatusButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="Game Status", style=discord.ButtonStyle.secondary, emoji="📋")
@@ -349,6 +435,7 @@ class RoundView(discord.ui.View):
         super().__init__(timeout=GAME_TIMEOUT)
         self.add_item(InvestigateButton())
         self.add_item(VoteButton())
+        self.add_item(KillButton())
         self.add_item(StatusButton())
 
 
