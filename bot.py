@@ -4559,11 +4559,8 @@ async def restore_kevin_bucks_on_startup() -> bool:
 
 
 # Serialize command registration across gateway reconnects.
-command_sync_lock = asyncio.Lock()
-
-
 async def sync_application_commands() -> bool:
-    """Register the complete command tree in the main guild, retrying on reconnect."""
+    """Register the command tree in the main guild, retrying on reconnect."""
     global commands_synced
     if commands_synced:
         return True
@@ -4571,115 +4568,114 @@ async def sync_application_commands() -> bool:
     async with command_sync_lock:
         if commands_synced:
             return True
+        main_guild_object = discord.Object(id=MAIN_SERVER)
         try:
-                main_guild_object = discord.Object(id=MAIN_SERVER)
-            
-                try:
-                    # Ensure imported feature commands are attached to the live CommandTree.
-                    feature_commands = (
-                        globals().get("uwu_command"),
-                        globals().get("unuwuify_command"),
-                        globals().get("uwucount_root_command"),
-                        globals().get("hoodify_command"),
-                        globals().get("unhoodify_command"),
-                        globals().get("hoodcount_root_command"),
-                        globals().get("blackjack_command"),
-                        globals().get("balance_command"),
-                        globals().get("daily_command"),
-                        globals().get("shop_command"),
-                        globals().get("buy_command"),
-                        globals().get("inventory_command"),
-                        globals().get("slots_command"),
-                    )
-                    registered_names = {command.name for command in tree.get_commands()}
-                    for command in feature_commands:
-                        if isinstance(command, app_commands.Command) and command.name not in registered_names:
-                            tree.add_command(command)
-                            registered_names.add(command.name)
-            
-                    # Explicitly register command groups owned by feature modules.
-                    feature_groups = (
-                        globals().get("review_blacklist_group"),
-                        murder_mystery_feature.murder_group,
-                    )
-                    registered_names = {command.name for command in tree.get_commands()}
-                    for group in feature_groups:
-                        if isinstance(group, app_commands.Group) and group.name not in registered_names:
-                            tree.add_command(group)
-                            registered_names.add(group.name)
-            
-                    # Sync the current command tree directly to the main server.
-                    # SafeChat is a top-level command now (not /safechat on|off).
-                    tree.clear_commands(guild=main_guild_object)
-                    tree.copy_global_to(guild=main_guild_object)
-            
-                    synced_commands = await tree.sync(guild=main_guild_object)
-            
-                    # Remove stale global registrations. Commands are intentionally
-                    # registered in the MAIN_SERVER guild only, so Discord cannot show
-                    # the same slash command once as a guild command and once globally.
-                    # Keep the live local tree intact while syncing an empty global tree.
-                    current_commands = list(tree.get_commands())
-                    tree.clear_commands(guild=None)
-                    await tree.sync()
-                    for command in current_commands:
-                        tree.add_command(command)
-            
-                    # The Sidekick toggle is registered only in its own server.
-                    # A missing bot installation/access there must not block main-server commands.
+                    main_guild_object = discord.Object(id=MAIN_SERVER)
+                
                     try:
-                        sidekick_guild_object = discord.Object(id=SIDEKICK_GUILD_ID)
-                        sidekick_synced_commands = await tree.sync(guild=sidekick_guild_object)
-                        if "sidekick" not in {command.name for command in sidekick_synced_commands}:
-                            print("Sidekick slash command was not registered.")
+                        # Ensure imported feature commands are attached to the live CommandTree.
+                        feature_commands = (
+                            globals().get("uwu_command"),
+                            globals().get("unuwuify_command"),
+                            globals().get("uwucount_root_command"),
+                            globals().get("hoodify_command"),
+                            globals().get("unhoodify_command"),
+                            globals().get("hoodcount_root_command"),
+                            globals().get("blackjack_command"),
+                            globals().get("balance_command"),
+                            globals().get("daily_command"),
+                            globals().get("shop_command"),
+                            globals().get("buy_command"),
+                            globals().get("inventory_command"),
+                            globals().get("slots_command"),
+                        )
+                        registered_names = {command.name for command in tree.get_commands()}
+                        for command in feature_commands:
+                            if isinstance(command, app_commands.Command) and command.name not in registered_names:
+                                tree.add_command(command)
+                                registered_names.add(command.name)
+                
+                        # Explicitly register command groups owned by feature modules.
+                        feature_groups = (
+                            globals().get("review_blacklist_group"),
+                            murder_mystery_feature.murder_group,
+                        )
+                        registered_names = {command.name for command in tree.get_commands()}
+                        for group in feature_groups:
+                            if isinstance(group, app_commands.Group) and group.name not in registered_names:
+                                tree.add_command(group)
+                                registered_names.add(group.name)
+                
+                        # Sync the current command tree directly to the main server.
+                        # SafeChat is a top-level command now (not /safechat on|off).
+                        tree.clear_commands(guild=main_guild_object)
+                        tree.copy_global_to(guild=main_guild_object)
+                
+                        synced_commands = await tree.sync(guild=main_guild_object)
+                
+                        # Remove stale global registrations. Commands are intentionally
+                        # registered in the MAIN_SERVER guild only, so Discord cannot show
+                        # the same slash command once as a guild command and once globally.
+                        # Keep the live local tree intact while syncing an empty global tree.
+                        current_commands = list(tree.get_commands())
+                        tree.clear_commands(guild=None)
+                        await tree.sync()
+                        for command in current_commands:
+                            tree.add_command(command)
+                
+                        # The Sidekick toggle is registered only in its own server.
+                        # A missing bot installation/access there must not block main-server commands.
+                        try:
+                            sidekick_guild_object = discord.Object(id=SIDEKICK_GUILD_ID)
+                            sidekick_synced_commands = await tree.sync(guild=sidekick_guild_object)
+                            if "sidekick" not in {command.name for command in sidekick_synced_commands}:
+                                print("Sidekick slash command was not registered.")
+                        except Exception as error:
+                            print(
+                                "Sidekick slash command sync failed: "
+                                f"{type(error).__name__}: {error}"
+                            )
+                
+                        synced_names = {command.name for command in synced_commands}
+                        defined_names = {command.name for command in tree.get_commands()}
+                        print(
+                            "Guild command sync: "
+                            f"{len(synced_names)} synced / {len(defined_names)} defined"
+                        )
+                        required_commands = {
+                            "uwuify",
+                            "blackjack",
+                            "balance",
+                            "daily",
+                            "shop",
+                            "buy",
+                            "inventory",
+                            "unuwuify",
+                            "uwucount",
+                            "hoodify",
+                            "unhoodify",
+                            "hoodcount",
+                            "slots",
+                            "murder",
+                        }
+                
+                        if required_commands.issubset(synced_names):
+                            commands_synced = True
+                            print(
+                                "Slash commands synced: "
+                                + ", ".join(sorted(synced_names))
+                            )
+                        else:
+                            commands_synced = False
+                            print(
+                                "Slash command sync incomplete. Missing: "
+                                + ", ".join(sorted(required_commands - synced_names))
+                            )
                     except Exception as error:
-                        print(
-                            "Sidekick slash command sync failed: "
-                            f"{type(error).__name__}: {error}"
-                        )
-            
-                    synced_names = {command.name for command in synced_commands}
-                    defined_names = {command.name for command in tree.get_commands()}
-                    print(
-                        "Guild command sync: "
-                        f"{len(synced_names)} synced / {len(defined_names)} defined"
-                    )
-                    required_commands = {
-                        "uwuify",
-                        "blackjack",
-                        "balance",
-                        "daily",
-                        "shop",
-                        "buy",
-                        "inventory",
-                        "unuwuify",
-                        "uwucount",
-                        "hoodify",
-                        "unhoodify",
-                        "hoodcount",
-                        "slots",
-                        "murder",
-                    }
-            
-                    if required_commands.issubset(synced_names):
-                        commands_synced = True
-                        print(
-                            "Slash commands synced: "
-                            + ", ".join(sorted(synced_names))
-                        )
-                    else:
                         commands_synced = False
                         print(
-                            "Slash command sync incomplete. Missing: "
-                            + ", ".join(sorted(required_commands - synced_names))
-                        )
-                except Exception as error:
-                    commands_synced = False
-                    print(
-                        "Slash command sync failed: "
-                        f"{type(error).__name__}: {error}"
-                    )
-            return commands_synced
+                            "Slash command sync failed: "
+                            f"{type(error).__name__}: {error}"
         except Exception as error:
             commands_synced = False
             print(
@@ -4688,6 +4684,7 @@ async def sync_application_commands() -> bool:
                 flush=True,
             )
             return False
+        return commands_synced
 
 @bot.event
 async def on_connect():
