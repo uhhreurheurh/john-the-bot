@@ -4145,58 +4145,6 @@ async def run_initial_legacy_role_sync_once() -> None:
 
 
 # ============================================================
-# SOURCE ROLE APPEARANCE SYNC
-# ============================================================
-
-async def sync_second_role_appearance(source_role: discord.Role) -> None:
-    """Copy presentation settings only; destination permissions stay untouched."""
-    if source_role.guild.id != 985391650861879337:
-        return
-    if source_role.id != tag_server_role_ids_2.get(source_role.guild.id):
-        return
-
-    main_guild = bot.get_guild(MAIN_SERVER)
-    if main_guild is None:
-        return
-    target_role = main_guild.get_role(TAG_ROLE_ID_2)
-    bot_member = main_guild.me
-    if target_role is None or bot_member is None:
-        return
-    if (
-        target_role.managed
-        or target_role.is_default()
-        or bot_member.top_role <= target_role
-        or not bot_member.guild_permissions.manage_roles
-    ):
-        print("Second role appearance sync blocked: destination role is not editable.")
-        return
-
-    edit_kwargs = {
-        "name": source_role.name,
-        "colour": source_role.colour,
-        "hoist": source_role.hoist,
-        "mentionable": source_role.mentionable,
-        "unicode_emoji": getattr(source_role, "unicode_emoji", None),
-        "reason": "Synchronize appearance from configured source role",
-    }
-    try:
-        edit_kwargs["display_icon"] = (
-            await source_role.icon.read() if source_role.icon is not None else None
-        )
-    except (discord.HTTPException, AttributeError):
-        edit_kwargs.pop("display_icon", None)
-
-    try:
-        await target_role.edit(**edit_kwargs)
-        print(
-            f"Second role appearance synced: source {source_role.id} -> "
-            f"destination {target_role.id}."
-        )
-    except (discord.Forbidden, discord.HTTPException) as error:
-        print(f"Second role appearance sync failed: {type(error).__name__}: {error}")
-
-
-# ============================================================
 # TAG-SERVER ROLE EVENT SYNC
 # ============================================================
 
@@ -4729,16 +4677,6 @@ async def on_connect():
 
 
 @bot.event
-async def on_guild_role_update(before: discord.Role, after: discord.Role):
-    """Propagate source role presentation changes to its mapped main-server role."""
-    if (
-        after.guild.id == 985391650861879337
-        and after.id == tag_server_role_ids_2.get(after.guild.id)
-    ):
-        await sync_second_role_appearance(after)
-
-
-@bot.event
 async def on_ready():
     global commands_synced, terminal_status_printed, review_db_restore_checked, staff_strike_expiry_task
     global legacy_role_sync_initial_scan_started, SIDEKICK_ENABLED
@@ -4830,15 +4768,6 @@ async def on_ready():
 
     if KICK_SYSTEM_ENABLED and not kick_loop.is_running():
         kick_loop.start()
-
-    # Apply the source role's current appearance on startup as well as on edits.
-    source_role_guild = bot.get_guild(985391650861879337)
-    if source_role_guild is not None:
-        source_appearance_role = source_role_guild.get_role(
-            tag_server_role_ids_2.get(source_role_guild.id, 0)
-        )
-        if source_appearance_role is not None:
-            await sync_second_role_appearance(source_appearance_role)
 
     # Run the broad all-member role sync once per process. Subsequent joins and
     # source-role changes are handled by member-specific event handlers.
