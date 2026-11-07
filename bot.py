@@ -223,6 +223,16 @@ tag_server_role_ids_2 = {
     985391650861879337: 1471888850510155960,
 }
 
+# Source-role appearance updates mirrored to their corresponding main-server roles.
+# Only presentation fields are copied; permissions are never copied or changed.
+TAG_ROLE_APPEARANCE_MAPPINGS = {
+    985391650861879337: {
+        1468322662349537322: 1560403455850446989,
+        1462050792541261937: 1560403452859916398,
+        1503033401635246201: 1560403429057241098,
+    },
+}
+
 # Keep second-role diagnostics useful without repeating the same warning every
 # 30-second role scan.
 _second_role_sync_last_diagnostic: str | None = None
@@ -3468,6 +3478,68 @@ async def remove_auto_role_if_needed(member: discord.Member, reason: str) -> boo
 # =========================
 # MEMBER UPDATE EVENT
 # =========================
+
+@bot.event
+async def on_guild_role_update(before: discord.Role, after: discord.Role):
+    """Mirror presentation changes for explicitly mapped source roles."""
+    target_role_id = TAG_ROLE_APPEARANCE_MAPPINGS.get(after.guild.id, {}).get(after.id)
+    if not target_role_id:
+        return
+
+    main_guild = bot.get_guild(MAIN_SERVER)
+    if main_guild is None:
+        return
+
+    target_role = main_guild.get_role(target_role_id)
+    bot_member = main_guild.me
+    if bot_member is None or target_role is None:
+        return
+    if (
+        target_role.is_default()
+        or target_role.managed
+        or bot_member.top_role <= target_role
+        or not bot_member.guild_permissions.manage_roles
+    ):
+        print(
+            f"Role appearance sync skipped: bot cannot edit destination role "
+            f"{target_role_id} in main server."
+        )
+        return
+
+    edit_kwargs = {
+        "name": after.name,
+        "colour": after.colour,
+        "hoist": after.hoist,
+        "mentionable": after.mentionable,
+    }
+
+    # Discord permits either a custom image icon or a Unicode emoji.
+    source_icon = after.display_icon
+    try:
+        if isinstance(source_icon, discord.Asset):
+            edit_kwargs["display_icon"] = await source_icon.read()
+            edit_kwargs["unicode_emoji"] = None
+        elif isinstance(source_icon, str):
+            edit_kwargs["display_icon"] = None
+            edit_kwargs["unicode_emoji"] = source_icon
+        else:
+            edit_kwargs["display_icon"] = None
+            edit_kwargs["unicode_emoji"] = None
+
+        await target_role.edit(
+            **edit_kwargs,
+            reason=f"Mirrored appearance update from source role {after.id}",
+        )
+        print(
+            f"Mirrored source role appearance {after.id} -> "
+            f"main role {target_role_id}."
+        )
+    except (discord.Forbidden, discord.HTTPException, TypeError, ValueError) as error:
+        print(
+            f"Role appearance sync failed for {after.id} -> {target_role_id}: "
+            f"{type(error).__name__}: {error}"
+        )
+
 
 @bot.event
 async def on_member_update(before: discord.Member, after: discord.Member):
