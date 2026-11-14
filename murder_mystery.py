@@ -53,6 +53,7 @@ class MurderGame:
     round_number: int = 0
     phase: str = "lobby"
     killed_this_round: bool = False
+    next_kill_round: int = 1
     message: discord.Message | None = None
 
 
@@ -204,9 +205,18 @@ async def _resolve_votes(game: MurderGame, channel: discord.abc.Messageable):
         await _finish_game(game, channel, "The Murderer", result + "\\nThe murderer has reached parity with the remaining players.")
         return
 
+    # Completing the vote advances the round, including rounds where the
+    # Murderer did not use the kill action.
+    game.round_number += 1
+    game.votes.clear()
+    game.killed_this_round = False
+
     # The Murderer gets a separate private kill action. Voting never silently
     # eliminates a second player.
-    await channel.send(embed=_round_embed(game, result), view=RoundView(game))
+    await channel.send(
+        embed=_round_embed(game, f"{result}\\nRound {game.round_number} begins."),
+        view=RoundView(game),
+    )
 
 
 class JoinButton(discord.ui.Button):
@@ -343,6 +353,12 @@ class KillSelect(discord.ui.Select):
         if game.roles.get(interaction.user.id) != "Murderer" or interaction.user.id not in game.alive:
             await interaction.response.send_message("Only the living Murderer can use this action.", ephemeral=True)
             return
+        if game.round_number < game.next_kill_round:
+            await interaction.response.send_message(
+                f"You must wait until round {game.next_kill_round} before you can kill again.",
+                ephemeral=True,
+            )
+            return
         if game.killed_this_round:
             await interaction.response.send_message("You've already eliminated someone this round.", ephemeral=True)
             return
@@ -354,6 +370,7 @@ class KillSelect(discord.ui.Select):
 
         game.alive.discard(target_id)
         game.killed_this_round = True
+        game.next_kill_round = game.round_number + 2
         victim = game.players[target_id]
         await interaction.response.send_message(
             f"You eliminated **{victim.display_name}**. Your action is complete.",
@@ -379,7 +396,7 @@ class KillSelect(discord.ui.Select):
         game.votes.clear()
         game.killed_this_round = False
         await channel.send(
-            embed=_round_embed(game, "A new round begins. Investigate and vote again."),
+            embed=_round_embed(game, f"Round {game.round_number} begins. Investigate and vote again."),
             view=RoundView(game),
         )
 
@@ -401,6 +418,12 @@ class KillButton(discord.ui.Button):
             return
         if game.roles.get(interaction.user.id) != "Murderer" or interaction.user.id not in game.alive:
             await interaction.response.send_message("Only the living Murderer can use this button.", ephemeral=True)
+            return
+        if game.round_number < game.next_kill_round:
+            await interaction.response.send_message(
+                f"You cannot kill this round. Your next kill is available in round {game.next_kill_round}.",
+                ephemeral=True,
+            )
             return
         if game.killed_this_round:
             await interaction.response.send_message("You've already eliminated someone this round.", ephemeral=True)
