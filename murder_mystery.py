@@ -28,14 +28,54 @@ CASES = [
     ("The Last Train", ["The Dining Car", "The Sleeper Car", "The Engine Room", "The Baggage Car"]),
 ]
 
-CLUES = [
-    "A muddy footprint was found near the scene.",
-    "Someone heard hurried footsteps just before the lights went out.",
-    "A torn piece of dark fabric was found on the floor.",
-    "A witness remembers seeing someone near the scene, but cannot identify them.",
-    "A strange smell of smoke lingers in the room.",
-    "A dropped item suggests the culprit was in a hurry.",
-]
+PROFILE_CLUE_KEYS = (
+    "username_letter",
+    "custom_avatar",
+    "account_age",
+    "server_tenure",
+    "display_name_length",
+)
+
+
+def _profile_clue(member: discord.Member, clue_key: str) -> str:
+    """Describe a true, publicly visible Discord profile detail without naming the player."""
+    username = member.name
+    display_name = member.display_name
+    now = discord.utils.utcnow()
+
+    if clue_key == "username_letter":
+        return f"The murderer’s Discord username begins with the letter **{username[0].upper()}**."
+    if clue_key == "custom_avatar":
+        detail = "has a custom profile picture" if member.avatar else "uses Discord’s default profile picture"
+        return f"The murderer {detail}."
+    if clue_key == "account_age":
+        years = max(0, (now - member.created_at).days // 365)
+        if years == 0:
+            detail = "created their Discord account less than a year ago"
+        elif years == 1:
+            detail = "has had their Discord account for at least 1 year"
+        else:
+            detail = f"has had their Discord account for at least {years} years"
+        return f"The murderer {detail}."
+    if clue_key == "server_tenure":
+        if member.joined_at is None:
+            return "The murderer’s server join date is unavailable."
+        days = max(0, (now - member.joined_at).days)
+        if days < 30:
+            detail = "joined this server within the last month"
+        elif days < 365:
+            detail = "has been in this server for at least a month, but less than a year"
+        else:
+            detail = f"has been in this server for at least {days // 365} years"
+        return f"The murderer {detail}."
+    length = len(display_name)
+    if length <= 5:
+        detail = "has a short display name (5 characters or fewer)"
+    elif length <= 10:
+        detail = "has a display name between 6 and 10 characters"
+    else:
+        detail = "has a display name longer than 10 characters"
+    return f"The murderer {detail}."
 
 
 @dataclass
@@ -50,6 +90,7 @@ class MurderGame:
     alive: set[int] = field(default_factory=set)
     votes: dict[int, int] = field(default_factory=dict)
     clues: list[str] = field(default_factory=list)
+    profile_clues_given: set[str] = field(default_factory=set)
     round_number: int = 0
     phase: str = "lobby"
     killed_this_round: bool = False
@@ -274,11 +315,22 @@ class InvestigateButton(discord.ui.Button):
         if not game or game.phase != "playing" or interaction.user.id not in game.alive:
             await interaction.response.send_message("You can't investigate in this game.", ephemeral=True)
             return
-        location = random.choice(game.locations)
-        clue = random.choice(CLUES)
-        game.clues.append(f"{location}: {clue}")
+        murderer_id = next(uid for uid, role in game.roles.items() if role == "Murderer")
+        murderer = game.players[murderer_id]
+        available = [key for key in PROFILE_CLUE_KEYS if key not in game.profile_clues_given]
+        if not available:
+            await interaction.response.send_message(
+                "You've uncovered all available profile clues about the murderer. Share what you know with the group.",
+                ephemeral=True,
+            )
+            return
+
+        clue_key = random.choice(available)
+        game.profile_clues_given.add(clue_key)
+        clue = _profile_clue(murderer, clue_key)
+        game.clues.append(clue)
         await interaction.response.send_message(
-            f"**You investigate {location}.**\n{clue}\n\nThis clue is private to you. Share it with the group if you think it matters.",
+            f"**Profile clue discovered:**\\n{clue}\\n\\nThis clue is private to you. Share it with the group if you think it matters.",
             ephemeral=True,
         )
 
