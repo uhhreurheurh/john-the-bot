@@ -330,7 +330,7 @@ class InvestigateButton(discord.ui.Button):
         clue = _profile_clue(murderer, clue_key)
         game.clues.append(clue)
         await interaction.response.send_message(
-            f"**Profile clue discovered:**\\n{clue}\\n\\nThis clue is private to you. Share it with the group if you think it matters.",
+            f"**Profile clue discovered:**\n{clue}\n\nThis clue is private to you. Share it with the group if you think it matters.",
             ephemeral=True,
         )
 
