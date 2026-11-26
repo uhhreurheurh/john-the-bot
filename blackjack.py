@@ -282,16 +282,36 @@ def _github_url(path: Optional[str] = None) -> str:
 
 def _decode_github_data(response: dict) -> dict:
     encoded_content = response.get("content", "")
-    if not encoded_content:
-        raise RuntimeError("GitHub returned an empty Kevin Bucks database.")
     try:
-        decoded = base64.b64decode(
-            "".join(str(encoded_content).split()),
-            validate=True,
-        ).decode("utf-8")
+        if encoded_content:
+            decoded = base64.b64decode(
+                "".join(str(encoded_content).split()),
+                validate=True,
+            ).decode("utf-8")
+        else:
+            # GitHub's Contents API omits the content field for files larger
+            # than 1 MB. The file is not empty: download its raw contents
+            # instead of treating a large shared economy database as missing.
+            download_url = response.get("download_url")
+            if not download_url:
+                raise RuntimeError(
+                    "GitHub omitted the database content and did not provide a raw download URL."
+                )
+            request = urllib.request.Request(
+                download_url,
+                headers={
+                    "Accept": "application/vnd.github.raw",
+                    "User-Agent": "john-the-bot-kevin-bucks",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=30) as raw_response:
+                decoded = raw_response.read().decode("utf-8")
         remote = json.loads(decoded)
+    except RuntimeError:
+        raise
     except Exception as error:
-        raise RuntimeError("The GitHub Kevin Bucks database is invalid JSON.") from error
+        raise RuntimeError("The GitHub Kevin Bucks database could not be downloaded or parsed as JSON.") from error
+
     if not isinstance(remote, dict) or not isinstance(remote.get("balances"), dict):
         raise RuntimeError("The GitHub Kevin Bucks database has an invalid schema.")
     if not remote["balances"]:
