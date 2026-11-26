@@ -117,9 +117,12 @@ class CoinFlipBattleView(discord.ui.View):
         button: discord.ui.Button,
     ):
         battle = self.battle
+        # Acknowledge the component click immediately. Economy persistence can
+        # involve a GitHub request and must not hold the interaction open.
+        await interaction.response.defer()
         async with battle.lock:
             if battle.finished or battle.accepted:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "❌ This battle has already been resolved.",
                     ephemeral=True,
                 )
@@ -132,7 +135,7 @@ class CoinFlipBattleView(discord.ui.View):
                 battle.finished = True
                 active_battles.pop(battle.challenger.id, None)
                 active_battles.pop(battle.opponent.id, None)
-                await interaction.response.edit_message(
+                await interaction.edit_original_response(
                     content="❌ The challenger no longer has enough Kevin Bucks for this battle.",
                     embed=None,
                     view=None,
@@ -143,7 +146,7 @@ class CoinFlipBattleView(discord.ui.View):
                 battle.finished = True
                 active_battles.pop(battle.challenger.id, None)
                 active_battles.pop(battle.opponent.id, None)
-                await interaction.response.edit_message(
+                await interaction.edit_original_response(
                     content="❌ You no longer have enough Kevin Bucks for this battle.",
                     embed=None,
                     view=None,
@@ -172,7 +175,7 @@ class CoinFlipBattleView(discord.ui.View):
 
             await blackjack_feature.save_data()
 
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 content=None,
                 embed=battle.build_result_embed(winner, coin),
                 view=None,
@@ -186,6 +189,7 @@ class CoinFlipBattleView(discord.ui.View):
         button: discord.ui.Button,
     ):
         battle = self.battle
+        await interaction.response.defer()
         async with battle.lock:
             if battle.finished:
                 await interaction.response.send_message(
@@ -198,7 +202,7 @@ class CoinFlipBattleView(discord.ui.View):
             active_battles.pop(battle.challenger.id, None)
             active_battles.pop(battle.opponent.id, None)
 
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 content="❌ Coin Flip Battle declined.",
                 embed=None,
                 view=None,
