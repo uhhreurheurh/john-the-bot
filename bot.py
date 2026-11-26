@@ -36,6 +36,10 @@ logging.disable(logging.CRITICAL)
 # Main server id (replacement server)
 MAIN_SERVER = 1369556559205630012
 
+# Additional guild where the mini-game suite is enabled.
+# This does not replace or alter MAIN_SERVER.
+MINI_GAMES_GUILD_ID = 985391650861879337
+
 # One-way role sync targets in the replacement main server.
 # The first target is the existing mapped tag role in MAIN_SERVER.
 TAG_ROLE_ID = 1560797397314175006
@@ -4688,6 +4692,58 @@ async def sync_application_commands() -> bool:
             await tree.sync()
             for command in current_commands:
                 tree.add_command(command)
+
+            # Publish only the mini-game command set in the additional guild.
+            # The main-server command sync above remains unchanged.
+            try:
+                mini_games_guild_object = discord.Object(id=MINI_GAMES_GUILD_ID)
+                mini_game_names = {
+                    "blackjack",
+                    "balance",
+                    "mines",
+                    "slots",
+                    "coinflipbattle",
+                    "murder",
+                }
+                registered_mini_game_names = {
+                    command.name
+                    for command in tree.get_commands(guild=mini_games_guild_object)
+                }
+                for command in tree.get_commands():
+                    if (
+                        command.name in mini_game_names
+                        and command.name not in registered_mini_game_names
+                    ):
+                        tree.add_command(command, guild=mini_games_guild_object)
+                        registered_mini_game_names.add(command.name)
+
+                mini_game_synced_commands = await tree.sync(
+                    guild=mini_games_guild_object
+                )
+                mini_game_synced_names = {
+                    command.name for command in mini_game_synced_commands
+                }
+                required_mini_game_commands = mini_game_names
+                if not required_mini_game_commands.issubset(mini_game_synced_names):
+                    missing = sorted(required_mini_game_commands - mini_game_synced_names)
+                    raise RuntimeError(
+                        "Mini-game guild sync is missing: " + ", ".join(missing)
+                    )
+                print(
+                    "Mini-game guild commands synced for "
+                    f"{MINI_GAMES_GUILD_ID}: "
+                    + ", ".join(sorted(mini_game_synced_names)),
+                    flush=True,
+                )
+            except Exception as error:
+                commands_synced = False
+                print(
+                    "Mini-game guild command sync failed for "
+                    f"{MINI_GAMES_GUILD_ID}: "
+                    f"{type(error).__name__}: {error}",
+                    flush=True,
+                )
+                return False
 
             # Sidekick is separate; its failure must not block main-server commands.
             try:
